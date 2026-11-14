@@ -42,8 +42,10 @@ export default function IncidentsPage() {
       </FilterBar>
       <QueryState q={q}>
         {!rows.length ? (
-          <EmptyState icon={f.status === "ACTIVE" ? <CheckCircle2 /> : <SearchX />} title={f.status === "ACTIVE" ? "No active incidents" : "No incidents match"}
-            description={f.status === "ACTIVE" ? "Nothing is failing right now. Incidents open automatically when monitoring confirms a problem, and recover automatically." : "Try other filters."} />
+          // "Nothing is failing" is only true when no other filter narrows the active list.
+          f.status === "ACTIVE" && !f.severity && !f.source && !f.websiteId && !f.since
+            ? <EmptyState icon={<CheckCircle2 />} title="No active incidents" description="Nothing is failing right now. Incidents open automatically when monitoring confirms a problem, and recover automatically." />
+            : <EmptyState icon={<SearchX />} title="No incidents match" description="Try other filters." />
         ) : (
           <Card className="overflow-hidden">
             {/* Cards on small screens */}

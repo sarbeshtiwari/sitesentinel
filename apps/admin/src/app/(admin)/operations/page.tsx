@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { api, errorMessage, get, patch } from "@/lib/api";
 import { useAdminMe } from "@/lib/hooks";
+import { friendlyZodError } from "@/lib/zod-messages";
 
 interface Setting { key: string; description: string; value: unknown; defaultValue: unknown; isDefault: boolean; version: number | null; updatedAt: string | null; protected: boolean; apply: "live" | "restart"; scope: string }
 interface Config { sections: Array<{ section: string; settings: Setting[] }>; retention: Array<{ table: string; granularity: string; retainDays: number; minimumDays: number }>; alertRules: string[]; notes: string[] }
@@ -38,7 +39,7 @@ export default function OperationsConfigPage() {
     const def = edit.s.defaultValue;
     try { value = typeof def === "string" ? edit.raw : JSON.parse(edit.raw); } catch { return { ok: false, value: null, error: "Not valid JSON" }; }
     if (!isSettingKey(edit.s.key)) return { ok: false, value, error: "Unknown setting" };
-    const r = SETTINGS[edit.s.key].schema.safeParse(value);
+    const r = SETTINGS[edit.s.key].schema.safeParse(value, { error: friendlyZodError });
     return r.success ? { ok: true, value: r.data, error: "" } : { ok: false, value, error: r.error.issues.map((i) => `${i.path.join(".") || "value"}: ${i.message}`).join("; ") };
   })();
   const save = async () => {
@@ -66,8 +67,8 @@ export default function OperationsConfigPage() {
                 <THead><TR><TH>Setting</TH><TH>Value</TH><TH>Default</TH><TH className="relative"><span className="sr-only">Actions</span></TH></TR></THead>
                 <TBody>{sec.settings.map((s) => (
                   <TR key={s.key}>
-                    <TD className="max-w-96"><div className="flex flex-wrap items-center gap-1"><span className="font-mono text-xs font-medium">{s.key}</span>{s.protected && <Badge tone="danger" className="text-[10px]">protected</Badge>}{s.apply === "restart" && <Badge tone="warning" className="text-[10px]">restart required</Badge>}<Badge className="text-[10px]">{s.scope}</Badge></div><div className="mt-0.5 text-xs text-muted-foreground">{s.description}</div></TD>
-                    <TD className="max-w-72 break-all font-mono text-xs"><span className={s.isDefault ? undefined : "font-semibold text-foreground"}>{show(s.value)}</span>{!s.isDefault && <div className="font-sans tabular-nums text-muted-foreground">v{s.version} · {s.updatedAt?.slice(0, 16).replace("T", " ")}</div>}</TD>
+                    <TD className="min-w-56 max-w-96"><div className="flex flex-wrap items-center gap-1"><span className="font-mono text-xs font-medium">{s.key}</span>{s.protected && <Badge tone="danger" className="text-[10px]">protected</Badge>}{s.apply === "restart" && <Badge tone="warning" className="text-[10px]">restart required</Badge>}<Badge className="text-[10px]">{s.scope}</Badge></div><div className="mt-0.5 text-xs text-muted-foreground">{s.description}</div></TD>
+                    <TD className="max-w-72 break-all font-mono text-xs"><span className={s.isDefault ? undefined : "font-semibold text-foreground"}>{show(s.value)}</span>{!s.isDefault && <div className="whitespace-nowrap font-sans tabular-nums text-muted-foreground">v{s.version} · {s.updatedAt?.slice(0, 16).replace("T", " ")}</div>}</TD>
                     <TD className="max-w-48 break-all font-mono text-xs text-muted-foreground">{show(s.defaultValue)}</TD>
                     <TD className="text-right">{canWrite && (!s.protected || canProtected) && <Button size="sm" variant="outline" onClick={() => { setReason(""); setEdit({ s, raw: show(s.value) }); }}>Change</Button>}</TD>
                   </TR>

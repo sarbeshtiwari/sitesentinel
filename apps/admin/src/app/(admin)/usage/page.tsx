@@ -24,7 +24,10 @@ export default function UsagePage() {
   const [reason, setReason] = useState("");
   const [day, setDay] = useState(daysAgo(1));
   const [busy, setBusy] = useState(false);
-  const u = useQuery({ queryKey: ["ops", "usage", range], queryFn: ({ signal }) => get<DataEnvelope<Usage>>(`/ops/usage?from=${range.from}&to=${range.to}`, { signal }).then((r) => r.data) });
+  // Same rule the API enforces (AdminUsageQuery): ascending, at most 92 days. Checked here so the admin gets a clear message.
+  const rangeError = !range.from || !range.to ? "Choose both dates." : range.from > range.to ? "“From” must be on or before “To”."
+    : (Date.parse(range.to) - Date.parse(range.from)) / 86_400_000 > 92 ? "Choose a range of at most 92 days." : null;
+  const u = useQuery({ queryKey: ["ops", "usage", range], enabled: !rangeError, queryFn: ({ signal }) => get<DataEnvelope<Usage>>(`/ops/usage?from=${range.from}&to=${range.to}`, { signal }).then((r) => r.data) });
   const runs = useQuery({ queryKey: ["ops", "recon"], queryFn: ({ signal }) => get<DataEnvelope<Run[]>>("/ops/usage/reconciliations", { signal }).then((r) => r.data), refetchInterval: 15_000 });
   const run = useQuery({ queryKey: ["ops", "recon", sel], enabled: Boolean(sel), queryFn: ({ signal }) => get<DataEnvelope<RunDetail>>(`/ops/usage/reconciliations/${sel}`, { signal }).then((r) => r.data) });
   const act = async () => {
@@ -47,7 +50,7 @@ export default function UsagePage() {
         <FormField label="From" htmlFor="from"><Input id="from" type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} /></FormField>
         <FormField label="To" htmlFor="to"><Input id="to" type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} /></FormField>
       </FilterBar>
-      {u.isLoading ? <Skeleton className="h-64" /> : u.isError ? <Alert tone="danger" title={errorMessage(u.error)} /> : u.data && (
+      {rangeError ? <Alert tone="warning" title={rangeError} /> : u.isLoading ? <Skeleton className="h-64" /> : u.isError ? <Alert tone="danger" title={errorMessage(u.error)} /> : u.data && (
         <div className="grid gap-6">
           <Alert title="Accounting rules">{u.data.policy}</Alert>
           <Card className="overflow-hidden">

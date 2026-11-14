@@ -1,6 +1,6 @@
 "use client";
 import { Badge, EmptyState, FilterBar, PageHeader } from "@wim/ui";
-import { History } from "lucide-react";
+import { History, SearchX } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Dot, FilterSelect, Hint, LoadMore, QueryState, Section } from "@/components/monitoring";
@@ -39,7 +39,9 @@ export default function HistoryPage() {
         <FilterSelect label="Period" value={f.since} onChange={(v) => set("since", v)} options={[["", "All retained"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]]} />
       </FilterBar>
       <QueryState q={q}>
-        {!rows.length ? <EmptyState icon={<History />} title="Nothing recorded yet" description="Events appear here as monitoring runs. Only recorded events are shown — nothing is generated." /> : (
+        {!rows.length ? (Object.values(f).some(Boolean)
+          ? <EmptyState icon={<SearchX />} title="No events match" description="Try other filters. Only recorded events are shown — nothing is generated." />
+          : <EmptyState icon={<History />} title="Nothing recorded yet" description="Events appear here as monitoring runs. Only recorded events are shown — nothing is generated." />) : (
           <div className="grid gap-4">
             {[...days].map(([day, items]) => (
               <Section key={day} title={day} description={`${items.length} event${items.length === 1 ? "" : "s"} loaded`} flush>

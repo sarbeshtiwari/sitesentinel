@@ -79,7 +79,7 @@ export default function OverviewPage() {
   const d = q.data;
   return (
     <>
-      <PageHeader title="Platform overview" description={d ? `Updated ${new Date(d.generatedAt).toLocaleTimeString()} · refreshes every minute` : undefined} />
+      <PageHeader title="Platform overview" description={d ? `Updated ${d.generatedAt.slice(11, 19)} UTC · refreshes every minute` : undefined} />
       <Alert className="mb-6" title={<span className="flex items-center gap-2"><Lock className="h-4 w-4" aria-hidden /> Aggregate platform statistics only</span>}>
         Counts are computed by the database from aggregate views. No customer content (incidents, credentials, monitoring results) is accessible from this console.
       </Alert>
@@ -98,7 +98,7 @@ export default function OverviewPage() {
             <MetricCard icon={<Trash2 />} tone={d.organizations.pendingDeletion ? "warning" : "neutral"} label="Pending deletion" value={n(d.organizations.pendingDeletion)} />
           </Group>
           <Group title="Subscriptions & monitoring" label="Subscriptions and monitoring">
-            <MetricCard icon={<Hourglass />} label="Trialing" value={n(d.subscriptions.trialing)} />
+            <MetricCard icon={<Hourglass />} label="Trialing subscriptions" value={n(d.subscriptions.trialing)} hint="billing subscriptions only · website free trials are listed per customer" />
             <MetricCard icon={<CreditCard />} tone="brand" label="Paid subscriptions" value={n(d.subscriptions.paid)} hint={`${n(d.subscriptions.pastDue)} past due · ${n(d.subscriptions.expired)} expired`} />
             <MetricCard icon={<Globe />} label="Websites" value={n(d.websites.total)} hint={`${n(d.websites.active)} active · ${n(d.websites.pendingVerification)} pending verification`} />
             <MetricCard icon={<AlertOctagon />} tone={d.incidents.openCritical ? "danger" : d.incidents.open ? "warning" : "neutral"} label="Open incidents" value={n(d.incidents.open)} hint={`${n(d.incidents.openCritical)} critical`} />

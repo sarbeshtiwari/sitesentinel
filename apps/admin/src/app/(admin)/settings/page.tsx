@@ -9,6 +9,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { errorMessage, get, patch } from "@/lib/api";
 import { qk, useAdminMe } from "@/lib/hooks";
+import { friendlyZodError } from "@/lib/zod-messages";
 
 type Kind = "boolean" | "number" | "enum" | "array" | "json" | "text";
 
@@ -74,7 +75,7 @@ export default function SettingsPage() {
   const invalid = new Map<string, string>();
   for (const c of changes) {
     if (!isSettingKey(c.key)) continue;
-    const r = SETTINGS[c.key].schema.safeParse(c.value);
+    const r = SETTINGS[c.key].schema.safeParse(c.value, { error: friendlyZodError });
     if (!r.success) invalid.set(c.key, r.error.issues[0]?.message ?? "Invalid value");
   }
   const protectedChanges = changes.filter((c) => q.data?.find((x) => x.key === c.key)?.protected);

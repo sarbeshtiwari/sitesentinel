@@ -39,7 +39,7 @@ export default function AuditPage() {
                 {rows.map((r) => (
                   <li key={r.id} className="grid gap-1 px-4 py-3 text-sm">
                     <div className="flex items-start justify-between gap-3">
-                      <span className="font-medium">{describeAction(r.action)}</span>
+                      <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{describeAction(r.action)}</span>
                       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{new Date(r.occurredAt).toLocaleString()}</span>
                     </div>
                     <span className="truncate text-xs text-muted-foreground">{r.actorLabel ?? r.actorType}{r.ipPrefix ? <> · <span className="font-mono">{r.ipPrefix}</span></> : ""}</span>

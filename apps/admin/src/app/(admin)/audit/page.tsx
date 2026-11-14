@@ -30,7 +30,9 @@ export default function AuditPage() {
     e.preventDefault();
     if (!idValid) return;
     setChain(null);
-    setStream(kind === "platform" ? "platform" : `${kind}:${id.trim().toLowerCase()}`);
+    const next = kind === "platform" ? "platform" : `${kind}:${id.trim().toLowerCase()}`;
+    // Showing the stream that is already shown reloads it (new entries), instead of silently doing nothing.
+    if (next === stream) void q.refetch(); else setStream(next);
   };
   const verify = async () => {
     setVerifying(true);

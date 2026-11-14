@@ -1,6 +1,7 @@
 "use client";
 import { Alert, Badge, Button, MetricCard, PageHeader } from "@wim/ui";
 import { CalendarCheck, ChevronLeft, Clock, FlaskConical, Image as ImageIcon, MonitorSmartphone, MousePointerClick, RotateCw, Smartphone } from "lucide-react";
+import { describeBrowserFailure } from "@wim/core";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -59,7 +60,7 @@ function ViewportCard({ orgId, v }: { orgId: string; v: BrowserViewportResultDto
       actions={<Badge tone={outcome(v.outcome).tone}>{outcome(v.outcome).label}</Badge>}>
       <div className="grid gap-5">
         <KeyValue items={[
-          ["Navigation", nav.error ? `Failed: ${String(nav.error)}` : "Loaded"], ["Main document status", nav.mainStatus ?? "—"], ["Redirects", nav.redirects ?? 0],
+          ["Navigation", nav.error ? `Failed: ${describeBrowserFailure(String(nav.error))}` : "Loaded"], ["Main document status", nav.mainStatus ?? "—"], ["Redirects", nav.redirects ?? 0],
           ["Final URL", <span key="u" className="break-all">{nav.finalUrl ?? "—"}</span>],
           ["Readiness", nav.readiness ? `${nav.readiness.strategy} · ${nav.readiness.met ? "met" : "not met"} (${fmtMs(nav.readiness.ms)})` : "—"],
           ["Duration", fmtMs(nav.durationMs)],
@@ -135,8 +136,8 @@ function Screenshot({ orgId, artifact }: { orgId: string; artifact: { id: string
     <div className="grid gap-2 border-t border-border pt-4">
       <SubHeading>Screenshot <span className="font-normal text-muted-foreground">({(artifact.purpose ?? "capture").toLowerCase()}, {fmtBytes(artifact.bytes)})</span></SubHeading>
       {expired ? <Alert title="Screenshot expired">Screenshots are kept until {fmtUtc(artifact.expiresAt)} under your retention policy.</Alert>
-        : state.error ? <Alert tone="warning" title={state.error} />
-        : state.url ? <img src={state.url} alt={`Screenshot of the page (${(artifact.purpose ?? "capture").toLowerCase()})`} className="max-h-[32rem] w-auto max-w-full rounded-md border border-border shadow-xs" referrerPolicy="no-referrer" onError={() => setState({ error: "The screenshot link expired; load it again." })} />
+        : state.error ? <Alert tone="warning" title={state.error}><Button size="sm" variant="outline" className="mt-1 justify-self-start" onClick={load}>Try again</Button></Alert>
+        : state.url ? <img src={state.url} alt={`Screenshot of the page (${(artifact.purpose ?? "capture").toLowerCase()})`} className="max-h-[32rem] w-auto max-w-full rounded-md border border-border shadow-xs" referrerPolicy="no-referrer" onError={() => setState({ error: "The screenshot couldn't be loaded — the link may have expired or storage is temporarily unavailable." })} />
         : <div><Button size="sm" variant="outline" onClick={load} disabled={state.loading}><ImageIcon />{state.loading ? "Loading…" : "Show screenshot"}</Button></div>}
       <Hint>Form fields and configured areas are masked before capture. Links expire after 5 minutes.</Hint>
     </div>

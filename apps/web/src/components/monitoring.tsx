@@ -45,7 +45,13 @@ export function RangePicker({ value, onChange }: { value: Range; onChange: (r: R
         {(["24h", "7d", "30d", "custom"] as RangeKey[]).map((k) => (
           <button key={k} type="button" aria-pressed={value.key === k}
             className={`cursor-pointer whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${value.key === k ? "bg-card text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => (k === "custom" ? onChange({ ...value, key: "custom" }) : onChange(presetRange(k)))}>
+            onClick={() => {
+              if (k !== "custom") return onChange(presetRange(k));
+              // Start the custom fields from the range currently shown, not the one the page opened with.
+              setCustom({ from: value.from.slice(0, 16), to: value.to.slice(0, 16) });
+              setErr(null);
+              onChange({ ...value, key: "custom" });
+            }}>
             {k === "custom" ? "Custom" : k}
           </button>
         ))}

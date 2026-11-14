@@ -1,6 +1,7 @@
 "use client";
 import { Alert, Badge, Button, cn, PageHeader, toast } from "@wim/ui";
 import { ArrowLeft, Bell, ExternalLink, FileText, History, ListTree } from "lucide-react";
+import { describeBrowserFailure, describeHttpFailure } from "@wim/core";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -15,6 +16,15 @@ const EVENT_LABEL: Record<string, string> = {
   SEVERITY_CHANGED: "Severity changed", RESOLVED: "Resolved", AUTO_RESOLVED: "Recovered automatically", REOPENED: "Reopened", IGNORED: "Ignored", COMMENTED: "Comment",
   FLAPPING_STARTED: "Flapping detected", FLAPPING_ENDED: "Flapping ended",
 };
+
+/** Customer wording for an occurrence's failure code (e.g. NO_ADDRESSES), same vocabulary as the monitoring results. */
+function describeOccurrence(source: string | null | undefined, details: Record<string, unknown>): string {
+  const raw = details.kind ?? details.failureKind ?? details.category;
+  if (typeof raw !== "string" || !raw) return "";
+  const text = source === "HTTP" ? describeHttpFailure(raw) : source === "BROWSER" ? describeBrowserFailure(raw) : null;
+  // Unknown codes fall back to the generic "… failed" wording in core; show the code readably instead of hiding it.
+  return text && !/^(Check|Browser check) failed$/.test(text) ? text : raw.replaceAll("_", " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}
 
 export default function IncidentPage() {
   const { orgId, can } = useOrg();
@@ -84,7 +94,7 @@ export default function IncidentPage() {
                       {i.occurrences.map((o, n) => (
                         <li key={n} className="flex items-start justify-between gap-3 px-4 py-2.5 sm:px-5">
                           <div className="min-w-0">
-                            <p className="text-xs font-medium">{String(o.details.kind ?? o.details.failureKind ?? o.details.category ?? "")}</p>
+                            <p className="text-xs font-medium">{describeOccurrence(i.source, o.details)}</p>
                             <p className="text-xs text-muted-foreground tabular-nums">{fmtUtc(o.at)}</p>
                             {o.url && <p className="break-all text-xs text-muted-foreground">{o.url}</p>}
                           </div>

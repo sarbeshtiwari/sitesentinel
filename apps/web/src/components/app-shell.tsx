@@ -47,6 +47,8 @@ const LABELS: Record<string, string> = {
   team: "Team", roles: "Roles", audit: "Audit log", account: "Account", profile: "Profile", security: "Security", onboarding: "Get started",
   "api-monitoring": "API monitoring", browser: "Browser run", "deep-scan": "Deep scan", scans: "Scans", findings: "Findings",
 };
+// Website sub-paths without an index page → the website tab that lists them.
+const WEBSITE_TAB_SEGMENT: Record<string, string> = { browser: "browser", "deep-scan": "deep-scan" };
 // The record type each id-segment refers to, by the segment before it.
 const ID_LABEL: Record<string, string> = { websites: "Website", incidents: "Incident", browser: "Run", scans: "Scan", findings: "Finding" };
 
@@ -60,6 +62,12 @@ function useCrumbs(pathname: string, orgName?: string) {
     if (p === "o") return;
     if (i === 1 && parts[0] === "o") { items.push({ label: orgName ?? "Organization", href: `${href}/overview` }); return; }
     if (p === "settings" || p === "account") return; // section groups without their own page
+    // Sub-records of a website have no index page of their own; their list lives on a tab of the website page.
+    if (parts[i - 2] === "websites" && UUID.test(parts[i - 1] ?? "") && WEBSITE_TAB_SEGMENT[p]) {
+      items.push({ label: LABELS[p] ?? p, href: `${href.slice(0, -(p.length + 1))}?tab=${WEBSITE_TAB_SEGMENT[p]}` });
+      return;
+    }
+    if (parts[i - 3] === "websites" && parts[i - 1] === "deep-scan") return; // "scans" / "findings": no page; the Deep scan crumb covers it
     const label = UUID.test(p) ? (ID_LABEL[parts[i - 1] ?? ""] ?? "Details") : (LABELS[p] ?? p);
     items.push({ label, href });
   });

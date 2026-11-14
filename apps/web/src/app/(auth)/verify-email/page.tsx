@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthCard } from "@/components/brand";
-import { errorMessage, post } from "@/lib/api";
+import { ApiError, errorMessage, post } from "@/lib/api";
 import { qk } from "@/lib/hooks";
 
 function Verify() {
@@ -20,7 +20,11 @@ function Verify() {
     if (!token) { setState("error"); setError("This link is missing its token."); return; }
     post("/auth/verify-email", { token }, { noAuthRedirect: true })
       .then(() => { setState("ok"); void qc.invalidateQueries({ queryKey: qk.me }); })
-      .catch((e) => { setState("error"); setError(errorMessage(e)); });
+      .catch((e) => {
+        setState("error");
+        // A malformed token fails request validation; to the user that is simply a bad link.
+        setError(e instanceof ApiError && e.status === 400 ? "This verification link is invalid or has expired." : errorMessage(e));
+      });
   }, [token, qc]);
   return (
     <AuthCard title="Email verification">
