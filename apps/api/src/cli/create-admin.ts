@@ -14,7 +14,9 @@ import { ADMIN_ROLE_PERMISSIONS, type AdminRoleKey } from "@wim/core";
 import { Email } from "@wim/contracts";
 import { KeysService } from "../crypto/keys.service.js";
 
+// `pnpm admin:create -- --email …` forwards the "--" separator itself: drop it
 const { values } = parseArgs({
+  args: process.argv.slice(2).filter((a, i) => !(i === 0 && a === "--")),
   options: { email: { type: "string" }, name: { type: "string" }, role: { type: "string", default: "SUPER_ADMIN" } },
 });
 const email = Email.parse(values.email);
