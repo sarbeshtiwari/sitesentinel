@@ -5,7 +5,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { defaultSettings, type MonitoringTier } from "@wim/core";
 import { createDb, type Db } from "@wim/db";
-import { createLogger } from "@wim/logger";
+import { createLogger, type Logger } from "@wim/logger";
 import { createExecutionWorker, createScheduler, QUEUES, type ExecutionHandler } from "@wim/queue";
 
 /**
@@ -75,7 +75,7 @@ export async function seedOrg(c: pg.Client, n: number, opts: { trial?: "ACTIVE" 
 }
 
 /** Pino logger whose output is captured for secret-leak assertions. */
-export function capturedLogger(name: string) {
+export function capturedLogger(name: string): { log: Logger; lines: string[] } {
   const lines: string[] = [];
   const stream = new Writable({ write(chunk, _enc, cb) { lines.push(String(chunk)); cb(); } });
   const log = createLogger(name, { level: "debug" }, stream);
