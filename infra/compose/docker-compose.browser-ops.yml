@@ -1,0 +1,111 @@
+# Phase 4D operational verification: the browser-monitoring topology in Docker, attached to the dev stack
+# (infra/compose/docker-compose.dev.yml provides Postgres, Redis and S3 on its default network = "data").
+#   docker compose -f infra/compose/docker-compose.browser-ops.yml up -d
+# Development/verification only: the fixture "internet" and the gateway's test allowance never exist in production.
+name: wim-browser-ops
+
+x-repo-node: &repo-node
+  image: node:24-alpine
+  working_dir: /repo
+  volumes: ["../..:/repo:ro"]
+  read_only: true
+  tmpfs: ["/tmp"]
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  # The controlled fault website + fixture DNS (stands in for the internet).
+  fixture:
+    <<: *repo-node
+    image: mcr.microsoft.com/playwright:v1.65.0-noble # has openssl for the fixture's test CA
+    working_dir: /repo/apps/scheduler
+    command: ["node", "scripts/fault-env.mjs"]
+    environment:
+      NODE_ENV: test
+      FAULT_BIND: 0.0.0.0
+      FAULT_ANSWER: 10.251.77.10
+      FAULT_DNS_PORT: "53"
+      FAULT_HTTP_PORT: "80"
+      FAULT_HTTPS_PORT: "443"
+      FAULT_CONTROL_PORT: "9999"
+      FAULT_HOSTS: ops-browser.fixture.example
+    cap_add: ["NET_BIND_SERVICE"]
+    user: "0"
+    networks: { fakenet: { ipv4_address: 10.251.77.10 } } # pages are flipped up/down with `docker compose exec fixture …`
+
+  egress-gateway:
+    <<: *repo-node
+    command: ["node", "apps/egress-gateway/dist/main.js"]
+    environment:
+      NODE_ENV: test
+      LOG_LEVEL: info
+      EGRESS_PORT: "8080"
+      EGRESS_TOKEN_SECRET: ${OPS_EGRESS_SECRET:?set OPS_EGRESS_SECRET}
+      DNS_RESOLVERS: 10.251.77.10
+      EGRESS_TEST_ALLOW_CIDRS: 10.251.77.0/24
+    networks:
+      fakenet: { ipv4_address: 10.251.77.2 }
+      browser-egress: { ipv4_address: 10.251.30.2 }
+      http-egress: { ipv4_address: 10.251.20.2 }
+
+  browser-runner:
+    image: wim-browser-runner:dev
+    environment:
+      RUNNER_GATEWAY_URL: http://10.251.30.2:8080
+      RUNNER_ADVERTISE_HOST: 10.251.40.22
+      RUNNER_MAX_SESSIONS: "2"
+    read_only: true
+    tmpfs: ["/tmp:size=512m", "/dev/shm:size=256m"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true", "seccomp=../security/seccomp/chromium.json"]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 512
+    networks:
+      browser-egress: { ipv4_address: 10.251.30.22 }
+      browser-control: { ipv4_address: 10.251.40.22 }
+
+  # Built workspace code in a hardened Node container (same code as infra/docker/worker-browser.Dockerfile produces).
+  worker-browser:
+    <<: *repo-node
+    working_dir: /repo/apps/worker-browser
+    command: ["node", "dist/main.js"]
+    environment:
+      WORKER_DATABASE_URL: ${OPS_WORKER_DATABASE_URL:?}
+      REDIS_URL: ${OPS_REDIS_URL:?}
+      WORKER_ID: ops-worker-browser
+      EGRESS_GATEWAY_URL: http://10.251.20.2:8080
+      EGRESS_TOKEN_SECRET: ${OPS_EGRESS_SECRET}
+      BROWSER_RUNNER_URL: http://10.251.40.22:3000
+      S3_ENDPOINT: http://s3:8333
+      S3_ACCESS_KEY: wim_s3_dev
+      S3_SECRET_KEY: wim_s3_dev_password
+      S3_BUCKET_ARTIFACTS: wim-artifacts
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      data: {}
+      browser-control: { ipv4_address: 10.251.40.20 }
+      http-egress: { ipv4_address: 10.251.20.20 }
+
+  scheduler:
+    <<: *repo-node
+    working_dir: /repo/apps/scheduler
+    command: ["node", "dist/main.js"]
+    environment:
+      WORKER_DATABASE_URL: ${OPS_WORKER_DATABASE_URL:?}
+      REDIS_URL: ${OPS_REDIS_URL:?}
+      SCHEDULER_TICK_MS: "2000"
+      SCHEDULER_INSTANCE_ID: ops-scheduler
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks: { data: {} }
+
+networks:
+  data: { external: true, name: wim-dev_default }
+  fakenet: { internal: true, ipam: { config: [{ subnet: 10.251.77.0/24 }] } }
+  browser-egress: { internal: true, ipam: { config: [{ subnet: 10.251.30.0/24 }] } }
+  browser-control: { internal: true, ipam: { config: [{ subnet: 10.251.40.0/24 }] } }
+  http-egress: { internal: true, ipam: { config: [{ subnet: 10.251.20.0/24 }] } }
