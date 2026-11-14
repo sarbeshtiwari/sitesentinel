@@ -1,0 +1,149 @@
+# Staging/production network policy for the monitoring data plane (release readiness, blocker 2).
+# Namespace `sitesentinel`. Requires a CNI that ENFORCES NetworkPolicy (Calico, Cilium; not the default kind/flannel).
+# Labels: app.kubernetes.io/component = scheduler | worker-http | worker-browser | worker-deepscan | worker-notify |
+#         browser-runner | egress-gateway | api | ingest | postgres | redis | object-storage
+# Cloud layer (must ALSO be configured — NetworkPolicy alone is not enough on most clouds):
+#   * metadata endpoint 169.254.169.254 / fd00:ec2::254 blocked for every pod except none (IMDS hop limit 1 or blocked by CNI)
+#   * the egress gateway's nodes/NAT: outbound 80/443 only; no route to VPC-private ranges except DNS resolvers
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny-all, namespace: sitesentinel }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Chromium runs here: it may talk ONLY to the egress gateway (proxy). No DNS, no database, no Redis, no storage,
+# no other service, no internet. Ingress only from worker-browser / worker-deepscan (control API + per-session WS ports).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: browser-runner, namespace: sitesentinel }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: browser-runner } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker-browser } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker-deepscan } }
+  egress:
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/component: egress-gateway } } }]
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# The only pod that reaches the internet: public 80/443 (+ DNS to the configured resolvers). Private ranges excluded
+# here as defence in depth; the gateway itself refuses non-public answers (SSRF, rebinding, metadata).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: egress-gateway, namespace: sitesentinel }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: egress-gateway } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: browser-runner } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker-http } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker-browser } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker-deepscan } }
+      ports: [{ protocol: TCP, port: 8080 }]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 127.0.0.0/8, 198.18.0.0/15, 0.0.0.0/8, 224.0.0.0/4, 240.0.0.0/4]
+      ports: [{ protocol: TCP, port: 80 }, { protocol: TCP, port: 443 }]
+    - to: [{ ipBlock: { cidr: RESOLVER_CIDR_PLACEHOLDER } }]   # the external resolvers in DNS_RESOLVERS, e.g. 1.1.1.1/32
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+# Trusted workers: data stores + gateway + (browser workers) the runner. Never the internet directly.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: workers, namespace: sitesentinel }
+spec:
+  podSelector:
+    matchExpressions: [{ key: app.kubernetes.io/component, operator: In, values: [worker-http, worker-browser, worker-deepscan] }]
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: postgres } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: redis } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: egress-gateway } }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: browser-runner } }
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: object-storage } }   # worker-browser screenshots only (narrow further per component if desired)
+      ports: [{ protocol: TCP, port: 8333 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+# Scheduler: data stores only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: scheduler, namespace: sitesentinel }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: scheduler } }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/component: postgres } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/component: redis } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+# Notification worker: data stores + the mail provider (SMTP/HTTPS to the provider's published ranges — set the CIDRs).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: worker-notify, namespace: sitesentinel }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: worker-notify } }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/component: postgres } } }]
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to: [{ podSelector: { matchLabels: { app.kubernetes.io/component: redis } } }]
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to: [{ ipBlock: { cidr: MAIL_PROVIDER_CIDR_PLACEHOLDER } }]
+      ports: [{ protocol: TCP, port: 587 }, { protocol: TCP, port: 443 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+# Data stores accept connections only from the components that use them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: postgres, namespace: sitesentinel }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: postgres } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions: [{ key: app.kubernetes.io/component, operator: In, values: [api, ingest, scheduler, worker-http, worker-browser, worker-deepscan, worker-notify] }]
+      ports: [{ protocol: TCP, port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: redis, namespace: sitesentinel }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: redis } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions: [{ key: app.kubernetes.io/component, operator: In, values: [api, ingest, scheduler, worker-http, worker-browser, worker-deepscan, worker-notify] }]
+      ports: [{ protocol: TCP, port: 6379 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: object-storage, namespace: sitesentinel }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: object-storage } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions: [{ key: app.kubernetes.io/component, operator: In, values: [api, worker-browser] }]
+      ports: [{ protocol: TCP, port: 8333 }]
