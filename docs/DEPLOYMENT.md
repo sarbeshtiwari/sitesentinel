@@ -1009,6 +1009,9 @@ are switched on only at step 9, by a Super Admin, after every gate below has pas
 ### Prerequisites (none available in the release-readiness environment)
 * Kubernetes (or equivalent) cluster with an **enforcing** NetworkPolicy CNI (Calico/Cilium), Chromium seccomp profile
   installed on nodes (`infra/security/seccomp/chromium.json` → `profiles/chromium.json`), IMDS blocked for pods.
+* Nodes running the browser runner must permit unprivileged user namespaces (Chromium's sandbox; on Ubuntu 23.10+
+  `kernel.apparmor_restrict_unprivileged_userns=0` or an AppArmor profile for the runner). Found by the first CI run:
+  without it Chromium cannot start (`BROWSER_UNAVAILABLE`). The sandbox is never disabled instead.
 * Managed PostgreSQL 16 with TLS, PITR backups (pgBackRest or provider-native), a separate migration identity.
 * Redis 7 with AUTH and persistence; S3-compatible bucket for artifacts (and a separate one for backups).
 * Secret manager + orchestrator integration (docs/SECRETS_AND_CREDENTIALS.md); mail provider with SPF/DKIM.

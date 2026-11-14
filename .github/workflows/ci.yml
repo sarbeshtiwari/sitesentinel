@@ -60,6 +60,10 @@ jobs:
       - run: pnpm turbo run build --filter='!@wim/web' --filter='!@wim/admin'
       - name: S3 object storage (SeaweedFS needs a command + config, which service containers can't take)
         run: docker run -d --name s3 -p 58333:8333 -v "$PWD/infra/seaweedfs/s3.dev.json:/etc/seaweedfs/s3.json:ro" chrislusf/seaweedfs:3.80 server -s3 -s3.port=8333 -dir=/data -s3.config=/etc/seaweedfs/s3.json
+      # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor; Chromium's sandbox (kept ON — never
+      # --no-sandbox) needs them. This is a host setting on the CI runner, equivalent to production nodes' configuration.
+      - name: Allow user namespaces for the Chromium sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Chromium for browser-monitoring integration tests
         run: pnpm --filter @wim/browser-runner exec playwright-core install --with-deps chromium
       - run: pnpm turbo run typecheck

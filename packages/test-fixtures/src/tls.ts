@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -40,8 +40,19 @@ export function createTestPki(): TestPki {
         try {
           run([...base, "-not_before", notBefore, "-not_after", notAfter]);
         } catch (e) {
-          if (explicit) throw e;
-          run([...base, "-days", "90"]);
+          if (!explicit) return run([...base, "-days", "90"]);
+          // OpenSSL 3.0–3.3 (e.g. Ubuntu 24.04): `openssl ca` supports explicit -startdate/-enddate
+          const self = signer.includes("-key");
+          writeFileSync(join(dir, "ca.cnf"), `[ca]\ndefault_ca=fx\n[fx]\ndatabase=${join(dir, "index.txt")}\nnew_certs_dir=${dir}\nserial=${join(dir, "serial")}\ndefault_md=sha256\npolicy=p\nunique_subject=no\ncopy_extensions=none\n[p]\ncommonName=supplied\norganizationName=optional\n`);
+          if (!existsSync(join(dir, "index.txt"))) writeFileSync(join(dir, "index.txt"), "");
+          if (!existsSync(join(dir, "serial"))) writeFileSync(join(dir, "serial"), "1000\n");
+          try {
+            run(["ca", "-batch", "-config", "ca.cnf", "-in", `${id}.csr`, "-out", `${id}.pem`, "-extfile", `${id}.ext`, "-notext",
+              "-startdate", notBefore, "-enddate", notAfter,
+              ...(self ? ["-selfsign", "-keyfile", `${id}.key`] : ["-cert", "ca.pem", "-keyfile", "ca.key"])]);
+          } catch {
+            throw e;
+          }
         }
       };
       if (opts.selfSigned) {
