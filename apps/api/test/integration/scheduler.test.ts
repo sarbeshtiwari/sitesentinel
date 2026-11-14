@@ -259,7 +259,9 @@ describe("idempotency and concurrency", () => {
   });
 
   it("Redis interruption: scheduling state survives in PostgreSQL and is re-enqueued after recovery; lost queue data is rebuilt", async () => {
-    await setSettings(c, HTTP_ON);
+    // Hourly interval: the cycles below must stay within one schedule window (with 60 s, CI crossed a boundary once
+    // and correctly scheduled the next window — 3 executions instead of 2).
+    await setSettings(c, { ...HTTP_ON, "monitoring.http.intervalSec": 3600 });
     const o = await seed(2);
     const url = new URL(process.env.REDIS_URL!);
     // A cuttable TCP path between the scheduler and Redis.
