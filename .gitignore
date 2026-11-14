@@ -19,3 +19,5 @@ blob-report/
 *.dump
 *.sql.gz
 staging-isolation*/
+.local/
+apps/*/AGENTS.md
