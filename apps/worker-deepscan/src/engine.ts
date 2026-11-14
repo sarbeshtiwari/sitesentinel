@@ -37,6 +37,8 @@ const PER_PATH_QUERY_CAP = 20; // trap guard: at most N query variants per path
 
 export interface ScanSnapshot {
   scope: Scope;
+  /** In scope only as redirect/link targets of the same website (www ⇄ apex); never probed on their own. */
+  aliasHosts?: string[];
   norm: UrlNormalizeOptions;
   limits: EffectiveScanLimits;
   respectRobots: boolean;
@@ -226,12 +228,15 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       const sitemapSeen = new Set<string>();
       const pageRows: Array<{ url: URL; source: string; inSitemap: boolean; depth: number }> = [];
       let sitemapCount = 0, sitemapUrls = 0, outOfScope = 0, badLastmod = 0;
-      for (const host of snap.scope.hosts) {
+      const aliases = new Set(snap.aliasHosts ?? []);
+      for (const host of snap.scope.hosts.filter((h) => !aliases.has(h))) {
         const robotsUrl = new URL(`${new URL(snap.origin).protocol}//${host}/robots.txt`);
         const r = await guardedFetch(robotsUrl, { readBody: true });
         if (r.error && INFRA.has(r.error)) { overheadRequests++; throw new TransientError(`gateway unavailable (${r.error})`); }
         if (r.error === "EGRESS_UNAUTHORIZED") throw new SecurityError("egress gateway rejected the scanner's capability");
         robots[host] = r.status === 200 && r.body ? parseRobots(r.body.toString("utf8").slice(0, 512 * 1024)) : null;
+        // The site serves itself from its alias (example.com → www.example.com): the same rules apply there.
+        if (r.finalUrl.hostname !== host && aliases.has(r.finalUrl.hostname)) robots[r.finalUrl.hostname] = robots[host];
         for (const sm of robots[host]?.sitemaps ?? []) {
           const u = normalizeUrl(sm, robotsUrl, snap.norm);
           if (!u || scopeDecision(u, { ...snap.scope, includePatterns: [], excludePatterns: [] }) !== "OK") {
@@ -496,6 +501,15 @@ export function createDeepScanEngine(d: DeepScanDeps) {
     }
   };
 
+  /**
+   * Alias hosts of the same website (domain.aliasLabels, default "www"): example.com ⇄ www.example.com are one website
+   * everywhere else (identity, SDK origin check), so a site that redirects between them stays crawlable.
+   */
+  function aliasHosts(host: string, labels: readonly string[]): string[] {
+    const lead = labels.find((l) => host.startsWith(`${l}.`) && host.split(".").length > 2);
+    return lead ? [host.slice(lead.length + 1)] : labels.map((l) => `${l}.${host}`);
+  }
+
   /** Create the scan (scope + limits snapshot) or resume it. One RUNNING scan per website (DB index). */
   async function openScan(tx: Tx, ctx: ExecutionContext, s: SettingsSnapshot) {
     const existing = await tx.$queryRaw<Array<ScanRow>>`SELECT * FROM deep_scans WHERE execution_id = ${ctx.executionId}::uuid FOR UPDATE`;
@@ -516,10 +530,11 @@ export function createDeepScanEngine(d: DeepScanDeps) {
        WHERE w.org_id = ${ctx.orgId}::uuid AND w.status = 'ACTIVE' AND w.archived_at IS NULL AND c.status = 'VERIFIED'
          AND lower(split_part(split_part(w.canonical_origin, '://', 2), '/', 1)) = ANY(${cfg.additionalHosts}::text[])` : [];
     const eff = effectiveScanLimits(limits, cfg, { maxPages: w.max_pages, maxDepth: w.max_depth });
+    const aliasHostList = aliasHosts(origin.hostname, s["domain.aliasLabels"]);
     const snap: ScanSnapshot = {
-      scope: { hosts: [origin.hostname, ...extra.map((x) => x.host).filter((h) => h !== origin.hostname)], includePatterns: [...cfg.includePatterns, ...(w.include_patterns ?? [])], excludePatterns: [...cfg.excludePatterns, ...(w.exclude_patterns ?? [])] },
+      scope: { hosts: [...new Set([origin.hostname, ...aliasHostList, ...extra.map((x) => x.host)])], includePatterns: [...cfg.includePatterns, ...(w.include_patterns ?? [])], excludePatterns: [...cfg.excludePatterns, ...(w.exclude_patterns ?? [])] },
       norm: { queryParamMode: cfg.queryParamMode, queryParamAllowlist: [...cfg.queryParamAllowlist, ...(w.query_param_allowlist ?? [])], excludedQueryParams: cfg.excludedQueryParams },
-      limits: eff, respectRobots: cfg.respectRobots && (w.respect_robots ?? true), checkResources: cfg.checkResources, origin: origin.origin,
+      aliasHosts: aliasHostList.filter((h) => h !== origin.hostname), limits: eff, respectRobots: cfg.respectRobots && (w.respect_robots ?? true), checkResources: cfg.checkResources, origin: origin.origin,
       startPaths: cfg.startPaths, sitemaps: cfg.sitemaps, deadline: Date.now() + eff.maxDurationSec * 1000,
       severityOverrides: cfg.severityOverrides, incidentGroups: cfg.incidentGroups,
     };
