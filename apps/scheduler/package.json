@@ -1,0 +1,32 @@
+{
+  "name": "@wim/scheduler",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --enable-source-maps dist/main.js"
+  },
+  "dependencies": {
+    "@wim/core": "workspace:*",
+    "@wim/db": "workspace:*",
+    "@wim/logger": "workspace:*",
+    "@wim/queue": "workspace:*",
+    "bullmq": "6.7.6",
+    "ioredis": "6.0.0",
+    "zod": "4.6.7",
+    "@wim/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "^24.0.0",
+    "@wim/test-fixtures": "workspace:*"
+  }
+}
