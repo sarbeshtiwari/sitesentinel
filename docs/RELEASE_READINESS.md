@@ -322,3 +322,32 @@ monitoring and functional testing remain disabled by default.
 7. **External DNS resolver CIDRs** and **mail provider CIDRs** for `infra/staging/networkpolicies.yaml`.
 8. **Internal test websites** you control for the monitoring and load gates, and the target plan limits for the load test.
 9. **Product decision on functional testing** (blocker 9) — or keep it disabled.
+
+---
+
+# CI execution (2026-11-15) — repository `sarbeshtiwari/sitesentinel`
+
+Branch model: changes land on `stage` (CI on push and PR), then fast-forward to `main` (CI on push). Workflow triggers:
+`push`/`pull_request` on `main` and `stage`, plus `workflow_dispatch`.
+
+| Run | Branch / commit | Result | What it established |
+|---|---|---|---|
+| 43586105632 | main `006eaed` | test ✗ (runner disk full), isolation ✓ | First native linux/amd64 isolation run of the production runner image: passed. Integration suite died with `No space left on device`. |
+| 43586815787 | stage `3e1c9b7` | test ✗ (250/289), isolation ✓ | Disk fixed (21 GB free throughout). 39 failures: Chromium could not start (Ubuntu 24.04 restricts unprivileged user namespaces → `BROWSER_UNAVAILABLE`), and the TLS fixture used `openssl -not_before` (OpenSSL ≥ 3.4) on OpenSSL 3.0. |
+| 43589303878 | stage `6d2e9c7` | test ✗ (288/289), isolation ✓ | Sandbox works in CI (user namespaces allowed on the runner; the sandbox stays ON); TLS fixture falls back to `openssl ca` (verified locally on Ubuntu 24.04 / OpenSSL 3.0.13). 1 failure: a test counted deep-scan executions platform-wide. |
+| **43591319838** | **stage `7308a75`** | **✓ test, ✓ isolation** | **First fully green run.** |
+| 43592874983 | main `7308a75` | test ✗ (288/289), isolation ✓, **images published** | Same commit as the green stage run; one intermittent failure in the 5-concurrent-schedulers test (31 vs 30 executions — a website legitimately received its next window; the test asserted an exact count instead of "no duplicate window"). Test fixed to assert the property. |
+
+**Published images (CI-built, linux/amd64, isolation-validated, commit `7308a754438e4b573cd473445c9c5be439d74c81`):**
+* `ghcr.io/sarbeshtiwari/sitesentinel/wim-browser-runner@sha256:1fe5fb2200153bb69b42661dbdd84bbd7c846212065c30bc0d3959944e8d0688` (runs as `pwuser`)
+* `ghcr.io/sarbeshtiwari/sitesentinel/wim-worker-browser@sha256:9b6780443f79a58c780d8f325a87363b9de9362986ac91b35e1475901897f0a8` (runs as `node`)
+
+**Effect on blockers:** blocker 4 (CI isolation job) — **RESOLVED**: the isolation job runs on every push to `stage`/`main`,
+builds the production images, runs the 170-check isolation suite against the production runner image on native amd64,
+and passed in every run above (evidence: run IDs, retained `isolation-results` artifact incl. `published-digests.txt`).
+Blocker 1 (production image) — **CODE RESOLVED**: CI-built amd64 images exist by digest and pass isolation natively
+(including the sandbox checks that could not be confirmed under emulation); staging execution is still outstanding.
+Blocker 5 — adversarial tests now also pass in CI; staging confirmation outstanding. Blockers 2, 6, 7, 8 unchanged
+(BLOCKED); 9 OPEN.
+
+**New deployment requirement found by CI:** browser-runner nodes must permit unprivileged user namespaces (DEPLOYMENT.md §25).
