@@ -1,0 +1,10 @@
+{
+  "name": "@wim/email",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test:unit": "vitest run" },
+  "dependencies": { "nodemailer": "8.0.11", "@aws-sdk/client-sesv2": "3.1168.0" },
+  "devDependencies": { "vitest": "5.1.0", "typescript": "5.9.3", "@types/node": "^24.0.0", "@types/nodemailer": "8.0.2" }
+}

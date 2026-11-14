@@ -1,0 +1,117 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_DB: wim
+          POSTGRES_USER: wim_owner
+          POSTGRES_PASSWORD: wim_owner_dev_password
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wim_owner -d wim" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["56379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+      mailpit:
+        image: axllent/mailpit:v1.21
+        ports: ["51025:1025", "58025:8025"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Database roles and extensions (what infra/postgres/init does locally)
+        run: |
+          sudo apt-get install -y postgresql-client >/dev/null
+          PGPASSWORD=wim_owner_dev_password psql -h 127.0.0.1 -p 55432 -U wim_owner -d wim -v ON_ERROR_STOP=1 -f infra/postgres/init/001_roles_extensions.sql
+          PGPASSWORD=wim_owner_dev_password psql -h 127.0.0.1 -p 55432 -U wim_owner -d wim -v ON_ERROR_STOP=1 -f infra/postgres/init/002_scanner_role.sql
+      - name: Redis password (service containers cannot pass server args)
+        run: docker exec $(docker ps -qf "ancestor=redis:7.4-alpine") redis-cli CONFIG SET requirepass wim_redis_dev_password
+      - name: Environment and test key ring
+        run: |
+          cp .env.example .env
+          node packages/crypto/scripts/init-dev-keys.mjs
+      - run: pnpm turbo run build --filter='!@wim/web' --filter='!@wim/admin'
+      - name: S3 object storage (SeaweedFS needs a command + config, which service containers can't take)
+        run: docker run -d --name s3 -p 58333:8333 -v "$PWD/infra/seaweedfs/s3.dev.json:/etc/seaweedfs/s3.json:ro" chrislusf/seaweedfs:3.80 server -s3 -s3.port=8333 -dir=/data -s3.config=/etc/seaweedfs/s3.json
+      - name: Chromium for browser-monitoring integration tests
+        run: pnpm --filter @wim/browser-runner exec playwright-core install --with-deps chromium
+      - run: pnpm turbo run typecheck
+      - run: pnpm turbo run test:unit
+      - name: Integration tests (real Postgres, Redis, Mailpit)
+        run: pnpm --filter @wim/api test:integration
+      - name: Phase 1 database invariants
+        run: PGPASSWORD=wim_owner_dev_password psql -h 127.0.0.1 -p 55432 -U wim_owner -d wim_test -v ON_ERROR_STOP=1 -f packages/db/tests/invariants.sql
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+  # Network-isolation proof (SECURITY.md §25, §29): builds the real topology in Docker on a Linux runner and
+  # runs every probe inside the containers (incl. the sandboxed browser runner under the Chromium seccomp profile).
+  # This proves the Compose topology on a Linux Docker host; it is NOT proof of the production/staging network
+  # (cloud security groups, host firewall, orchestrator policies) — see DEPLOYMENT.md §19 for the staging run.
+  isolation:
+    runs-on: ubuntu-24.04   # linux/amd64 — the architecture staging/production nodes run
+    timeout-minutes: 45
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo run build --filter=@wim/netguard --filter=@wim/egress-gateway --filter=@wim/browser-runner
+      - name: Pull images
+        run: docker compose -f infra/security/isolation/docker-compose.yml pull --quiet --ignore-buildable
+      # Release readiness (blockers 1/4): build the PRODUCTION images and run the isolation proof against the runner
+      # image itself (its own /app, production run flags) — not the development container.
+      - name: Build production images
+        run: |
+          set -euo pipefail
+          docker build -f infra/docker/browser-runner.Dockerfile -t wim-browser-runner:ci .
+          docker build -f infra/docker/worker-browser.Dockerfile -t wim-worker-browser:ci .
+          mkdir -p ${{ runner.temp }}/isolation
+          for i in wim-browser-runner:ci wim-worker-browser:ci; do
+            docker image inspect "$i" --format '{{.Id}} {{.Config.User}} {{.Architecture}}' | tee -a ${{ runner.temp }}/isolation/images.txt
+            test "$(docker image inspect "$i" --format '{{.Config.User}}')" != "" || { echo "$i runs as root"; exit 1; }
+          done
+          # no credentials or key material baked into the images
+          for i in wim-browser-runner:ci wim-worker-browser:ci; do
+            if docker run --rm --entrypoint sh "$i" -c 'grep -rlE "dev_password|BEGIN (RSA |EC )?PRIVATE KEY" /app --include=*.js --include=*.json 2>/dev/null | grep -v node_modules' ; then echo "secret material in $i"; exit 1; fi
+          done
+      - name: Isolation probes (production runner image)
+        run: RUNNER_IMAGE=wim-browser-runner:ci RUNNER_WORKDIR=/app ISOLATION_OUT=${{ runner.temp }}/isolation infra/security/run-isolation-tests.sh
+      # Release readiness: publish the exact images that passed isolation, and record their immutable digests.
+      # Only on main; pull requests never push. Deployments reference REGISTRY/IMAGE@sha256:… from images.txt.
+      - name: Publish validated images (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for i in browser-runner worker-browser; do
+            docker tag "wim-$i:ci" "$repo/wim-$i:${GITHUB_SHA}"
+            docker push "$repo/wim-$i:${GITHUB_SHA}"
+            echo "wim-$i commit=${GITHUB_SHA} $(docker image inspect "$repo/wim-$i:${GITHUB_SHA}" --format '{{index .RepoDigests 0}}')" | tee -a ${{ runner.temp }}/isolation/published-digests.txt
+          done
+      - name: Probe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: isolation-results, path: "${{ runner.temp }}/isolation", retention-days: 90 }
