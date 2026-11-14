@@ -11,7 +11,11 @@ import { applyServerErrors, useZodForm } from "@/lib/form";
 import { useConfig } from "@/lib/hooks";
 
 function RegisterForm() {
-  const { config, isLoading } = useConfig();
+  const { config, isFetched } = useConfig();
+  // This form hydrates inside a Suspense boundary, often after the config request has already finished, so anything
+  // derived from it must start from the server's view (not loaded) and switch after hydration — else React reports a mismatch.
+  const [configReady, setConfigReady] = useState(false);
+  useEffect(() => { if (isFetched) setConfigReady(true); }, [isFetched]);
   const params = useSearchParams();
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,13 +52,13 @@ function RegisterForm() {
       </AuthCard>
     );
   }
-  if (!isLoading && config.registration === "CLOSED") {
+  if (configReady && config.registration === "CLOSED") {
     return <AuthCard title="Registration is closed"><p className="text-sm text-muted-foreground">New accounts can't be created right now.</p></AuthCard>;
   }
   return (
     <AuthCard
       title="Create your account"
-      description={config.registration === "INVITE_ONLY" ? "Registration is by invitation only. Use the email address you were invited with." : `Start monitoring with ${config.productName}.`}
+      description={configReady && config.registration === "INVITE_ONLY" ? "Registration is by invitation only. Use the email address you were invited with." : `Start monitoring with ${config.productName}.`}
       footer={<>Already have an account? <Link className="text-primary hover:underline" href={loginHref}>Sign in</Link></>}
     >
       <form onSubmit={onSubmit} className="grid gap-4" noValidate>
@@ -78,7 +82,7 @@ function RegisterForm() {
           </label>
           {errors.acceptTerms && <p role="alert" className="text-xs text-danger">Please accept the terms to continue</p>}
         </div>
-        <Button type="submit" size="lg" loading={isSubmitting} disabled={isLoading} className="mt-1 w-full">Create account</Button>
+        <Button type="submit" size="lg" loading={isSubmitting} disabled={!configReady} className="mt-1 w-full">Create account</Button>
       </form>
     </AuthCard>
   );

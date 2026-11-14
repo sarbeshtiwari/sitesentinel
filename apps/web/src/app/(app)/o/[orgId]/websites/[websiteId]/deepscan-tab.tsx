@@ -1,5 +1,5 @@
 "use client";
-import { Badge, Button, ConfirmDialog, EmptyState, Input, MetricCard, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
+import { Alert, Badge, Button, ConfirmDialog, EmptyState, Input, MetricCard, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, CheckCircle2, FileSearch, History, ListTree, Loader2, Pause, Play, ScanSearch, ShieldAlert, Square, Timer, Unlink } from "lucide-react";
 import Link from "next/link";
@@ -22,7 +22,7 @@ interface SummaryDto {
   entitled: boolean; enabled: boolean; pausedReason: string | null; nextRunAt: string | null; latestScan: ScanDto | null;
   openFindings: Array<{ group: string; severity: string; count: number }>; effectiveLimits: { maxPages: number; maxDepth: number; browserPages: number; externalLinks: boolean };
 }
-export const GROUP_LABEL: Record<string, string> = { broken_pages: "Broken pages", broken_resources: "Broken resources", sitemap: "Sitemap", seo: "SEO", accessibility: "Accessibility (automated checks)", structure: "Structure" };
+export const GROUP_LABEL: Record<string, string> = { broken_pages: "Broken pages", broken_resources: "Broken resources", forms: "Forms & search", sitemap: "Sitemap", seo: "SEO", accessibility: "Accessibility (automated checks)", structure: "Structure" };
 const STOP_LABEL: Record<string, string> = {
   FRONTIER_EXHAUSTED: "Every discovered page was checked", PAGE_LIMIT: "Stopped at the page limit", DURATION: "Stopped at the time limit", REQUEST_BUDGET: "Request budget used up",
   DAILY_QUOTA: "Daily page quota reached", INFRASTRUCTURE: "Our infrastructure failed (not your website)", NO_PAGE_REACHABLE: "No page could be reached safely",
@@ -60,15 +60,19 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
   return (
     <div className="grid gap-5">
       <QueryState q={sum}>
-        {s && !s.entitled ? (
+        {s && !s.entitled && !scans.data?.length ? (
           <Section title="Deep scans" icon={<ScanSearch />}>
             <EmptyState icon={<ScanSearch />} title={`Deep scans are unavailable: ${entitledReason ?? "not included in your plan"}.`}
               description="A deep scan crawls your verified website (only its own pages, respecting robots.txt) and reports broken pages and resources, SEO, structure and automated accessibility issues." />
           </Section>
         ) : s && (
           <>
+            {!s.entitled && (
+              // Past scans and findings stay readable when new scans aren't available (plan or platform switch).
+              <Alert tone="warning" title={`New deep scans are unavailable: ${entitledReason ?? "not included in your plan"}.`}>Earlier scans and their findings are shown below.</Alert>
+            )}
             <Section title="Deep scans" icon={<ScanSearch />} description={s.enabled ? (s.nextRunAt ? `Next scheduled scan ${fmtUtc(s.nextRunAt)}` : "Scheduled") : s.pausedReason === "DISABLED_BY_CUSTOMER" ? "Paused by your organisation" : "Not scheduled yet"}
-              actions={canWrite && (
+              actions={canWrite && s.entitled && (
                 <div className="flex flex-wrap gap-2">
                   {!running && s.enabled && <Button size="sm" onClick={() => act(() => post(`${base}/start`), "Scan requested")}><Play /> Start scan</Button>}
                   {running && <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")}><Square /> Cancel scan</Button>}

@@ -7,6 +7,7 @@ import type { Tx } from "@wim/db";
 import { openIncident, recordLedger, recordOccurrence, resolveIncident } from "@wim/incidents";
 import { addUsage } from "@wim/queue";
 import type { ScanSnapshot } from "./engine.js";
+import type { HtmlForm } from "./html.js";
 
 interface UrlRow {
   url: string; kind: string; resource_type: string | null; state: string; skip_reason: string | null; depth: number; source: string; in_sitemap: boolean;
@@ -55,6 +56,11 @@ export async function finalizeScan(tx: Tx, i: {
     const s = disp(p.url);
     const f = p.facts ?? {};
     const referred = { linkedFrom: p.first_referrer, linkCount: p.referrers, inSitemap: p.in_sitemap };
+    if (p.source === "SEARCH") {
+      // the scanner's own test query through the site's search form: report search health, not page SEO
+      if (p.state === "FAILED" || p.error === "REDIRECT_LOOP") add("SEARCH_BROKEN", disp(p.first_referrer ?? p.url), `search:${new URL(p.url).pathname}`, { searchUrl: s, status: p.status_code, error: p.error, formOn: p.first_referrer });
+      continue;
+    }
     if (p.error === "REDIRECT_LOOP") add("REDIRECT_LOOP", s, p.url, { chain: p.redirect_chain, ...referred });
     else if (p.state === "FAILED") add("BROKEN_PAGE", s, p.url, { status: p.status_code, error: p.error, ...referred });
     if ((p.redirect_chain?.length ?? 0) >= 3) add("REDIRECT_CHAIN", s, p.url, { hops: p.redirect_chain!.length, chain: p.redirect_chain });
@@ -87,6 +93,16 @@ export async function finalizeScan(tx: Tx, i: {
     if (f.headingSkips) add("HEADING_SKIP", s, p.url, { skips: f.headingSkips });
     if (!f.hasMain) add("MISSING_MAIN_LANDMARK", s, p.url, {});
     if (f.duplicateIds) add("DUPLICATE_ID", s, p.url, { ids: f.duplicateIds });
+    const pageHttps = new URL(p.final_url ?? p.url).protocol === "https:";
+    for (const [n, fm] of ((f.forms ?? []) as HtmlForm[]).entries()) {
+      const key = `${p.url}#form${n}`;
+      let action: URL | null = null;
+      try { action = new URL(fm.action?.trim() || p.final_url || p.url, p.final_url ?? p.url); } catch { /* malformed action: nothing to judge */ }
+      if (pageHttps && action?.protocol === "http:") add("FORM_INSECURE_ACTION", s, key, { action: disp(action.href), method: fm.method });
+      if (fm.password && !pageHttps) add("PASSWORD_FIELD_INSECURE", s, key, {});
+      if (!fm.submit && !fm.search) add("FORM_NO_SUBMIT", s, key, { method: fm.method });
+      if (fm.search && !fm.queryField) add("SEARCH_FIELD_UNNAMED", s, key, {});
+    }
   }
   // site-level duplicates (only among pages analysed in this scan)
   const groupBy = (key: (f: Record<string, any>) => string | null) => {

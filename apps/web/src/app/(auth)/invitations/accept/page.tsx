@@ -14,10 +14,11 @@ function Accept() {
   const router = useRouter();
   const qc = useQueryClient();
   const here = `/invitations/accept?token=${encodeURIComponent(token)}`;
+  const tokenLooksValid = token.length >= 20;
   const preview = useQuery({
     queryKey: ["invitation-preview", token],
     queryFn: () => get<DataEnvelope<InvitationPreviewDto>>(`/invitations/preview?token=${encodeURIComponent(token)}`, { noAuthRedirect: true }).then((r) => r.data),
-    enabled: token.length >= 20,
+    enabled: tokenLooksValid,
   });
   const me = useMe({ noAuthRedirect: true });
   const [busy, setBusy] = useState(false);
@@ -42,13 +43,13 @@ function Accept() {
     }
   };
 
-  if (!token || preview.isError) {
+  if (!tokenLooksValid || preview.isError) {
     return <AuthCard title="Invitation"><Alert tone="danger" title="This invitation link is invalid or has expired.">Ask the person who invited you to send a new one.</Alert></AuthCard>;
   }
-  if (preview.isLoading || me.isLoading) {
+  if (preview.isPending || me.isLoading) {
     return <AuthCard title="Invitation"><div className="grid gap-2"><Skeleton className="h-5 w-2/3" /><Skeleton className="h-5 w-1/2" /></div></AuthCard>;
   }
-  const inv = preview.data!;
+  const inv = preview.data;
   const signedIn = me.isSuccess;
   const wrongUser = signedIn && me.data.email.toLowerCase() !== inv.email.toLowerCase();
   return (

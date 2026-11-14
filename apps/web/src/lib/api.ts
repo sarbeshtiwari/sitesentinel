@@ -32,7 +32,9 @@ function readCookie(name: string): string | null {
 let csrfPromise: Promise<void> | null = null;
 async function ensureCsrf() {
   if (readCookie(CSRF_COOKIE)) return;
-  csrfPromise ??= fetch("/api/v1/auth/csrf", { credentials: "same-origin" }).then(() => undefined).finally(() => { csrfPromise = null; });
+  csrfPromise ??= fetch("/api/v1/auth/csrf", { credentials: "same-origin" })
+    // Drain the (unused) body so the response completes and its connection is released.
+    .then((r) => r.arrayBuffer()).then(() => undefined, () => undefined).finally(() => { csrfPromise = null; });
   await csrfPromise;
 }
 

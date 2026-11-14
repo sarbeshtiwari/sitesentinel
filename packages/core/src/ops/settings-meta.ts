@@ -15,6 +15,8 @@ const PROTECTED_KEYS = new Set<string>([
   "monitoring.functional.enabled", "monitoring.deepscan.externalLinks", "monitoring.deepscan.minRequestDelayMs",
   "monitoring.browser.maxConnectionsPerExecution", "ops.alerts.enabled", "ops.alerts.disabledRules", "ops.alerts.recipients",
   "platform.maintenanceMode",
+  // Phase 8: turning billing on starts real payment-gateway traffic
+  "billing.enabled",
 ]);
 
 export function settingMeta(key: SettingKey): SettingMeta {
@@ -23,7 +25,7 @@ export function settingMeta(key: SettingKey): SettingMeta {
   const apply: SettingMeta["apply"] = k.startsWith("queue.") ? "restart" : "live";
   let section: SettingSection = "product";
   if (PROTECTED_PREFIXES.some((p) => k.startsWith(p))) section = "security";
-  else if (/^monitoring\.[a-z]+\.(enabled|defaultEntitled)$/.test(k) || k === "monitoring.deepscan.externalLinks" || k === "platform.maintenanceMode" || k === "ops.alerts.enabled" || k === "ops.usage.reconcileDaily") section = "features";
+  else if (/^monitoring\.[a-z]+\.(enabled|defaultEntitled)$/.test(k) || k === "monitoring.deepscan.externalLinks" || k === "platform.maintenanceMode" || k === "billing.enabled" || k === "ops.alerts.enabled" || k === "ops.usage.reconcileDaily") section = "features";
   else if (k.startsWith("scheduler.") || /intervalSec$/.test(k) || /OutstandingJobs$|perCycleQuota$/.test(k)) section = "scheduling";
   else if (k.startsWith("queue.")) section = "queues";
   else if (/(manualCooldownSec|minRequestDelayMs)$/.test(k) || k === "ops.alerts.cooldownMin") section = "cooldowns";

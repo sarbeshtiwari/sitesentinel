@@ -570,6 +570,14 @@ Res { data: {
 
 ### 2.15 Billing
 
+> **Implemented in Phase 8 (2026-11-15)** — the subset below differs from this design; [BILLING.md](BILLING.md) §6–§7 is
+> authoritative for what exists: `GET /orgs/:orgId/billing` (subscription + trial + entitlements + usage in one call),
+> `GET …/billing/plans`, `GET …/billing/invoices`, `POST …/billing/checkout` `{ planKey, interval, currency }` →
+> `{ url }` (gateway-hosted page for both gateways), `POST …/billing/change-plan` `{ planKey, interval }`,
+> `POST …/billing/cancel`, `POST …/billing/resume`; webhooks at `POST /api/v1/billing/webhooks/{stripe|razorpay}`;
+> admin under `/api/admin/v1/billing/*` and `/api/admin/v1/customers/:orgId/entitlement-overrides`. Not implemented yet:
+> change-plan preview, invoice download, payment methods, portal, billing details, coupons.
+
 | Method | Path | Perm | Description |
 |---|---|---|---|
 | GET | `/plans` | public | Visible, active plans with prices (by currency) and entitlement highlights |

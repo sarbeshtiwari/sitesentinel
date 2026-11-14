@@ -6,6 +6,8 @@ import { z } from "zod";
 import type { MonitoringTier } from "@wim/core";
 import { createDb, loadSettings, withSystem } from "@wim/db";
 import { createLogger } from "@wim/logger";
+import { LocalKeyProvider, type KeyProvider } from "@wim/crypto";
+import { platformSecretOpener, runBillingReconciliation } from "@wim/billing";
 import { EMAIL_QUEUE } from "@wim/contracts";
 import {
   createHeartbeat, createScheduler, DbOutageWatch, DeadLetterJob, partitionMaintenance, QUEUES, recordUsageGauges, relayOutbox,
@@ -44,7 +46,12 @@ export function startScheduler(source: NodeJS.ProcessEnv = process.env) {
     gauges: () => ({ activeJobs: 0, capacity: 1, processed: cycles, failed: cycleFailures, lastJobAt: lastCycleAt }) });
   const opsQueues = { [QUEUES.http]: queues.HTTP, [QUEUES.browser]: queues.BROWSER, [QUEUES.deepscan]: queues.DEEPSCAN, [EMAIL_QUEUE]: emailQueue };
   const outage = new DbOutageWatch({ emailQueue, log, evaluatorId: instanceId });
-  let lastOps = 0, lastRecon = 0, lastGauges = 0;
+  let lastOps = 0, lastRecon = 0, lastGauges = 0, lastBilling = 0;
+  // Phase 8: the gateway comparison needs the KEK ring (gateway secrets); without it only the time-based transitions run
+  let keyProvider: KeyProvider | null = null;
+  if (source.KEK_RING_FILE || source.KEK_RING_JSON) {
+    try { keyProvider = LocalKeyProvider.fromEnv(source); } catch (e) { log.warn({ err: (e as Error).message }, "key ring unreadable: billing gateway reconciliation disabled"); }
+  }
   void hb.started();
 
   // Dead letters: count and alert (aggregate only). Replays are requested by admins and run in the cycle.
@@ -111,6 +118,22 @@ export function startScheduler(source: NodeJS.ProcessEnv = process.env) {
           if (Date.now() - lastGauges >= 3_600_000) { await recordUsageGauges(db); lastGauges = Date.now(); }
         } catch (e) {
           log.warn({ err: (e as Error).message }, "usage reconciliation failed; retried next minute");
+        }
+      }
+      // Phase 8: daily billing reconciliation (checked every 10 minutes; runs once a day platform-wide, advisory-locked)
+      if (Date.now() - lastBilling >= 600_000) {
+        lastBilling = Date.now();
+        try {
+          const settings = await loadSettings(db);
+          if (settings["billing.reconcileDaily"]) {
+            const r = await runBillingReconciliation(db, {
+              billingEnabled: settings["billing.enabled"], graceDays: settings["billing.graceDays"],
+              open: keyProvider ? platformSecretOpener(db, keyProvider) : null,
+            });
+            if (r.ran) log.info({ expired: r.expired, canceled: r.canceled, trialsConverted: r.trialsConverted, checked: r.checked, corrected: r.corrected, gatewayErrors: r.gatewayErrors, note: r.reason }, "billing reconciliation");
+          }
+        } catch (e) {
+          log.warn({ err: (e as Error).message }, "billing reconciliation failed; retried in 10 minutes");
         }
       }
       await hb.beat();

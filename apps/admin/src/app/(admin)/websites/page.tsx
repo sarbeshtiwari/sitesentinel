@@ -20,7 +20,7 @@ export default function WebsiteStatsPage() {
   const d = q.data;
   return (
     <>
-      <PageHeader title="Websites & domains" description={d ? `Updated ${new Date(d.generatedAt).toLocaleTimeString()}` : undefined} />
+      <PageHeader title="Websites & domains" description={d ? `Updated ${d.generatedAt.slice(11, 19)} UTC` : undefined} />
       <Alert className="mb-6" title={<span className="flex items-center gap-2"><Lock className="h-4 w-4" aria-hidden /> Aggregate counts only</span>}>
         No customer telemetry, site keys, verification tokens or website content are accessible from this console.
       </Alert>

@@ -64,7 +64,7 @@ export const AdminApi = () => SetMetadata(ADMIN_API, true);
 export const ADMIN_PERMISSION = "wim:adminPermission";
 export const RequireAdminPermission = (p: AdminPermission) => SetMetadata(ADMIN_PERMISSION, p);
 
-/** Liveness/readiness probes (no auth, no CSRF). */
+/** Liveness/readiness probes and signed payment-gateway webhooks (no session, no CSRF; webhooks authenticate by signature). */
 export const INFRA = "wim:infra";
 export const Infra = () => SetMetadata(INFRA, true);
 

@@ -14,3 +14,5 @@ export * from "./monitoring/deepscan.js";
 export * from "./ops/health.js";
 export * from "./ops/settings-meta.js";
 export * from "./ops/usage.js";
+export * from "./billing/subscription.js";
+export * from "./billing/entitlements.js";

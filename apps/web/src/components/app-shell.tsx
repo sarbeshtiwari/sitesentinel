@@ -2,7 +2,7 @@
 import type { Permission } from "@wim/core";
 import {
   Activity, Bell, Building2, Check, ChevronsUpDown, Gauge, Globe, History, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailWarning,
-  Plus, ScrollText, Settings, ShieldCheck, Siren, User, Users,
+  CreditCard, Plus, ScrollText, Settings, ShieldCheck, Siren, User, Users,
 } from "lucide-react";
 import {
   AppShell, Avatar, Badge, Breadcrumbs, Button, DropdownItem, DropdownLabel, DropdownMenu, DropdownSeparator, Logo, LogoSymbol,
@@ -44,9 +44,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LABELS: Record<string, string> = {
   overview: "Overview", websites: "Websites", new: "Add website", transfers: "Transfers", incidents: "Incidents", history: "History",
   notifications: "Notifications", preferences: "Preferences", usage: "Usage & limits", settings: "Settings", general: "General",
-  team: "Team", roles: "Roles", audit: "Audit log", account: "Account", profile: "Profile", security: "Security", onboarding: "Get started",
+  team: "Team", roles: "Roles", audit: "Audit log", billing: "Billing", account: "Account", profile: "Profile", security: "Security", onboarding: "Get started",
   "api-monitoring": "API monitoring", browser: "Browser run", "deep-scan": "Deep scan", scans: "Scans", findings: "Findings",
 };
+// Website sub-paths without an index page → the website tab that lists them.
+const WEBSITE_TAB_SEGMENT: Record<string, string> = { browser: "browser", "deep-scan": "deep-scan" };
 // The record type each id-segment refers to, by the segment before it.
 const ID_LABEL: Record<string, string> = { websites: "Website", incidents: "Incident", browser: "Run", scans: "Scan", findings: "Finding" };
 
@@ -60,6 +62,12 @@ function useCrumbs(pathname: string, orgName?: string) {
     if (p === "o") return;
     if (i === 1 && parts[0] === "o") { items.push({ label: orgName ?? "Organization", href: `${href}/overview` }); return; }
     if (p === "settings" || p === "account") return; // section groups without their own page
+    // Sub-records of a website have no index page of their own; their list lives on a tab of the website page.
+    if (parts[i - 2] === "websites" && UUID.test(parts[i - 1] ?? "") && WEBSITE_TAB_SEGMENT[p]) {
+      items.push({ label: LABELS[p] ?? p, href: `${href.slice(0, -(p.length + 1))}?tab=${WEBSITE_TAB_SEGMENT[p]}` });
+      return;
+    }
+    if (parts[i - 3] === "websites" && parts[i - 1] === "deep-scan") return; // "scans" / "findings": no page; the Deep scan crumb covers it
     const label = UUID.test(p) ? (ID_LABEL[parts[i - 1] ?? ""] ?? "Details") : (LABELS[p] ?? p);
     items.push({ label, href });
   });
@@ -120,6 +128,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
           {can("org:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/general`} icon={<Settings />} active={is(`${base}/settings/general`)}>General</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/team`} icon={<Users />} active={is(`${base}/settings/team`)}>Team</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/roles`} icon={<KeyRound />} active={is(`${base}/settings/roles`)}>Roles</SidebarItem>}
+          {can("billing:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/billing`} icon={<CreditCard />} active={is(`${base}/settings/billing`)}>Billing</SidebarItem>}
           {can("audit:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/audit`} icon={<ScrollText />} active={is(`${base}/settings/audit`)}>Audit log</SidebarItem>}
         </SidebarSection>
       )}

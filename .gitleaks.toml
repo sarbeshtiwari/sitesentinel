@@ -1,4 +1,4 @@
-# Secret scanning (CI: gitleaks-action). Default rules apply everywhere; the allowlist covers ONLY test fixtures whose
+# Secret scanning (CI: pinned gitleaks binary, see .github/workflows/ci.yml). Default rules apply everywhere; the allowlist covers ONLY test fixtures whose
 # "secrets" are deliberate, non-functional test values (test passwords, test gateway signing secrets, fake tokens used
 # to test log redaction) and the isolation test topology. Application source, infra/staging, docs and config stay
 # fully scanned. Reviewed during release readiness (RELEASE_READINESS.md §11).

@@ -4,7 +4,7 @@ import { ChevronLeft, Code2, ExternalLink, Globe, ShieldCheck, SlidersHorizontal
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { errorMessage } from "@/lib/api";
+import { ApiError, errorMessage } from "@/lib/api";
 import { useOrg } from "@/lib/hooks";
 import { INSTALL_STATE, useWebsite, VERIFICATION_STATE } from "@/lib/websites";
 import { HealthBadge } from "@/components/monitoring";
@@ -80,7 +80,17 @@ export default function WebsiteDetailPage() {
   const back = <Link href={`/o/${orgId}/websites`} className="inline-flex items-center gap-1 rounded text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" aria-hidden /> Websites</Link>;
 
   if (site.isLoading) return <div role="status" aria-label="Loading" className="grid gap-4"><Skeleton className="h-20" /><Skeleton className="h-10" /><Skeleton className="h-64" /></div>;
-  if (site.isError || !site.data) return <div className="grid gap-4"><div>{back}</div><Alert tone="danger" title={site.isError ? errorMessage(site.error) : "Website not found"} /></div>;
+  if (site.isError || !site.data) {
+    const notFound = !site.isError || (site.error instanceof ApiError && site.error.status === 404);
+    return (
+      <div className="grid gap-4">
+        <div>{back}</div>
+        {notFound
+          ? <Alert tone="warning" title="Website not found">It may have been removed, or it belongs to another organisation.</Alert>
+          : <Alert tone="danger" title={errorMessage(site.error)} />}
+      </div>
+    );
+  }
   const w = site.data;
   const v = VERIFICATION_STATE[w.verification] ?? { label: w.verification, tone: "neutral" as const };
   const i = INSTALL_STATE[w.installation];

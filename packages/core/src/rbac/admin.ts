@@ -14,6 +14,10 @@ export const ADMIN_PERMISSIONS = [
   "admin:usage:read",          // usage totals and reconciliation results (counts per organisation, no content)
   "admin:usage:adjust",        // correct usage counters (always with a reason, audited)
   "admin:settings:protected",  // change protected security policies (in addition to admin:settings:write)
+  // Phase 8
+  "admin:billing:read",        // plans, prices, entitlements, gateway configuration (never secrets)
+  "admin:billing:write",       // edit plans, price versions and plan entitlements (audited, reason required)
+  "admin:gateways:write",      // payment gateway configuration and write-only secrets (audited, reason required)
 ] as const;
 
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[number];
@@ -22,7 +26,7 @@ export type AdminRoleKey = "SUPER_ADMIN" | "ADMIN_OPERATOR" | "ADMIN_BILLING" | 
 export const ADMIN_ROLE_PERMISSIONS: Record<AdminRoleKey, readonly AdminPermission[]> = {
   SUPER_ADMIN: ADMIN_PERMISSIONS,
   ADMIN_OPERATOR: ["admin:overview:read", "admin:customers:read", "admin:settings:read", "admin:transfers:decide", "admin:monitoring:read", "admin:monitoring:replay", "admin:ops:alerts", "admin:usage:read"],
-  ADMIN_BILLING: ["admin:overview:read", "admin:customers:read", "admin:usage:read"],
+  ADMIN_BILLING: ["admin:overview:read", "admin:customers:read", "admin:usage:read", "admin:billing:read", "admin:billing:write"],
   ADMIN_SUPPORT: ["admin:overview:read", "admin:customers:read", "admin:settings:read", "admin:monitoring:read"],
   ADMIN_AUDITOR: ["admin:audit:read"],
 };

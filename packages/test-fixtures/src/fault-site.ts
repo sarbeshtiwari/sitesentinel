@@ -318,10 +318,13 @@ export async function startFaultSite(pki: TestPki, host = "127.0.0.1", ports: { 
         <a href="/redir-meta">Redirect to metadata</a> <a href="/redir-internal">Redirect to internal name</a> <a href="/redir-offsite">Off-site redirect</a>
         <a href="javascript:void(0)">JS</a> <a href="">Empty</a> <a href="http://${h}:8080/alt-port">Port</a> <a href="/no-desc">No desc</a>
         <a href="/no-canonical">No canonical</a> <a href="/no-h1">No h1</a> <a href="/img">Images</a> <a href="/a11y">A11y</a> <a href="/jsonld-bad">JSON-LD</a>
-        <a href="/slow">Slow</a> <a href="/large">Large</a> <a href="/trap/1">Trap</a> <a href="/calendar?page=1">Calendar</a> <a href="/spa">SPA</a> <a href="/dup-a">Dup A</a> <a href="/dup-b">Dup B</a> <a href="/bad-canonical">Bad canonical</a></nav>`,
+        <a href="/slow">Slow</a> <a href="/large">Large</a> <a href="/trap/1">Trap</a> <a href="/calendar?page=1">Calendar</a> <a href="/spa">SPA</a> <a href="/dup-a">Dup A</a> <a href="/dup-b">Dup B</a> <a href="/bad-canonical">Bad canonical</a> <a href="/forms">Forms</a></nav>`,
         head: `<link rel="stylesheet" href="/assets/site.css"><link rel="stylesheet" href="/assets/missing.css"><script src="/assets/missing.js"></script><script src="http://cdn.third.example/lib.js"></script>` });
       case "/assets/site.css": res.writeHead(200, { "content-type": "text/css" }); return res.end("body{margin:0}");
       case "/about": return page({ title: "About us", canonical: `${origin}/about` });
+      // site search whose results page fails, and a form that would send data over plain HTTP
+      case "/forms": return page({ title: "Forms", canonical: `${origin}/forms`, body: '<form role="search" action="/search"><label>Search <input type="search" name="q"></label><button>Search</button></form><form method="post" action="http://insecure.example/subscribe"><label>Email <input name="email"></label><button>Subscribe</button></form>' });
+      case "/search": return u.searchParams.has("q") ? page({ title: "Search error", status: 500 }) : page({ title: "Search", canonical: `${origin}/search` });
       case "/products": return page({ title: `Products ${u.searchParams.get("category")}`, canonical: `${origin}/products?category=${u.searchParams.get("category")}`, desc: `Products in ${u.searchParams.get("category")}` });
       case "/blog/": return page({ title: "About us", canonical: `${origin}/blog/`, body: '<a href="/blog/post-1">Post 1</a>' }); // duplicate title with /about
       case "/blog/post-1": return page({ title: "Post 1", canonical: `${origin}/blog/post-1` });

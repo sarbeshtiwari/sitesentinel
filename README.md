@@ -13,6 +13,7 @@ A multi-tenant SaaS for centralized website monitoring: uptime, browser-based pa
 | [API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md) | REST conventions, every customer and admin endpoint, WebSocket protocol, queue contracts |
 | [SECURITY.md](docs/SECURITY.md) | Threat model (STRIDE), SSRF and browser isolation, auth, tenant isolation, encryption, privacy, security testing plan |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | VPS-first topology, Compose networks, Nginx, Postgres, Redis, backups and restore, CI/CD, runbooks, env vars |
+| [BILLING.md](docs/BILLING.md) | Phase 8: plans and entitlements, subscription state machine, gateways, webhook security, configuration, what is verified |
 | [DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md) | Phases, dependencies, exit criteria, open business decisions |
 | [CHANGELOG.md](CHANGELOG.md) | Changes by date |
 

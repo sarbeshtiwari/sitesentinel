@@ -32,7 +32,9 @@ function readCookie(name: string): string | null {
 let csrfPromise: Promise<void> | null = null;
 async function ensureCsrf() {
   if (readCookie(CSRF_COOKIE)) return;
-  csrfPromise ??= fetch("/api/admin/v1/auth/csrf", { credentials: "same-origin" }).then(() => undefined).finally(() => { csrfPromise = null; });
+  csrfPromise ??= fetch("/api/admin/v1/auth/csrf", { credentials: "same-origin" })
+    // Drain the (unused) body so the response completes and its connection is released.
+    .then((r) => r.arrayBuffer()).then(() => undefined, () => undefined).finally(() => { csrfPromise = null; });
   await csrfPromise;
 }
 
@@ -83,6 +85,7 @@ export async function api<T>(method: string, path: string, body?: unknown, opts:
 export const get = <T>(path: string, opts?: RequestOptions) => api<T>("GET", path, undefined, opts);
 export const post = <T>(path: string, body?: unknown, opts?: RequestOptions) => api<T>("POST", path, body ?? {}, opts);
 export const patch = <T>(path: string, body: unknown) => api<T>("PATCH", path, body);
+export const put = <T>(path: string, body: unknown) => api<T>("PUT", path, body);
 export const del = <T>(path: string) => api<T>("DELETE", path);
 
 export function errorMessage(e: unknown): string {

@@ -16,7 +16,7 @@ flowchart LR
   P4b --> P6
   P5 --> P6
   P6 --> P7[7 Notifications + realtime]
-  P2 --> P8[8 Billing + trials]
+  P2 --> P8[8 Billing + trials, partial]
   P3 --> P8
   P3 --> P9[9 Super Admin]
   P8 --> P9
@@ -188,6 +188,10 @@ The critical path is 2 → 3 → 4a → 4b → 6 → 7 → 10. Billing (8) can r
 ### Phase 8: Billing and trials
 - **Scope:** plans, price versions and entitlements (with the admin API from Phase 9's foundation), the entitlement resolver and guards, the trial activation policy, the domain ledger, hashed abuse signals and risk score, the `PaymentGateway` interface with Stripe and Razorpay adapters, checkout, webhooks (raw-body signature check, idempotency, out-of-order guard), the subscription state machine, grace periods, dunning, invoices, downgrade selection flow, and a daily reconciliation job.
 - **Exit criteria:** webhook spoofing and replay tests are rejected. Delete account → new account → same domain → no trial. Upgrade, downgrade, cancel and failed-payment E2E pass in Stripe test mode and Razorpay test mode. Entitlement changes in admin apply without a redeploy (under 60 s).
+- **Status (2026-11-15): implemented, locally verified, NOT complete** — design and details in [BILLING.md](BILLING.md). Ships with `billing.enabled = false`.
+  - **Delivered:** subscription state machine with out-of-order guard, grace periods and dunning schedule (`@wim/core`); entitlement resolver (subscription → trial plan → free plan → platform defaults, plus overrides) inside `loadOrgContexts`, identical behaviour while billing is disabled; `@wim/billing` (PaymentGateway interface, Stripe and Razorpay REST adapters without SDKs, raw-body signature verification, idempotent transactional webhook processing, daily reconciliation in the scheduler); customer billing API and Billing page; Super Admin plans/prices/entitlements/overrides/gateway API and Plans + Payment gateways pages; example plans (B2) in the seed; `sql/180_billing.sql` (no Prisma migration needed).
+  - **Exit criteria:** webhook spoofing and replay rejected ✅ (unit + integration). Delete account → new account → same domain → no trial ✅ (integration). Entitlement changes apply without a redeploy ✅ (read on every resolution; asserted on the next resolution). **Stripe / Razorpay test-mode E2E ❌ not run** — no test keys; gateways were exercised only through local HTTP fakes.
+  - **Not done:** dunning reminder emails, customer portal links, refunds/credit notes, invoice PDFs, hashed abuse signals / risk score at checkout, the downgrade website-selection flow, final GST invoicing (B4b).
 
 ### Phase 9: Super Admin
 - **Scope:** the `admin` app on a separate origin, admin auth with mandatory 2FA, admin RBAC, platform overview, customers, websites and domains (ledger, transfers, blocks, duplicate attempts), plans, engine config, health-score config, gateway config (write-only secrets), notification config and templates, platform settings and flags with hot reload, audit and security viewers with chain verification, break-glass (dual approval and customer consent), worker and queue dashboards with DLQ actions.

@@ -23,17 +23,30 @@ export interface HtmlFacts {
   unlabelledControls: number;
   duplicateIds: number;
   jsonLd: { blocks: number; invalid: number };
+  /** Forms on the page (static view, max 20): never submitted except GET search forms (see engine search probe). */
+  forms: HtmlForm[];
   textHash: string;
   structureHash: string;
   textLength: number;
 }
+export interface HtmlForm {
+  method: string;
+  action: string | null;
+  /** role="search", a type="search" field or a conventional query field name */
+  search: boolean;
+  /** name of the field that carries the search query (null: the query isn't submitted without JavaScript) */
+  queryField: string | null;
+  submit: boolean;
+  password: boolean;
+}
+const QUERY_NAMES = new Set(["q", "query", "s", "search", "keyword", "keywords", "term", "k", "search_query"]);
 export interface HtmlLinks { links: Array<{ href: string }>; resources: Array<{ href: string; type: "image" | "stylesheet" | "script" | "font" | "other" }>; malformedLinks: number }
 
 export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): { facts: HtmlFacts; out: HtmlLinks } {
   const f: HtmlFacts = {
     title: null, titleCount: 0, description: null, canonical: null, robots: null, lang: null, viewport: false, openGraph: false,
     h1: 0, headingSkips: 0, hasMain: false, imgMissingAlt: 0, emptyLinks: 0, emptyButtons: 0, unlabelledControls: 0, duplicateIds: 0,
-    jsonLd: { blocks: 0, invalid: 0 }, textHash: "", structureHash: "", textLength: 0,
+    jsonLd: { blocks: 0, invalid: 0 }, forms: [], textHash: "", structureHash: "", textLength: 0,
   };
   const out: HtmlLinks = { links: [], resources: [], malformedLinks: 0 };
   const ids = new Map<string, number>();
@@ -47,6 +60,7 @@ export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): 
   let title = "";
   // accessible-name tracking for <a> and <button>
   const stack: Array<{ tag: string; name: boolean }> = [];
+  const formStack: Array<HtmlForm | null> = []; // null: form beyond the cap (still tracked for nesting)
 
   const parser = new Parser({
     onopentag(tag, a) {
@@ -98,6 +112,27 @@ export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): 
         default:
           if (a.role === "main") f.hasMain = true;
       }
+      if (tag === "form") {
+        const fm: HtmlForm | null = f.forms.length < 20
+          ? { method: (a.method ?? "get").trim().toUpperCase() || "GET", action: a.action ?? null, search: a.role === "search", queryField: null, submit: false, password: false }
+          : null;
+        if (fm) f.forms.push(fm);
+        formStack.push(fm);
+      }
+      const form = formStack.length ? formStack[formStack.length - 1] : null;
+      if (form) {
+        const type = (a.type ?? "").toLowerCase();
+        if (tag === "input") {
+          if (type === "password") form.password = true;
+          if (type === "submit" || type === "image") form.submit = true;
+          const name = a.name?.trim() ?? "";
+          if (type === "search" || ((type === "" || type === "text") && QUERY_NAMES.has(name.toLowerCase()))) {
+            form.search = true;
+            if (name && !form.queryField) form.queryField = name;
+          }
+        }
+        if (tag === "button" && (type === "" || type === "submit")) form.submit = true; // <button> submits by default
+      }
       if (tag === "img" && (a.alt?.trim() || named)) for (const s of stack) s.name = true; // an image with alt names its link/button
       const h = /^h([1-6])$/.exec(tag);
       if (h) {
@@ -127,6 +162,7 @@ export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): 
       }
       if (tag === "style") inStyle = false;
       if (tag === "label") labelDepth = Math.max(0, labelDepth - 1);
+      if (tag === "form") formStack.pop();
       if (tag === "a" || tag === "button") {
         const idx = stack.map((s) => s.tag).lastIndexOf(tag);
         if (idx >= 0) {

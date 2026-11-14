@@ -23,6 +23,22 @@ describe("static HTML analysis", () => {
     expect(a.textHash).toBe(b.textHash);
     expect(b.structureHash).not.toBe(c.structureHash);
   });
+  it("describes forms statically: method, action, search field, submit button, password", () => {
+    const { facts } = analyzeHtml(`<body>
+      <form role="search" action="/search"><input type="search" name="q"><button>Go</button></form>
+      <form method="post" action="http://shop.example/login"><input name="user"><input type="password" name="pw"></form>
+      <form><input type="search" aria-label="Search"></form>
+      <form action="/find"><input name="query"><input type="submit" value="Find"></form>
+      <form method="POST"><button type="button">Not a submit</button></form></body>`);
+    expect(facts.forms).toEqual([
+      { method: "GET", action: "/search", search: true, queryField: "q", submit: true, password: false },
+      { method: "POST", action: "http://shop.example/login", search: false, queryField: null, submit: false, password: true },
+      { method: "GET", action: null, search: true, queryField: null, submit: false, password: false },
+      { method: "GET", action: "/find", search: true, queryField: "query", submit: true, password: false },
+      { method: "POST", action: null, search: false, queryField: null, submit: false, password: false },
+    ]);
+    expect(analyzeHtml(`<body>${"<form></form>".repeat(50)}</body>`).facts.forms).toHaveLength(20); // capped
+  });
   it("bounded output for pathological pages", () => {
     const { out } = analyzeHtml(`<body>${'<a href="/x">x</a>'.repeat(10_000)}</body>`, 100, 10);
     expect(out.links).toHaveLength(100);
