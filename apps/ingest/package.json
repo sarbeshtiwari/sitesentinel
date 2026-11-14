@@ -1,0 +1,23 @@
+{
+  "name": "@wim/ingest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --enable-source-maps dist/main.js"
+  },
+  "dependencies": {
+    "@wim/core": "workspace:*",
+    "@wim/db": "workspace:*",
+    "@wim/logger": "workspace:*",
+    "@wim/sdk": "workspace:*",
+    "fastify": "5.12.8",
+    "ioredis": "6.0.0",
+    "pg": "8.23.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": { "typescript": "5.9.3", "@types/node": "^24.0.0", "@types/pg": "^8.15.0" }
+}
