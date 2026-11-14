@@ -21,7 +21,13 @@ DO $$ BEGIN
     EXECUTE 'REVOKE ALL ON SCHEMA ops FROM wim_browser';
   END IF;
 END $$;
-ALTER ROLE wim_browser NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
+-- Only when needed: managed Postgres (Render, RDS, …) has no superuser, and any ALTER ROLE that names SUPERUSER is
+-- refused there even when it only removes it. Same effect either way: the role ends with none of these attributes.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wim_browser' AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication)) THEN
+    EXECUTE 'ALTER ROLE wim_browser NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION';
+  END IF;
+END $$;
 ALTER ROLE wim_browser SET statement_timeout = '60s';
 ALTER ROLE wim_browser SET idle_in_transaction_session_timeout = '60s';
 GRANT EXECUTE ON FUNCTION public.app_current_org(), public.app_is_system() TO wim_browser;

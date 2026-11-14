@@ -12,4 +12,10 @@ DROP POLICY IF EXISTS scanner_system ON public.execution_results;
 CREATE POLICY scanner_system ON public.execution_results TO wim_scanner
   USING (public.app_is_system() AND tier = 'T3_DEEP') WITH CHECK (public.app_is_system() AND tier = 'T3_DEEP');
 REVOKE UPDATE, DELETE ON public.execution_results FROM wim_scanner;
-ALTER ROLE wim_scanner NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
+-- Only when needed: managed Postgres (Render, RDS, …) has no superuser, and any ALTER ROLE that names SUPERUSER is
+-- refused there even when it only removes it. Same effect either way: the role ends with none of these attributes.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wim_scanner' AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication)) THEN
+    EXECUTE 'ALTER ROLE wim_scanner NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION';
+  END IF;
+END $$;
