@@ -85,6 +85,7 @@ export async function api<T>(method: string, path: string, body?: unknown, opts:
 export const get = <T>(path: string, opts?: RequestOptions) => api<T>("GET", path, undefined, opts);
 export const post = <T>(path: string, body?: unknown, opts?: RequestOptions) => api<T>("POST", path, body ?? {}, opts);
 export const patch = <T>(path: string, body: unknown) => api<T>("PATCH", path, body);
+export const put = <T>(path: string, body: unknown) => api<T>("PUT", path, body);
 export const del = <T>(path: string) => api<T>("DELETE", path);
 
 export function errorMessage(e: unknown): string {

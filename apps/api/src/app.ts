@@ -19,6 +19,8 @@ export async function createApp(): Promise<NestFastifyApplication> {
   });
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
     logger: env.NODE_ENV === "test" ? false : ["error", "warn"],
+    // Phase 8: payment webhooks are verified over the exact bytes received (req.rawBody); JSON is still parsed as before
+    rawBody: true,
   });
   const fastify = app.getHttpAdapter().getInstance();
   const log = createLogger("api");

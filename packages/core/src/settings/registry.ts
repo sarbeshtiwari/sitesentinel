@@ -173,7 +173,15 @@ export const SETTINGS = {
   "ops.alerts.delivery": def({ schema: z.object({ attempts: z.number().int().min(1).max(20), backoffMs: z.number().int().min(100).max(3_600_000) }).strict(), default: { attempts: 6, backoffMs: 30_000 }, group: "operations", description: "Alert e-mail delivery retries" }),
   "ops.usage.reconcileDaily": def({ schema: z.boolean(), default: true, group: "operations", description: "Reconcile yesterday's usage against the execution ledger and stored results once a day" }),
 
-  // ---- billing (Phase 8 consumes these)
+  // ---- billing (Phase 8)
+  "billing.enabled": def({ schema: z.boolean(), default: false, group: "billing", public: true, description: "Billing is live: checkout, plan changes and every payment-gateway call are refused while this is off. Plan entitlements of a current subscription apply either way" }),
+  "billing.gatewayByCurrency": def({ schema: z.record(z.string().regex(/^[A-Z]{3}$/), z.enum(["STRIPE", "RAZORPAY"])), default: { INR: "RAZORPAY", USD: "STRIPE" }, group: "billing", description: "Which payment gateway handles checkout in each currency" }),
+  "billing.graceDays": def({ schema: z.number().int().min(0).max(30), default: 7, group: "billing", description: "Days of continued service after a failed renewal before the subscription expires" }),
+  "billing.dunning.reminderDays": def({ schema: z.array(z.number().int().min(0).max(30)).max(10), default: [0, 3, 6], group: "billing", description: "Days after the first failed renewal on which payment reminders are due (within the grace period)" }),
+  "billing.webhookToleranceSec": def({ schema: z.number().int().min(60).max(900), default: 300, group: "billing", description: "Maximum age of a signed webhook (replay window)" }),
+  "billing.freePlanKey": def({ schema: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/).nullable(), default: null, group: "billing", description: "Plan applied to organisations without a subscription or active trial (null = none: monitoring stops after the trial)" }),
+  "billing.reconcileDaily": def({ schema: z.boolean(), default: true, group: "billing", description: "Daily comparison of local subscriptions with the gateway (only while billing is enabled and a gateway is configured)" }),
+  "trial.planKey": def({ schema: z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/).nullable(), default: "pro", group: "trial", description: "Plan whose entitlements apply during the free trial (only while billing is enabled)" }),
   "billing.intervals": def({ schema: z.array(z.enum(["MONTH", "YEAR"])).min(1), default: ["MONTH", "YEAR"], group: "billing", public: true, description: "Billing intervals offered" }),
   "billing.tax.mode": def({ schema: z.enum(["NONE", "GATEWAY", "GST"]), default: "GATEWAY", group: "billing", description: "Tax calculation: gateway-calculated (Stripe Tax) or Indian GST computed by the platform" }),
   "billing.tax.gstRatePct": def({ schema: z.number().min(0).max(28), default: 18, group: "billing", description: "GST rate for Indian customers (IGST/CGST+SGST split by place of supply)" }),

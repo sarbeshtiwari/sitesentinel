@@ -761,3 +761,103 @@ export interface ChangeFeedDto {
   changes: Array<{ kind: "INCIDENT" | "CHECK" | "DEEP_SCAN" | "NOTIFICATION"; websiteId: string | null; at: string }>;
   unreadNotifications: number;
 }
+
+// ---------------------------------------------------------------- billing (Phase 8)
+export const BILLING_GATEWAYS = ["STRIPE", "RAZORPAY"] as const;
+export type BillingGateway = (typeof BILLING_GATEWAYS)[number];
+export const BillingIntervalInput = z.enum(["MONTH", "YEAR"]);
+export const BillingCurrency = z.string().regex(/^[A-Z]{3}$/);
+export const PlanKey = z.string().regex(/^[a-z][a-z0-9_-]{1,39}$/);
+
+export interface PlanPriceDto {
+  id: string; interval: "MONTH" | "YEAR"; currency: string; amountMinor: number; version: number; active: boolean;
+  /** true when the gateway price/plan id is linked (checkout through that gateway is possible) */
+  stripeLinked: boolean; razorpayLinked: boolean;
+}
+export interface PlanDto {
+  id: string; key: string; name: string; description: string; visible: boolean; active: boolean; trialEligible: boolean; sortOrder: number;
+  prices: PlanPriceDto[];
+  /** entitlement key → value (registry keys, e.g. monitoring.maxWebsites) */
+  entitlements: Record<string, unknown>;
+}
+export interface BillingSubscriptionDto {
+  id: string; status: "TRIALING" | "ACTIVE" | "PAST_DUE" | "CANCELING" | "CANCELED" | "EXPIRED";
+  planKey: string; planName: string; interval: "MONTH" | "YEAR" | null; currency: string | null; amountMinor: number | null;
+  gateway: BillingGateway | null; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean; graceEndsAt: string | null;
+  pendingPlanKey: string | null;
+}
+export interface BillingTrialDto { status: "ACTIVE" | "CONVERTED" | "EXPIRED" | "REVOKED"; startsAt: string; endsAt: string; daysLeft: number; planKey: string | null }
+export interface BillingOverviewDto {
+  /** platform setting billing.enabled: when false, no checkout or gateway call is possible */
+  billingEnabled: boolean;
+  /** gateways that are enabled AND have secrets configured (empty while billing is disabled) */
+  gatewaysAvailable: BillingGateway[];
+  /** currency → gateway used for checkout (only currencies whose gateway is available) */
+  checkoutCurrencies: Array<{ currency: string; gateway: BillingGateway }>;
+  intervals: Array<"MONTH" | "YEAR">;
+  taxMode: "NONE" | "GATEWAY" | "GST";
+  subscription: BillingSubscriptionDto | null;
+  trial: BillingTrialDto | null;
+  entitlement: { entitled: boolean; reason: string; source: "SUBSCRIPTION" | "TRIAL" | "FREE" | "PLATFORM_DEFAULTS"; planKey: string | null };
+  limits: {
+    maxWebsites: number;
+    http: { enabled: boolean; minIntervalSec: number };
+    browser: { enabled: boolean; entitled: boolean; maxWebsites: number };
+    deepscan: { enabled: boolean; entitled: boolean; maxWebsites: number };
+  };
+  usage: { websites: number; browserWebsites: number; deepscanWebsites: number };
+}
+export interface InvoiceDto {
+  id: string; number: string; status: string; currency: string; subtotalMinor: number; taxMinor: number; totalMinor: number;
+  periodStart: string | null; periodEnd: string | null; issuedAt: string; paidAt: string | null; gateway: BillingGateway | null;
+}
+export const CheckoutInput = z.object({ planKey: PlanKey, interval: BillingIntervalInput, currency: BillingCurrency }).strict();
+export const ChangePlanInput = z.object({ planKey: PlanKey, interval: BillingIntervalInput }).strict();
+
+// admin
+const EntitlementValue = z.union([z.number(), z.boolean(), z.string().max(100)]);
+export const AdminPlanCreateInput = z.object({
+  key: PlanKey, name: z.string().trim().min(1).max(60), description: z.string().trim().max(500).default(""),
+  visible: z.boolean().default(true), trialEligible: z.boolean().default(true), sortOrder: z.number().int().min(0).max(1000).default(0),
+  reason: AdminReason,
+}).strict();
+export const AdminPlanPatchInput = z.object({
+  name: z.string().trim().min(1).max(60).optional(), description: z.string().trim().max(500).optional(), visible: z.boolean().optional(),
+  active: z.boolean().optional(), trialEligible: z.boolean().optional(), sortOrder: z.number().int().min(0).max(1000).optional(),
+  reason: AdminReason,
+}).strict();
+export const AdminPlanEntitlementsInput = z.object({
+  /** full replacement of the plan's entitlement set (keys are validated against the entitlement registry by the API) */
+  entitlements: z.record(z.string().regex(/^[a-z][A-Za-z0-9_.]{1,79}$/), EntitlementValue),
+  reason: AdminReason,
+}).strict();
+export const AdminPriceCreateInput = z.object({
+  interval: BillingIntervalInput, currency: BillingCurrency, amountMinor: z.number().int().min(0).max(100_000_000),
+  stripePriceId: z.string().regex(/^price_[A-Za-z0-9]{6,64}$/).optional(), razorpayPlanId: z.string().regex(/^plan_[A-Za-z0-9]{6,64}$/).optional(),
+  reason: AdminReason,
+}).strict();
+export const AdminPricePatchInput = z.object({
+  active: z.boolean().optional(),
+  /** linking only: an already linked gateway id cannot be changed (prices are immutable; create a new version) */
+  stripePriceId: z.string().regex(/^price_[A-Za-z0-9]{6,64}$/).optional(), razorpayPlanId: z.string().regex(/^plan_[A-Za-z0-9]{6,64}$/).optional(),
+  reason: AdminReason,
+}).strict();
+export const AdminGatewayConfigInput = z.object({
+  enabled: z.boolean(), mode: z.enum(["test", "live"]),
+  publicKey: z.string().trim().max(200).nullable().optional(),
+  currencies: z.array(BillingCurrency).max(20).default([]),
+  /** write-only; omitted = keep the stored value. Both must be present the first time. */
+  secretKey: z.string().min(8).max(500).optional(),
+  webhookSecret: z.string().min(8).max(500).optional(),
+  reason: AdminReason,
+}).strict();
+export interface AdminGatewayConfigDto {
+  gateway: BillingGateway; enabled: boolean; mode: "test" | "live"; publicKey: string | null; currencies: string[];
+  /** true when both the secret key and the webhook secret are stored (values are never returned) */
+  secretsConfigured: boolean; secretHint: string | null; updatedAt: string | null;
+  /** path to register at the gateway (prefix with the public API origin) */
+  webhookPath: string;
+}
+export const AdminEntitlementOverrideInput = z.object({
+  key: z.string().regex(/^[a-z][A-Za-z0-9_.]{1,79}$/), value: EntitlementValue, expiresAt: z.iso.datetime().nullable().optional(), reason: AdminReason,
+}).strict();

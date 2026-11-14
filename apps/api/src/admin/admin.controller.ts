@@ -26,6 +26,7 @@ import { cookieNames } from "../auth/session.service.js";
 import { AdminSessionService } from "./admin-session.service.js";
 import { WebsitesService } from "../websites/websites.service.js";
 import { OpsController } from "./ops.controller.js";
+import { BillingAdminController } from "./billing-admin.controller.js";
 
 const ADMIN_TOTP_AAD = (adminId: string) => `admin_users.totp:${adminId}`;
 const num = (v: unknown) => Number(v ?? 0);
@@ -456,5 +457,5 @@ export class AdminController {
   }
 }
 
-@Module({ controllers: [AdminController, OpsController], providers: [AdminSessionService, WebsitesService], exports: [AdminSessionService, WebsitesService] })
+@Module({ controllers: [AdminController, OpsController, BillingAdminController], providers: [AdminSessionService, WebsitesService], exports: [AdminSessionService, WebsitesService] })
 export class AdminModule {}

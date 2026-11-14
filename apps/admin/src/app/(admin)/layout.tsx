@@ -6,7 +6,7 @@ import {
 } from "@wim/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  BarChart3, Bell, Building2, Gauge, Globe, LayoutDashboard, LogOut, ScrollText, Server, Settings, SlidersHorizontal, User,
+  BarChart3, Bell, Building2, CreditCard, Gauge, Globe, Layers, LayoutDashboard, LogOut, ScrollText, Server, Settings, SlidersHorizontal, User,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -16,7 +16,7 @@ import { useAdminMe, useProductName } from "@/lib/hooks";
 const LABELS: Record<string, string> = {
   overview: "Overview", customers: "Customers", websites: "Websites & domains", transfers: "Domain transfers", audit: "Audit log",
   settings: "Settings", platform: "Platform health", alerts: "Platform alerts", monitoring: "Queues & executions", usage: "Usage accounting",
-  operations: "Operations config", account: "My account",
+  operations: "Operations config", account: "My account", plans: "Plans", gateways: "Payment gateways",
 };
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -47,6 +47,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         {me.can("admin:audit:read") && <SidebarItem LinkComponent={Link} href="/audit" icon={<ScrollText />} active={is("/audit")}>Audit log</SidebarItem>}
         {me.can("admin:settings:read") && <SidebarItem LinkComponent={Link} href="/settings" icon={<Settings />} active={is("/settings")}>Settings</SidebarItem>}
       </SidebarSection>
+      {me.can("admin:billing:read") && (
+        <SidebarSection title="Billing">
+          <SidebarItem LinkComponent={Link} href="/plans" icon={<Layers />} active={is("/plans")}>Plans</SidebarItem>
+          <SidebarItem LinkComponent={Link} href="/gateways" icon={<CreditCard />} active={is("/gateways")}>Payment gateways</SidebarItem>
+        </SidebarSection>
+      )}
       <SidebarSection title="Operations">
         {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/platform" icon={<Gauge />} active={is("/platform")}>Platform health</SidebarItem>}
         {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/alerts" icon={<Bell />} active={is("/alerts")}>Platform alerts</SidebarItem>}

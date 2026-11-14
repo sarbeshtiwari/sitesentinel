@@ -1,5 +1,5 @@
 import {
-  ineligibility, isMonitoringEntitled, MONITORING_ENTITLEMENT_KEYS, resolveMonitoringLimits,
+  ineligibility, isMonitoringEntitled, MONITORING_ENTITLEMENT_KEYS, resolveMonitoringLimits, selectPlanSource, type EntitlementSource,
   type MonitoringEntitlementKey, type MonitoringLimits, type MonitoringTier, type PausedReason, type SettingsSnapshot,
 } from "@wim/core";
 import type { Tx } from "@wim/db";
@@ -29,6 +29,9 @@ export interface OrgContext {
   limits: MonitoringLimits;
   entitled: boolean;
   entitlementReason: string;
+  /** Phase 8: where the plan entitlements came from */
+  planSource: EntitlementSource;
+  planId: string | null;
 }
 
 export async function loadWebsiteFacts(tx: Tx, websiteIds?: string[]): Promise<WebsiteFacts[]> {
@@ -64,16 +67,41 @@ export async function loadWebsiteFacts(tx: Tx, websiteIds?: string[]): Promise<W
   }));
 }
 
-/** Effective limits and entitlement per organization (plan ⊕ overrides ⊕ settings). */
+/**
+ * Effective limits and entitlement per organization (plan ⊕ overrides ⊕ settings).
+ * Phase 8 (D-43): which plan applies is decided by selectPlanSource — with billing disabled this is exactly the
+ * pre-Phase-8 behaviour; with billing enabled an active trial uses the trial plan and organisations without a
+ * subscription or trial fall back to the free plan (billing.freePlanKey) when one is configured. Everything is read
+ * fresh on every call (scheduler cycle / job start), so admin edits to plans and overrides apply without a redeploy.
+ */
 export async function loadOrgContexts(tx: Tx, orgIds: string[], s: SettingsSnapshot, now = new Date()): Promise<Map<string, OrgContext>> {
   const out = new Map<string, OrgContext>();
   if (!orgIds.length) return out;
-  const trials = await tx.trial.findMany({ where: { orgId: { in: orgIds } }, select: { orgId: true, status: true, endsAt: true } });
+  const billing = Boolean(s["billing.enabled"]);
+  const trials = await tx.trial.findMany({
+    where: { orgId: { in: orgIds } },
+    select: billing ? { orgId: true, status: true, endsAt: true, planId: true } : { orgId: true, status: true, endsAt: true },
+  }) as Array<{ orgId: string; status: string; endsAt: Date; planId?: string | null }>;
   const subs = await tx.subscription.findMany({
     where: { orgId: { in: orgIds }, status: { notIn: ["CANCELED", "EXPIRED"] } },
     select: { orgId: true, status: true, currentPeriodEnd: true, graceEndsAt: true, planId: true },
   });
-  const planIds = [...new Set(subs.map((x) => x.planId))];
+  let trialPlanId: string | null = null, freePlanId: string | null = null;
+  if (billing) {
+    const keys = [s["trial.planKey"], s["billing.freePlanKey"]].filter((k): k is string => typeof k === "string");
+    const plans = keys.length ? await tx.subscriptionPlan.findMany({ where: { key: { in: keys }, active: true }, select: { id: true, key: true } }) : [];
+    trialPlanId = plans.find((p) => p.key === s["trial.planKey"])?.id ?? null;
+    freePlanId = plans.find((p) => p.key === s["billing.freePlanKey"])?.id ?? null;
+  }
+  const sources = new Map(orgIds.map((orgId) => {
+    const sub = subs.find((x) => x.orgId === orgId) ?? null;
+    const t = trials.find((x) => x.orgId === orgId) ?? null;
+    return [orgId, selectPlanSource({
+      billingEnabled: billing, now, subscription: sub, trialPlanId, freePlanId,
+      trial: t ? { status: t.status, endsAt: t.endsAt, planId: t.planId ?? null } : null,
+    })] as const;
+  }));
+  const planIds = [...new Set([...sources.values()].map((x) => x.planId).filter((x): x is string => !!x))];
   const ents = planIds.length ? await tx.planEntitlement.findMany({ where: { planId: { in: planIds }, key: { in: [...MONITORING_ENTITLEMENT_KEYS] } } }) : [];
   const overrides = await tx.entitlementOverride.findMany({
     where: { orgId: { in: orgIds }, key: { in: [...MONITORING_ENTITLEMENT_KEYS] }, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
@@ -81,11 +109,16 @@ export async function loadOrgContexts(tx: Tx, orgIds: string[], s: SettingsSnaps
   });
   for (const orgId of orgIds) {
     const sub = subs.find((x) => x.orgId === orgId) ?? null;
-    const plan = sub ? Object.fromEntries(ents.filter((e) => e.planId === sub.planId).map((e) => [e.key, e.value])) as Partial<Record<MonitoringEntitlementKey, unknown>> : null;
+    const src = sources.get(orgId)!;
+    const plan = src.planId ? Object.fromEntries(ents.filter((e) => e.planId === src.planId).map((e) => [e.key, e.value])) as Partial<Record<MonitoringEntitlementKey, unknown>> : null;
     const ov = Object.fromEntries(overrides.filter((o) => o.orgId === orgId).map((o) => [o.key, o.value])) as Partial<Record<MonitoringEntitlementKey, unknown>>;
     const trial = trials.find((t) => t.orgId === orgId) ?? null;
-    const e = isMonitoringEntitled({ now, trial, subscription: sub, override: typeof ov["monitoring.entitled"] === "boolean" ? (ov["monitoring.entitled"] as boolean) : null });
-    out.set(orgId, { limits: resolveMonitoringLimits(s, plan, ov), entitled: e.entitled, entitlementReason: e.reason });
+    // the free plan grants monitoring unless the plan itself (or an override) says otherwise
+    const freeGrant = src.source === "FREE" && plan?.["monitoring.entitled"] !== false;
+    const override = typeof ov["monitoring.entitled"] === "boolean" ? (ov["monitoring.entitled"] as boolean) : null;
+    let e = isMonitoringEntitled({ now, trial, subscription: sub, override });
+    if (!e.entitled && override === null && freeGrant) e = { entitled: true, reason: "FREE_PLAN" };
+    out.set(orgId, { limits: resolveMonitoringLimits(s, plan, ov), entitled: e.entitled, entitlementReason: e.reason, planSource: src.source, planId: src.planId });
   }
   return out;
 }

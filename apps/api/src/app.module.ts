@@ -24,12 +24,14 @@ import { DeepScanController, DeepScanService } from "./monitoring/deepscan.contr
 import { DashboardController, DashboardService } from "./monitoring/dashboard.controller.js";
 import { NotificationsController, NotificationsService } from "./monitoring/notifications.controller.js";
 import { PerformanceController, PerformanceService } from "./monitoring/performance.controller.js";
+import { BillingController, BillingWebhookController } from "./billing/billing.controller.js";
+import { BillingService } from "./billing/billing.service.js";
 
 @Module({
   imports: [InfraModule, KeysModule, SettingsModule, AuditModule, RateLimitModule, AdminModule],
-  controllers: [AuthController, MeController, OrgsController, InvitationsController, HealthController, WebsitesController, MonitoringController, BrowserMonitoringController, DeepScanController, DashboardController, NotificationsController, PerformanceController],
+  controllers: [AuthController, MeController, OrgsController, InvitationsController, HealthController, WebsitesController, MonitoringController, BrowserMonitoringController, DeepScanController, DashboardController, NotificationsController, PerformanceController, BillingController, BillingWebhookController],
   providers: [
-    AuthService, MfaService, SessionService, PasswordPolicy, MeService, OrgsService, MonitoringService, BrowserMonitoringService, DeepScanService, DashboardService, NotificationsService, PerformanceService,
+    AuthService, MfaService, SessionService, PasswordPolicy, MeService, OrgsService, MonitoringService, BrowserMonitoringService, DeepScanService, DashboardService, NotificationsService, PerformanceService, BillingService,
     { provide: APP_GUARD, useClass: RequestGuard },
     { provide: APP_FILTER, useClass: ErrorFilter },
   ],

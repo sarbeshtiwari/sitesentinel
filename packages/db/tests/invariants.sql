@@ -474,5 +474,75 @@ BEGIN
   END;
 END $$;
 
+-- 10. Phase 8 billing: tenant isolation, webhook idempotency, write-only gateway config, financial records ------
+DO $$
+DECLARE ok boolean; n int; t text;
+BEGIN
+  IF to_regprocedure('public.billing_resolve_org(text,text,text)') IS NULL THEN
+    RAISE NOTICE 'SKIP billing invariants (sql/180_billing.sql not applied to this database yet)';
+    RETURN;
+  END IF;
+  -- webhook idempotency key (rule #11)
+  ASSERT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename = 'payment_webhook_events' AND indexdef LIKE '%UNIQUE%(gateway, event_id)%'), 'FAIL: payment_webhook_events lacks UNIQUE(gateway, event_id)';
+  INSERT INTO payment_webhook_events (gateway, event_id, event_type, signature_valid, payload) VALUES ('STRIPE', 'evt_inv_1', 't', true, '{}');
+  BEGIN
+    INSERT INTO payment_webhook_events (gateway, event_id, event_type, signature_valid, payload) VALUES ('STRIPE', 'evt_inv_1', 't', true, '{}');
+    ok := false;
+  EXCEPTION WHEN unique_violation THEN ok := true;
+  END;
+  ASSERT ok, 'FAIL: duplicate webhook event id accepted';
+  -- billing tables are tenant-isolated with RLS
+  FOREACH t IN ARRAY ARRAY['subscriptions', 'trials', 'payments', 'invoices', 'gateway_customers', 'entitlement_overrides'] LOOP
+    ASSERT (SELECT relrowsecurity FROM pg_class WHERE oid = ('public.' || t)::regclass), format('FAIL: RLS disabled on %s', t);
+  END LOOP;
+  -- the API role can't edit plans, prices, entitlements or gateway configuration, and can't delete financial records
+  FOREACH t IN ARRAY ARRAY['subscription_plans', 'plan_prices', 'plan_entitlements', 'payment_gateway_configs'] LOOP
+    ASSERT NOT has_table_privilege('wim_app', 'public.' || t, 'INSERT') AND NOT has_table_privilege('wim_app', 'public.' || t, 'UPDATE')
+       AND NOT has_table_privilege('wim_app', 'public.' || t, 'DELETE'), format('FAIL: wim_app can modify %s', t);
+  END LOOP;
+  FOREACH t IN ARRAY ARRAY['payments', 'invoices', 'payment_webhook_events'] LOOP
+    ASSERT NOT has_table_privilege('wim_app', 'public.' || t, 'DELETE'), format('FAIL: wim_app can delete %s', t);
+  END LOOP;
+  ASSERT NOT has_table_privilege('wim_app', 'public.trials', 'INSERT') AND NOT has_table_privilege('wim_app', 'public.trials', 'UPDATE'), 'FAIL: wim_app can grant itself a trial';
+  ASSERT NOT has_table_privilege('wim_app', 'public.domain_trial_ledger', 'DELETE') AND NOT has_table_privilege('wim_app', 'public.domain_trial_ledger', 'UPDATE'), 'FAIL: wim_app can reset the trial ledger';
+  -- the narrow worker roles never see gateway configuration or money
+  FOREACH t IN ARRAY ARRAY['wim_browser', 'wim_scanner'] LOOP
+    ASSERT NOT has_table_privilege(t, 'public.payment_gateway_configs', 'SELECT') AND NOT has_table_privilege(t, 'public.payments', 'SELECT')
+       AND NOT has_table_privilege(t, 'public.invoices', 'SELECT') AND NOT has_table_privilege(t, 'public.payment_webhook_events', 'SELECT'), format('FAIL: %s reads billing data', t);
+  END LOOP;
+  -- the org resolver is SECURITY DEFINER and only the API may call it
+  ASSERT (SELECT prosecdef FROM pg_proc WHERE oid = 'public.billing_resolve_org(text,text,text)'::regprocedure), 'FAIL: billing_resolve_org is not SECURITY DEFINER';
+  ASSERT has_function_privilege('wim_app', 'public.billing_resolve_org(text,text,text)', 'EXECUTE')
+     AND NOT has_function_privilege('wim_browser', 'public.billing_resolve_org(text,text,text)', 'EXECUTE')
+     AND NOT has_function_privilege('wim_admin', 'public.billing_resolve_org(text,text,text)', 'EXECUTE'), 'FAIL: billing_resolve_org grants';
+  -- RLS as the API role: org B's context never sees org A's subscription
+  INSERT INTO subscription_plans (id, key, name, description, updated_at) VALUES ('00000000-0000-0000-0000-0000000000b1', 'inv-plan', 'P', 'P', now());
+  INSERT INTO subscriptions (org_id, plan_id, status, gateway, gateway_subscription_id, updated_at) VALUES
+    ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000b1', 'ACTIVE', 'STRIPE', 'sub_inv_a', now());
+  SET LOCAL ROLE wim_app;
+  PERFORM set_config('app.current_org_id', '00000000-0000-0000-0000-00000000000b', true);
+  SELECT count(*) INTO n FROM subscriptions;
+  ASSERT n = 0, 'FAIL: org B sees org A subscription';
+  -- …while the definer resolver only reveals the owning org id of a known gateway object
+  ASSERT public.billing_resolve_org('STRIPE', 'sub_inv_a', NULL) = '00000000-0000-0000-0000-00000000000a', 'FAIL: resolver did not find the owner';
+  ASSERT public.billing_resolve_org('RAZORPAY', 'sub_inv_a', NULL) IS NULL, 'FAIL: resolver ignores the gateway';
+  BEGIN
+    INSERT INTO subscriptions (org_id, plan_id, status, updated_at) VALUES ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000b1', 'ACTIVE', now());
+    ok := false;
+  EXCEPTION WHEN insufficient_privilege OR check_violation THEN ok := true;
+  END;
+  ASSERT ok, 'FAIL: org B context wrote an org A subscription';
+  PERFORM set_config('app.current_org_id', '', true);
+  RESET ROLE;
+  -- one current subscription per org
+  BEGIN
+    INSERT INTO subscriptions (org_id, plan_id, status, updated_at) VALUES ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000b1', 'PAST_DUE', now());
+    ok := false;
+  EXCEPTION WHEN unique_violation THEN ok := true;
+  END;
+  ASSERT ok, 'FAIL: second current subscription accepted';
+  RAISE NOTICE 'PASS billing: RLS, webhook idempotency, write-only gateway config, financial records retained';
+END $$;
+
 ROLLBACK;
 \echo ALL DATABASE INVARIANTS PASSED
