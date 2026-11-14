@@ -125,6 +125,13 @@ describe("full scan of the controlled multi-page website", () => {
     expect(subjects("REDIRECT_LOOP")).toEqual(["/loop1"]);
     expect(subjects("REDIRECT_CHAIN")).toEqual(["/old"]);
     expect(subjects("REDIRECT_OUT_OF_SCOPE").sort()).toEqual(["/redir-internal", "/redir-meta", "/redir-offsite"]);
+    // forms & site search: the GET search form was submitted once with a test query (its 500 is a search finding,
+    // not a broken page); the POST form was never submitted, only flagged for its plain-HTTP action
+    expect(subjects("SEARCH_BROKEN")).toEqual(["/forms"]);
+    expect(subjects("FORM_INSECURE_ACTION")).toEqual([]); // only judged on HTTPS pages; this fixture page is plain HTTP
+    expect(pages.filter((x) => x.source === "SEARCH").map(path)).toEqual(["/search?q=test"]); // one probe, GET only
+    expect(pages.some((x) => String(x.url).includes("insecure.example"))).toBe(false); // the POST form was never submitted
+    expect(subjects("BROKEN_PAGE")).not.toContain("/search?q=test");
     expect(subjects("BROKEN_RESOURCE").sort()).toEqual(["/assets/missing.css", "/assets/missing.js", "/assets/missing.png"]);
     expect(subjects("MISSING_DESCRIPTION")).toEqual(["/no-desc"]);
     expect(subjects("MISSING_H1")).toEqual(["/no-h1"]);
@@ -144,7 +151,7 @@ describe("full scan of the controlled multi-page website", () => {
     for (const f of open) {
       expect(f.recommendation.length, f.category).toBeGreaterThan(10);
       expect(f.evidence.impact, f.category).toBeTruthy();
-      expect(["HTTP", "HTML_ANALYSIS", "SITEMAP", "ROBOTS", "BROWSER"]).toContain(f.detection_method);
+      expect(["HTTP", "HTML_ANALYSIS", "SITEMAP", "ROBOTS", "BROWSER", "SEARCH_PROBE"]).toContain(f.detection_method);
     }
     // bounded: infinite /trap and /calendar stop at the depth limit; large page truncated, not failed
     expect(pages.filter((x) => x.url.includes("/trap/")).length).toBeLessThanOrEqual(6);

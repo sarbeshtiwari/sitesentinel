@@ -288,7 +288,7 @@ export class DeepScanService {
 const id = (v: string) => parse(Uuid, v);
 const FindingsQuery = z.object({
   status: z.enum(["OPEN", "RESOLVED", "ALL"]).default("OPEN"),
-  group: z.enum(["broken_pages", "broken_resources", "sitemap", "seo", "accessibility", "structure"]).optional(),
+  group: z.enum(["broken_pages", "broken_resources", "forms", "sitemap", "seo", "accessibility", "structure"]).optional(),
   severity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]).optional(),
   category: z.string().regex(/^[A-Z_]{3,40}$/).optional(),
   /** substring of the subject URL (case-insensitive) */

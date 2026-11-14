@@ -22,7 +22,7 @@ interface SummaryDto {
   entitled: boolean; enabled: boolean; pausedReason: string | null; nextRunAt: string | null; latestScan: ScanDto | null;
   openFindings: Array<{ group: string; severity: string; count: number }>; effectiveLimits: { maxPages: number; maxDepth: number; browserPages: number; externalLinks: boolean };
 }
-export const GROUP_LABEL: Record<string, string> = { broken_pages: "Broken pages", broken_resources: "Broken resources", sitemap: "Sitemap", seo: "SEO", accessibility: "Accessibility (automated checks)", structure: "Structure" };
+export const GROUP_LABEL: Record<string, string> = { broken_pages: "Broken pages", broken_resources: "Broken resources", forms: "Forms & search", sitemap: "Sitemap", seo: "SEO", accessibility: "Accessibility (automated checks)", structure: "Structure" };
 const STOP_LABEL: Record<string, string> = {
   FRONTIER_EXHAUSTED: "Every discovered page was checked", PAGE_LIMIT: "Stopped at the page limit", DURATION: "Stopped at the time limit", REQUEST_BUDGET: "Request budget used up",
   DAILY_QUOTA: "Daily page quota reached", INFRASTRUCTURE: "Our infrastructure failed (not your website)", NO_PAGE_REACHABLE: "No page could be reached safely",

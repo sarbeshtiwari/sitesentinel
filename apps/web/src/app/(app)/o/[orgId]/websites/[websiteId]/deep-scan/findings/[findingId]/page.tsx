@@ -11,7 +11,7 @@ import { useOrgId } from "@/lib/hooks";
 import { fmtUtc, mk, SEVERITY_TONE } from "@/lib/monitoring";
 import { GROUP_LABEL, type FindingDto } from "../../../deepscan-tab";
 
-const METHOD: Record<string, string> = { HTTP: "HTTP request", HTML_ANALYSIS: "Static HTML analysis", SITEMAP: "Sitemap analysis", ROBOTS: "robots.txt", BROWSER: "Rendered in a browser" };
+const METHOD: Record<string, string> = { HTTP: "HTTP request", HTML_ANALYSIS: "Static HTML analysis", SITEMAP: "Sitemap analysis", ROBOTS: "robots.txt", BROWSER: "Rendered in a browser", SEARCH_PROBE: "Test query through the site's search form" };
 const EVENT: Record<string, string> = { OPENED: "Detected", RECURRED: "Detected again", REOPENED: "Reappeared after being fixed", RESOLVED: "Fixed (not found by a complete scan)" };
 
 export default function FindingPage() {

@@ -80,6 +80,8 @@ export interface UrlNormalizeOptions {
   queryParamMode: DeepScanConfig["queryParamMode"];
   queryParamAllowlist: string[];
   excludedQueryParams: string[];
+  /** Same-website host rewrites (e.g. example.com → www.example.com when the site serves itself from www). */
+  hostAliases?: Record<string, string>;
 }
 
 /**
@@ -104,6 +106,8 @@ export function normalizeUrl(raw: string, base: string | URL | null, o: UrlNorma
   if (raw.length > 2048) return null;
   u.hash = "";
   u.hostname = u.hostname.toLowerCase().replace(/\.$/, "");
+  const alias = o.hostAliases?.[u.hostname];
+  if (alias) u.hostname = alias;
   // percent-encoding: decode unreserved characters, upper-case the rest
   let path = u.pathname.replace(/%([0-9a-fA-F]{2})/g, (_m, h: string) => {
     const c = String.fromCharCode(parseInt(h, 16));
@@ -140,6 +144,8 @@ const UNSAFE_QUERY = /(^|&)(action|do|cmd|op)=(delete|remove|destroy|logout|sign
 
 export function unsafeRoute(u: URL): string | null {
   if (UNSAFE_PATH.test(u.pathname)) return "UNSAFE_ROUTE";
+  // CDN-internal endpoints (Cloudflare email obfuscation, challenges, insights): not the site's pages; they 404 without JavaScript.
+  if (/^\/cdn-cgi\//i.test(u.pathname)) return "CDN_INTERNAL";
   if (UNSAFE_QUERY.test(u.searchParams.toString())) return "UNSAFE_QUERY_ACTION";
   if (/\.(zip|gz|tgz|tar|rar|7z|exe|dmg|pkg|msi|iso|apk|bin|mp4|mov|avi|mkv|mp3|wav|pdf|docx?|xlsx?|pptx?)$/i.test(u.pathname)) return "NON_HTML_DOCUMENT";
   return null;
@@ -215,9 +221,9 @@ export function robotsAllows(r: Robots, agent: string, u: URL): { allowed: boole
 
 // ---------------------------------------------------------------- findings
 export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
-export type FindingGroup = "broken_pages" | "broken_resources" | "sitemap" | "seo" | "accessibility" | "structure";
+export type FindingGroup = "broken_pages" | "broken_resources" | "forms" | "sitemap" | "seo" | "accessibility" | "structure";
 
-export interface FindingSpec { group: FindingGroup; severity: Severity; title: string; impact: string; recommendation: string; method: "HTTP" | "HTML_ANALYSIS" | "SITEMAP" | "ROBOTS" | "BROWSER" }
+export interface FindingSpec { group: FindingGroup; severity: Severity; title: string; impact: string; recommendation: string; method: "HTTP" | "HTML_ANALYSIS" | "SITEMAP" | "ROBOTS" | "BROWSER" | "SEARCH_PROBE" }
 
 export const FINDINGS = {
   BROKEN_PAGE: { group: "broken_pages", severity: "HIGH", title: "Broken internal page", method: "HTTP", impact: "Visitors and search engines following internal links reach an error page.", recommendation: "Restore the page, redirect it to its replacement, or remove links to it." },
@@ -255,6 +261,11 @@ export const FINDINGS = {
   SITEMAP_UNREACHABLE: { group: "sitemap", severity: "MEDIUM", title: "Sitemap can't be fetched", method: "SITEMAP", impact: "A declared sitemap returns an error.", recommendation: "Fix the sitemap URL or the robots.txt declaration." },
   SITEMAP_URL_OUT_OF_SCOPE: { group: "sitemap", severity: "LOW", title: "Sitemap lists URLs of another site", method: "SITEMAP", impact: "Those URLs are ignored (not authorised for this website).", recommendation: "List only this website's URLs." },
   SITEMAP_BAD_LASTMOD: { group: "sitemap", severity: "INFO", title: "Invalid lastmod dates in sitemap", method: "SITEMAP", impact: "Search engines ignore invalid dates.", recommendation: "Use W3C datetime format." },
+  SEARCH_BROKEN: { group: "forms", severity: "HIGH", title: "Site search returns an error", method: "SEARCH_PROBE", impact: "Visitors who search the site get an error page instead of results.", recommendation: "Fix the search results page; the scanner submitted one test query with the site's own search form (GET)." },
+  SEARCH_FIELD_UNNAMED: { group: "forms", severity: "LOW", title: "Search box only works with JavaScript", method: "HTML_ANALYSIS", impact: "The search field has no name, so submitting the form without JavaScript sends no query; the scanner can't test it either.", recommendation: "Give the search input a name (e.g. name=\"q\") so the form works without scripts and can be monitored." },
+  FORM_INSECURE_ACTION: { group: "forms", severity: "HIGH", title: "Form submits over plain HTTP", method: "HTML_ANALYSIS", impact: "Data typed into this form on a secure page is sent unencrypted.", recommendation: "Point the form action at an https:// URL." },
+  PASSWORD_FIELD_INSECURE: { group: "forms", severity: "HIGH", title: "Password field on a page without HTTPS", method: "HTML_ANALYSIS", impact: "Passwords can be read or changed in transit, and browsers warn visitors.", recommendation: "Serve the page over HTTPS only." },
+  FORM_NO_SUBMIT: { group: "forms", severity: "LOW", title: "Form without a submit button", method: "HTML_ANALYSIS", impact: "Without JavaScript (or for keyboard and assistive-technology users) the form may not be submittable.", recommendation: "Add a <button type=\"submit\">, or confirm the form is intentionally script-driven." },
   SPA_ROUTE_NOT_IN_HTML: { group: "structure", severity: "INFO", title: "Links only visible after JavaScript", method: "BROWSER", impact: "Some internal links appear only after client-side rendering; crawlers without JavaScript miss them.", recommendation: "Render navigation links server-side or list the routes in the sitemap." },
 } as const satisfies Record<string, FindingSpec>;
 export type FindingCategory = keyof typeof FINDINGS;
@@ -262,6 +273,7 @@ export type FindingCategory = keyof typeof FINDINGS;
 export const FINDING_GROUP_INCIDENTS: Record<FindingGroup, { category: "AVAILABILITY" | "RESOURCE" | "SYSTEM" | "HTTP_ERROR"; severity: Severity; title: string }> = {
   broken_pages: { category: "AVAILABILITY", severity: "HIGH", title: "Broken internal pages found by the deep scan" },
   broken_resources: { category: "RESOURCE", severity: "MEDIUM", title: "Broken resources found by the deep scan" },
+  forms: { category: "AVAILABILITY", severity: "MEDIUM", title: "Form or site-search problems found by the deep scan" },
   sitemap: { category: "SYSTEM", severity: "LOW", title: "Sitemap problems found by the deep scan" },
   seo: { category: "HTTP_ERROR", severity: "LOW", title: "SEO metadata issues found by the deep scan" },
   accessibility: { category: "HTTP_ERROR", severity: "LOW", title: "Accessibility issues found by the deep scan (automated checks)" },

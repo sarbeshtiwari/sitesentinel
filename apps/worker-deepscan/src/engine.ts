@@ -29,6 +29,9 @@ export interface DeepScanDeps {
 }
 
 export const SCANNER_AGENT = "SiteSentinel";
+/** One harmless query per distinct search form (no personal data, nothing that could trigger an action). */
+const SEARCH_PROBE_TERM = "test";
+const MAX_SEARCH_PROBES = 3;
 const INFRA = new Set(["GATEWAY_UNAVAILABLE", "EGRESS_RATE_LIMITED", "GATEWAY_ERROR"]);
 /** Connection-level failures: the site's problem only if OUR path (worker → gateway → internet) is healthy. */
 const CONNECTION_LEVEL = new Set(["CONNECTION_FAILED", "CONNECT_TIMEOUT", "RESPONSE_TIMEOUT", "PROTOCOL_ERROR", "DNS_FAILURE"]);
@@ -98,8 +101,9 @@ export function createDeepScanEngine(d: DeepScanDeps) {
 
     try {
       // ---- 1. discovery (robots + sitemaps + start pages), once per scan
-      let discovery = scan.discovery as { robots: Record<string, Robots | null>; browserDone?: boolean } | null;
+      let discovery = scan.discovery as { robots: Record<string, Robots | null>; browserDone?: boolean; hostAliases?: Record<string, string> } | null;
       if (!discovery) discovery = await discover();
+      if (discovery.hostAliases) snap.norm = { ...snap.norm, hostAliases: discovery.hostAliases }; // resumed scan
       robotsFor = (u: URL) => discovery!.robots[u.hostname] ?? null;
       const robotsDelay = Math.max(0, ...Object.values(discovery.robots).map((r) => (r ? robotsAllows(r, SCANNER_AGENT, new URL(snap.origin)).crawlDelaySec ?? 0 : 0)));
       crawlDelay = Math.max(snap.limits.requestDelayMs, Math.min(30_000, robotsDelay * 1000));
@@ -229,14 +233,28 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       const pageRows: Array<{ url: URL; source: string; inSitemap: boolean; depth: number }> = [];
       let sitemapCount = 0, sitemapUrls = 0, outOfScope = 0, badLastmod = 0;
       const aliases = new Set(snap.aliasHosts ?? []);
+      const hostAliases: Record<string, string> = {};
+      // Does the site serve itself from its alias (example.com → www.example.com)? Then every URL on the registered
+      // host is crawled on the alias directly: one page per path instead of a redirect + a duplicate per page.
+      if (aliases.size) {
+        const home = new URL(snap.origin);
+        const r = await guardedFetch(new URL("/", home), { method: "HEAD", readBody: false });
+        if (r.error && INFRA.has(r.error)) { overheadRequests++; throw new TransientError(`gateway unavailable (${r.error})`); }
+        if (r.error === "EGRESS_UNAUTHORIZED") throw new SecurityError("egress gateway rejected the scanner's capability");
+        if (r.finalUrl.hostname !== home.hostname && aliases.has(r.finalUrl.hostname)) {
+          hostAliases[home.hostname] = r.finalUrl.hostname;
+          snap.norm = { ...snap.norm, hostAliases };
+        }
+      }
       for (const host of snap.scope.hosts.filter((h) => !aliases.has(h))) {
         const robotsUrl = new URL(`${new URL(snap.origin).protocol}//${host}/robots.txt`);
         const r = await guardedFetch(robotsUrl, { readBody: true });
         if (r.error && INFRA.has(r.error)) { overheadRequests++; throw new TransientError(`gateway unavailable (${r.error})`); }
         if (r.error === "EGRESS_UNAUTHORIZED") throw new SecurityError("egress gateway rejected the scanner's capability");
         robots[host] = r.status === 200 && r.body ? parseRobots(r.body.toString("utf8").slice(0, 512 * 1024)) : null;
-        // The site serves itself from its alias (example.com → www.example.com): the same rules apply there.
+        // robots.txt answered on the registered host applies to the alias the site is served from (and vice versa via redirect)
         if (r.finalUrl.hostname !== host && aliases.has(r.finalUrl.hostname)) robots[r.finalUrl.hostname] = robots[host];
+        if (hostAliases[host] && !(hostAliases[host]! in robots)) robots[hostAliases[host]!] = robots[host];
         for (const sm of robots[host]?.sitemaps ?? []) {
           const u = normalizeUrl(sm, robotsUrl, snap.norm);
           if (!u || scopeDecision(u, { ...snap.scope, includePatterns: [], excludePatterns: [] }) !== "OK") {
@@ -290,7 +308,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         const u = normalizeUrl(p, snap.origin, snap.norm);
         if (u && scopeDecision(u, snap.scope) === "OK") pageRows.unshift({ url: u, source: "START", inSitemap: false, depth: 0 });
       }
-      const disc = { robots, issues, sitemaps: { fetched: sitemapCount, urls: sitemapUrls, outOfScope }, browserDone: false };
+      const disc = { robots, issues, sitemaps: { fetched: sitemapCount, urls: sitemapUrls, outOfScope }, browserDone: false, hostAliases };
       // Dedupe and cap BEFORE touching the database: a 50,000-entry sitemap must not become 50,000 statements.
       const unique = new Map<string, (typeof pageRows)[number]>();
       for (const p of pageRows) {
@@ -412,6 +430,19 @@ export function createDeepScanEngine(d: DeepScanDeps) {
             if (await trapped(tx, x)) continue;
             if (pages >= snap.limits.maxPages) { if (await isNew(tx, x)) await bumpDropped(tx, 1); continue; }
             if (await insertUrl(tx, x, "PAGE", "CRAWL", row.depth + 1, displayUrl(u!), false)) { pages++; newPages++; }
+          }
+          // Site search: submit each distinct GET search form once with a harmless test query (read-only, like any
+          // crawled link; POST forms are never submitted). Its result page is crawled as a SEARCH page.
+          for (const fm of analysed.facts.forms) {
+            if (!fm.search || fm.method !== "GET" || !fm.queryField) continue;
+            const target = normalizeUrl(fm.action?.trim() ? fm.action : base.href, base, snap.norm);
+            if (!target || scopeDecision(target, snap.scope) !== "OK") continue;
+            target.searchParams.set(fm.queryField, SEARCH_PROBE_TERM);
+            const probe = normalizeUrl(target.href, null, snap.norm);
+            if (!probe || probe.searchParams.get(fm.queryField) !== SEARCH_PROBE_TERM) continue; // query params ignored by config
+            const [{ n }] = await tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND source = 'SEARCH'`;
+            if (n >= MAX_SEARCH_PROBES) break;
+            await insertUrl(tx, probe, "PAGE", "SEARCH", row.depth + 1, displayUrl(u!), false);
           }
           if (snap.checkResources) {
             for (const res of analysed.out.resources) {
