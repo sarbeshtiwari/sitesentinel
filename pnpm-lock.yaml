@@ -90,6 +90,9 @@ importers:
       '@nestjs/platform-fastify':
         specifier: 12.5.0
         version: 12.5.0(@nestjs/common@12.5.0(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.5.0(@nestjs/common@12.5.0(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2)
+      '@wim/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
       '@wim/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -286,12 +289,18 @@ importers:
 
   apps/scheduler:
     dependencies:
+      '@wim/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
       '@wim/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@wim/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@wim/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@wim/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -541,6 +550,28 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+
+  packages/billing:
+    dependencies:
+      '@wim/core':
+        specifier: workspace:*
+        version: link:../core
+      '@wim/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@wim/db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0))
 
   packages/contracts:
     dependencies:

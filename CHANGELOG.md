@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added — Phase 8: billing and trials (2026-11-15, partial — see docs/BILLING.md)
+- **Off by default:** new protected setting `billing.enabled` (false) gates checkout, plan changes, cancellation and every payment-gateway call; webhooks answer 503 while it is off; entitlement resolution is unchanged while it is off.
+- **Plans and entitlements:** example Free/Starter/Pro/Business plans with INR and USD monthly/annual prices (decision B2, clearly marked); entitlement resolver (subscription → trial plan → free plan → platform defaults, overrides on top) inside `loadOrgContexts` with no worker change; Super Admin plans, immutable price versions, entitlement sets and per-organisation overrides, all audited with a reason.
+- **Subscriptions:** pure state machine (TRIALING/ACTIVE/PAST_DUE/CANCELING/CANCELED/EXPIRED) with an out-of-order guard, grace period and dunning schedule from settings; daily advisory-locked reconciliation in the scheduler.
+- **Gateways:** new `@wim/billing` package — PaymentGateway interface, Stripe and Razorpay REST adapters (no SDK dependency), raw-body webhook signatures (Stripe timestamped HMAC with tolerance, Razorpay HMAC), replay protection through `UNIQUE(gateway, event_id)`, processing in one transaction under the organisation's RLS context; gateway secrets sealed with a platform data key, write-only.
+- **UI:** customer Billing page; Super Admin Plans and Payment gateways pages.
+- **Database:** `sql/180_billing.sql` (definer org resolver for verified webhooks, invoice sequence, narrowed grants); invariants block 10. No Prisma migration.
+- **Not verified:** Stripe/Razorpay test-mode end-to-end (no test keys).
+
 ### Release readiness exercise (2026-11-15) — see docs/RELEASE_READINESS.md
 - **Security:** worker-browser now runs as the least-privilege `wim_browser` role (column grants, tier-restricted RLS, invariant 1g); third-party resource policy signed into the browser capability and enforced by the egress gateway; functional tests require explicit safe destinations and refuse every undeclared first-party request type while interacting; startup validation of worker database roles (and of production credentials/TLS).
 - **Operations:** "customer monitoring stalled" detection and a platform verdict separate from worker health; API/ingest liveness; CPU, disk and timeout-rate signals; screenshot-cleanup and deep-scan-retention failures recorded; pages-per-scan reconciliation; `OPS_FALLBACK_ALERT_EMAILS` mandatory in production.

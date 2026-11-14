@@ -2,7 +2,7 @@
 import type { Permission } from "@wim/core";
 import {
   Activity, Bell, Building2, Check, ChevronsUpDown, Gauge, Globe, History, KeyRound, LayoutDashboard, LifeBuoy, LogOut, MailWarning,
-  Plus, ScrollText, Settings, ShieldCheck, Siren, User, Users,
+  CreditCard, Plus, ScrollText, Settings, ShieldCheck, Siren, User, Users,
 } from "lucide-react";
 import {
   AppShell, Avatar, Badge, Breadcrumbs, Button, DropdownItem, DropdownLabel, DropdownMenu, DropdownSeparator, Logo, LogoSymbol,
@@ -44,7 +44,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LABELS: Record<string, string> = {
   overview: "Overview", websites: "Websites", new: "Add website", transfers: "Transfers", incidents: "Incidents", history: "History",
   notifications: "Notifications", preferences: "Preferences", usage: "Usage & limits", settings: "Settings", general: "General",
-  team: "Team", roles: "Roles", audit: "Audit log", account: "Account", profile: "Profile", security: "Security", onboarding: "Get started",
+  team: "Team", roles: "Roles", audit: "Audit log", billing: "Billing", account: "Account", profile: "Profile", security: "Security", onboarding: "Get started",
   "api-monitoring": "API monitoring", browser: "Browser run", "deep-scan": "Deep scan", scans: "Scans", findings: "Findings",
 };
 // The record type each id-segment refers to, by the segment before it.
@@ -120,6 +120,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
           {can("org:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/general`} icon={<Settings />} active={is(`${base}/settings/general`)}>General</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/team`} icon={<Users />} active={is(`${base}/settings/team`)}>Team</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/roles`} icon={<KeyRound />} active={is(`${base}/settings/roles`)}>Roles</SidebarItem>}
+          {can("billing:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/billing`} icon={<CreditCard />} active={is(`${base}/settings/billing`)}>Billing</SidebarItem>}
           {can("audit:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/audit`} icon={<ScrollText />} active={is(`${base}/settings/audit`)}>Audit log</SidebarItem>}
         </SidebarSection>
       )}

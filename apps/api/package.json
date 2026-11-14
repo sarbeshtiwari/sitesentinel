@@ -33,7 +33,8 @@
     "zod": "4.6.7",
     "@wim/sdk": "workspace:*",
     "@wim/queue": "workspace:*",
-    "@wim/storage": "workspace:*"
+    "@wim/storage": "workspace:*",
+    "@wim/billing": "workspace:*"
   },
   "devDependencies": {
     "@nestjs/testing": "12.5.0",

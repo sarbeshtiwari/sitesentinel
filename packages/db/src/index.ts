@@ -24,6 +24,9 @@ const SECRET_OMIT = {
   apiCredential: { secretEnc: true },
   authRecipe: { credentialsEnc: true },
   notificationChannel: { configEnc: true },
+  // Phase 8: gateway secrets are never part of a default read (the admin API never returns them; the billing
+  // service opts in explicitly with `omit: { secretsEnc: false }` when it must decrypt them)
+  paymentGatewayConfig: { secretsEnc: true },
 } as const;
 
 export function createDb(opts: CreateDbOptions): PrismaClient {
