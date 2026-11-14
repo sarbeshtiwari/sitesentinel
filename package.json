@@ -1,0 +1,35 @@
+{
+  "name": "wim",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test:unit && pnpm --filter @wim/api test:integration && pnpm db:invariants",
+    "test:unit": "turbo run test:unit",
+    "test:integration": "pnpm --filter @wim/api test:integration",
+    "infra:up": "docker compose -f infra/compose/docker-compose.dev.yml up -d --wait",
+    "infra:down": "docker compose -f infra/compose/docker-compose.dev.yml down",
+    "db:validate": "pnpm --filter @wim/db validate",
+    "db:migrate": "pnpm --filter @wim/db migrate:deploy",
+    "db:seed": "pnpm --filter @wim/db seed",
+    "db:invariants": "docker compose -f infra/compose/docker-compose.dev.yml exec -T postgres psql -U wim_owner -d wim -v ON_ERROR_STOP=1 -f - < packages/db/tests/invariants.sql",
+    "keys:init": "node packages/crypto/scripts/init-dev-keys.mjs",
+    "admin:create": "pnpm --filter @wim/api admin:create",
+    "dev:web": "pnpm --filter @wim/web dev",
+    "dev:admin": "pnpm --filter @wim/admin dev",
+    "test:e2e": "playwright test -c tests/e2e/playwright.config.ts"
+  },
+  "devDependencies": {
+    "turbo": "2.11.11",
+    "typescript": "5.9.3",
+    "@types/node": "^24.0.0",
+    "@playwright/test": "1.65.0"
+  }
+}

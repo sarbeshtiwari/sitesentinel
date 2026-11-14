@@ -1,0 +1,71 @@
+# Local development infrastructure. App services run on the host via `pnpm dev`
+# (added in Phase 2); only stateful dependencies run in Docker.
+#
+# Host ports are offset (55432, 56379, …) so they never collide with a natively
+# installed Postgres/Redis on the developer machine.
+#
+#   docker compose -f infra/compose/docker-compose.dev.yml up -d
+#   docker compose -f infra/compose/docker-compose.dev.yml down        # keep data
+#   docker compose -f infra/compose/docker-compose.dev.yml down -v     # wipe data
+
+name: wim-dev
+
+services:
+  postgres:
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_DB: wim
+      POSTGRES_USER: wim_owner
+      POSTGRES_PASSWORD: wim_owner_dev_password
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_min_duration_statement=500
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wim_owner -d wim"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    # BullMQ requires noeviction; AOF so queued jobs survive restarts.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction", "--requirepass", "wim_redis_dev_password"]
+    ports:
+      - "127.0.0.1:56379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "wim_redis_dev_password", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  s3:
+    # S3-compatible object storage for artifacts/reports (MinIO no longer ships public images).
+    image: chrislusf/seaweedfs:3.80
+    command: ["server", "-s3", "-s3.port=8333", "-dir=/data", "-s3.config=/etc/seaweedfs/s3.json"]
+    ports:
+      - "127.0.0.1:58333:8333"
+    volumes:
+      - s3-data:/data
+      - ../seaweedfs/s3.dev.json:/etc/seaweedfs/s3.json:ro
+
+  mailpit:
+    # Catches all outgoing email in dev — UI at http://localhost:58025
+    image: axllent/mailpit:v1.21
+    ports:
+      - "127.0.0.1:51025:1025"
+      - "127.0.0.1:58025:8025"
+
+volumes:
+  pg-data:
+  redis-data:
+  s3-data:

@@ -1,0 +1,2576 @@
+// =============================================================================
+// @wim/db — Prisma schema (Phase 1 proposal)
+//
+// Conventions
+//  - PostgreSQL 16. All ids are UUIDv7-compatible uuid (generated in app via
+//    `uuidv7()` for index locality; DB default gen_random_uuid() as fallback).
+//  - Every tenant-scoped table carries `org_id` and is protected by RLS
+//    (see ../sql/020_rls.sql).
+//  - Tables marked [PARTITIONED] are created as RANGE-partitioned tables by
+//    ../sql/010_partitions.sql. Their PK includes the partition key. Other tables
+//    reference them by plain uuid columns WITHOUT foreign keys (by design:
+//    partitions are dropped wholesale by retention).
+//  - Partial unique indexes, CHECK constraints, triggers and grants that Prisma
+//    cannot express live in ../sql/*.sql and are listed in DATABASE_SCHEMA.md.
+//  - Columns suffixed `_enc` hold envelope-encrypted ciphertext (packages/crypto).
+//  - Columns suffixed `_hash` hold SHA-256 (tokens) or keyed HMAC (signals).
+// =============================================================================
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+  runtime             = "nodejs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ----------------------------------------------------------------------------
+// Enums
+// ----------------------------------------------------------------------------
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_DELETION
+  DELETED
+}
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_DELETION
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN_OPERATOR
+  ADMIN_BILLING
+  ADMIN_SUPPORT
+  ADMIN_AUDITOR
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum DomainPolicy {
+  ROOT_EXCLUSIVE
+  SUBDOMAIN_INDEPENDENT
+}
+
+enum ClaimScope {
+  ROOT // claims the whole registrable-domain namespace (ROOT_EXCLUSIVE)
+  HOST // claims a single host identity
+}
+
+enum ClaimStatus {
+  PENDING
+  VERIFIED
+  LAPSED
+  EXPIRED
+  RELEASED
+  TRANSFERRED_OUT
+  REJECTED
+}
+
+enum VerificationMethod {
+  DNS_TXT
+  HTML_META
+  WELL_KNOWN_FILE
+  SDK_BEACON
+}
+
+enum VerificationStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum TransferStatus {
+  PENDING_VERIFICATION
+  PENDING_ADMIN
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum WebsiteStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  PAUSED
+  SUSPENDED // by admin
+  LAPSED // ownership re-verification failing
+  ARCHIVED
+}
+
+enum InstallationStatus {
+  NOT_DETECTED
+  DETECTED
+  STALE
+}
+
+enum CheckTier {
+  T1_HTTP
+  T2_RENDER
+  T3_DEEP
+  API
+  SSL
+  VERIFY
+  SYSTEM
+}
+
+enum ScheduleStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+enum ExecutionStatus {
+  SCHEDULED // execution row committed, not yet confirmed in the queue
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMED_OUT
+  CANCELLED
+  SKIPPED // ineligible when the worker re-checked it
+  RETRYING
+  DEAD_LETTERED
+}
+
+enum ResultStatus {
+  PASSED
+  FAILED
+  SKIPPED
+  INCONCLUSIVE
+  DETECTED_NOT_TESTED
+}
+
+enum PageStatus {
+  ACTIVE
+  STALE
+  EXCLUDED
+  REMOVED
+}
+
+enum ComponentType {
+  HEADER
+  NAV
+  FOOTER
+  SEARCH
+  FORM
+  BUTTON
+  LINK
+  IMAGE
+  DROPDOWN
+  MODAL
+  TABS
+  ACCORDION
+  SLIDER
+  PAGINATION
+  TABLE
+  RESPONSIVE_NAV
+  CUSTOM
+  CARD_GROUP // Phase 4F: repeated content (cards, product tiles, article lists)
+}
+
+enum TestSafety {
+  SAFE
+  REQUIRES_APPROVAL
+}
+
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  PATCH
+  DELETE
+  HEAD
+}
+
+enum ApiAuthType {
+  NONE
+  BEARER
+  BASIC
+  API_KEY_HEADER
+  API_KEY_QUERY
+  OAUTH2_CLIENT_CREDENTIALS
+}
+
+enum HostAuthorization {
+  VERIFIED_DOMAIN // under a verified website's registrable domain
+  HOST_VERIFIED // separately verified third-party host
+  ALLOWLISTED // admin-curated public API allowlist
+  PENDING
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  INVESTIGATING
+  RESOLVED
+  REOPENED
+  IGNORED
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum IncidentCategory {
+  AVAILABILITY
+  HTTP_ERROR
+  SSL
+  JS_ERROR
+  RESOURCE
+  PERFORMANCE
+  COMPONENT
+  FUNCTIONAL
+  RESPONSIVE
+  API_ASSERTION
+  SEARCH
+  FORM
+  SYSTEM
+}
+
+enum SignalSource {
+  DEEP_SCAN // Phase 4E
+  HTTP_PROBE
+  API_CHECK
+  BROWSER
+  SDK
+  SSL
+  SYSTEM
+}
+
+enum IncidentEventType {
+  CREATED
+  OCCURRED
+  ACKNOWLEDGED
+  INVESTIGATING
+  ESCALATED
+  SEVERITY_CHANGED
+  RESOLVED
+  AUTO_RESOLVED
+  REOPENED
+  IGNORED
+  UNIGNORED
+  COMMENTED
+  FLAPPING_STARTED
+  FLAPPING_ENDED
+}
+
+enum ChannelKind {
+  EMAIL
+  IN_APP
+  SLACK
+  TEAMS
+  SMS
+  WHATSAPP
+  WEBHOOK
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  BOUNCED
+  SUPPRESSED
+  DEDUPED
+}
+
+enum BillingInterval {
+  MONTH
+  YEAR
+}
+
+enum GatewayKind {
+  STRIPE
+  RAZORPAY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELING
+  CANCELED
+  EXPIRED
+}
+
+enum TrialStatus {
+  ACTIVE
+  CONVERTED
+  EXPIRED
+  REVOKED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum WebhookProcessingStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+enum ActorType {
+  USER
+  ADMIN
+  SYSTEM
+  API_KEY
+}
+
+enum BreakGlassStatus {
+  REQUESTED
+  AWAITING_CUSTOMER
+  APPROVED
+  ACTIVE
+  EXPIRED
+  REJECTED
+  REVOKED
+}
+
+enum ReportFormat {
+  PDF
+  CSV
+}
+
+enum JobState {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum SettingScope {
+  PLATFORM
+  ORG
+  WEBSITE
+}
+
+// ----------------------------------------------------------------------------
+// Identity & access
+// ----------------------------------------------------------------------------
+
+model User {
+  id                   String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String     @db.Citext
+  emailVerifiedAt      DateTime?  @map("email_verified_at") @db.Timestamptz(6)
+  passwordHash         String     @map("password_hash") // argon2id encoded string
+  name                 String?
+  timezone             String     @default("UTC")
+  locale               String     @default("en")
+  status               UserStatus @default(ACTIVE)
+  totpSecretEnc        Bytes?     @map("totp_secret_enc")
+  totpEnabledAt        DateTime?  @map("totp_enabled_at") @db.Timestamptz(6)
+  totpPendingSecretEnc Bytes?     @map("totp_pending_secret_enc") // enrollment in progress, not yet confirmed
+  totpLastUsedStep     BigInt?    @map("totp_last_used_step") // replay protection (RFC 6238 §5.2)
+  failedLoginCount     Int        @default(0) @map("failed_login_count")
+  lockedUntil          DateTime?  @map("locked_until") @db.Timestamptz(6)
+  lastLoginAt          DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  passwordChangedAt    DateTime?  @map("password_changed_at") @db.Timestamptz(6)
+  deletionRequestedAt  DateTime?  @map("deletion_requested_at") @db.Timestamptz(6)
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions          UserSession[]
+  recoveryCodes     RecoveryCode[]
+  recoveryRequests  AccountRecoveryRequest[]
+  memberships       OrganizationMember[]
+  emailTokens       EmailVerificationToken[]
+  passwordResets    PasswordResetToken[]
+  notificationPrefs NotificationPreference[]
+  notifications     Notification[]
+
+  @@unique([email])
+  @@map("users")
+}
+
+model UserSession {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash") // sha256(opaque token)
+  csrfSecret  String    @map("csrf_secret")
+  ipPrefix    String?   @map("ip_prefix") // /24 or /48 only
+  userAgent   String?   @map("user_agent")
+  mfaVerified Boolean   @default(false) @map("mfa_verified")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+model RecoveryCode {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @map("code_hash")
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("recovery_codes")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  email     String    @db.Citext // address being verified (supports email change)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+/// Login attempts (success + failure) for customers and admins. Partitioned monthly. [PARTITIONED]
+model LoginAttempt {
+  id         String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  occurredAt DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  actorType  ActorType @map("actor_type")
+  userId     String?   @map("user_id") @db.Uuid
+  emailHash  String    @map("email_hash") // HMAC — attempts for unknown emails are still tracked
+  ipPrefix   String?   @map("ip_prefix")
+  success    Boolean
+  reason     String? // BAD_PASSWORD | LOCKED | MFA_FAILED | RATE_LIMITED | ...
+
+  @@id([id, occurredAt])
+  @@index([emailHash, occurredAt])
+  @@index([userId, occurredAt])
+  @@map("login_attempts")
+}
+
+model AdminUser {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String    @unique @db.Citext
+  name             String
+  passwordHash     String    @map("password_hash")
+  role             AdminRole
+  totpSecretEnc    Bytes     @map("totp_secret_enc") // 2FA mandatory for admins
+  totpLastUsedStep BigInt?   @map("totp_last_used_step")
+  failedLoginCount Int       @default(0) @map("failed_login_count")
+  lockedUntil      DateTime? @map("locked_until") @db.Timestamptz(6)
+  webauthn         Json? // registered credentials (public keys only)
+  active           Boolean   @default(true)
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdById      String?   @map("created_by_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions AdminSession[]
+
+  @@map("admin_users")
+}
+
+model AdminSession {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  adminUserId String    @map("admin_user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  csrfSecret  String    @map("csrf_secret")
+  ipPrefix    String?   @map("ip_prefix")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6) // short: 8h absolute, 30m idle
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId])
+  @@map("admin_sessions")
+}
+
+// ----------------------------------------------------------------------------
+// Organizations, roles, permissions
+// ----------------------------------------------------------------------------
+
+model Organization {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String
+  slug                String    @unique
+  status              OrgStatus @default(ACTIVE)
+  timezone            String    @default("UTC")
+  currency            String    @default("USD") @db.Char(3)
+  supportAccess       String    @default("REQUIRE_CUSTOMER_CONSENT") @map("support_access") // break-glass policy
+  suspendedReason     String?   @map("suspended_reason")
+  deletionRequestedAt DateTime? @map("deletion_requested_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  members              OrganizationMember[]
+  invitations          Invitation[]
+  roles                Role[]
+  encryptionKeys       OrgEncryptionKey[]
+  websites             Website[]
+  domainClaims         DomainClaim[]
+  subscriptions        Subscription[]
+  trials               Trial[]
+  entitlementOverrides EntitlementOverride[]
+  incidents            Incident[]
+  notificationChannels NotificationChannel[]
+  gatewayCustomers     GatewayCustomer[]
+  usageCounters        UsageCounter[]
+  invoices             Invoice[]
+  payments             Payment[]
+  reportJobs           ReportJob[]
+
+  @@map("organizations")
+}
+
+/// System roles have org_id NULL (OWNER, ADMIN, MEMBER, VIEWER). Custom roles are per org.
+model Role {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String? @map("org_id") @db.Uuid
+  key         String
+  name        String
+  description String?
+  isSystem    Boolean @default(false) @map("is_system")
+
+  organization Organization?        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  permissions  RolePermission[]
+  members      OrganizationMember[]
+
+  @@unique([orgId, key]) // + partial unique on key WHERE org_id IS NULL (sql/030)
+  @@map("roles")
+}
+
+model Permission {
+  key         String @id // e.g. "website:create", "incident:acknowledge", "billing:manage"
+  description String
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId        String @map("role_id") @db.Uuid
+  permissionKey String @map("permission_key")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@id([roleId, permissionKey])
+  @@map("role_permissions")
+}
+
+model OrganizationMember {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+model Invitation {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId        String           @map("org_id") @db.Uuid
+  email        String           @db.Citext
+  roleId       String           @map("role_id") @db.Uuid
+  tokenHash    String           @unique @map("token_hash")
+  status       InvitationStatus @default(PENDING)
+  invitedById  String           @map("invited_by_id") @db.Uuid
+  expiresAt    DateTime         @map("expires_at") @db.Timestamptz(6)
+  acceptedAt   DateTime?        @map("accepted_at") @db.Timestamptz(6)
+  acceptedById String?          @map("accepted_by_id") @db.Uuid
+  lastSentAt   DateTime?        @map("last_sent_at") @db.Timestamptz(6)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, status])
+  @@index([orgId, email, status])
+  @@map("invitations")
+}
+
+/// Lost-second-factor recovery (SECURITY.md §7.5): email confirmation, then a waiting
+/// period with notification and cancellation, then the factor is removed at next login.
+model AccountRecoveryRequest {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  kind             String    @default("MFA_RESET")
+  status           String    @default("PENDING_EMAIL") // PENDING_EMAIL | WAITING | COMPLETED | CANCELLED | EXPIRED
+  confirmTokenHash String?   @unique @map("confirm_token_hash")
+  cancelTokenHash  String?   @unique @map("cancel_token_hash")
+  confirmExpiresAt DateTime  @map("confirm_expires_at") @db.Timestamptz(6)
+  eligibleAt       DateTime? @map("eligible_at") @db.Timestamptz(6)
+  ipPrefix         String?   @map("ip_prefix")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  confirmedAt      DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+  cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("account_recovery_requests")
+}
+
+/// Platform-scoped data keys (user TOTP secrets, admin secrets, platform config secrets).
+/// Wrapped by a KEK held outside the database (KeyProvider); unusable without it.
+model PlatformDataKey {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  purpose    String // "user-secrets" | "admin-secrets" | "platform-config"
+  version    Int
+  kekId      String    @map("kek_id")
+  wrappedDek Bytes     @map("wrapped_dek")
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  retiredAt  DateTime? @map("retired_at") @db.Timestamptz(6)
+
+  @@unique([purpose, version])
+  @@map("platform_data_keys")
+}
+
+/// Envelope encryption: per-org data key wrapped by the KEK. Destroying rows = crypto-shredding.
+model OrgEncryptionKey {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  version    Int
+  kekId      String    @map("kek_id") // KeyProvider key reference + version
+  wrappedDek Bytes     @map("wrapped_dek")
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  retiredAt  DateTime? @map("retired_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, version])
+  @@map("org_encryption_keys")
+}
+
+// ----------------------------------------------------------------------------
+// Domain identity, registry, verification, transfers, anti-abuse
+// ----------------------------------------------------------------------------
+
+/// One row per normalized identity, permanent. Never deleted on account deletion.
+model DomainRegistry {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identityKey       String    @unique @map("identity_key") // e.g. "example.co.uk" or "shop.example.co.uk"
+  hostKey           String    @map("host_key") // punycode host, alias labels stripped
+  registrableDomain String    @map("registrable_domain") // PSL eTLD+1
+  displayHost       String    @map("display_host") // unicode form for UI
+  isRoot            Boolean   @map("is_root") // hostKey == registrableDomain
+  firstSeenAt       DateTime  @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  firstVerifiedAt   DateTime? @map("first_verified_at") @db.Timestamptz(6)
+  blocked           Boolean   @default(false)
+
+  claims    DomainClaim[]
+  transfers DomainTransfer[]
+  attempts  DomainRegistrationAttempt[]
+
+  @@index([registrableDomain])
+  @@map("domain_registry")
+}
+
+/// An org's claim on an identity. Partial unique index (sql/030):
+///   UNIQUE (domain_registry_id) WHERE status IN ('PENDING','VERIFIED','LAPSED')
+model DomainClaim {
+  id                      String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domainRegistryId        String              @map("domain_registry_id") @db.Uuid
+  orgId                   String?             @map("org_id") @db.Uuid // NULL after org deletion (history retained)
+  scope                   ClaimScope
+  status                  ClaimStatus         @default(PENDING)
+  policy                  DomainPolicy
+  verificationToken       String              @map("verification_token") // random, non-secret proof value
+  tokenIssuedAt           DateTime            @default(now()) @map("token_issued_at") @db.Timestamptz(6)
+  verificationAttempts    Int                 @default(0) @map("verification_attempts") // since the current token was issued
+  lastAttemptAt           DateTime?           @map("last_attempt_at") @db.Timestamptz(6)
+  verifiedMethod          VerificationMethod? @map("verified_method")
+  inheritedFromClaimId    String?             @map("inherited_from_claim_id") @db.Uuid // verified via the org's ROOT claim
+  // ---- periodic ownership revalidation (Phase 4A)
+  nextRevalidationAt      DateTime?           @map("next_revalidation_at") @db.Timestamptz(6)
+  revalidationState       String              @default("OK") @map("revalidation_state") // OK | FAILING | LAPSED
+  lastRevalidationAt      DateTime?           @map("last_revalidation_at") @db.Timestamptz(6)
+  lastRevalidationOutcome String?             @map("last_revalidation_outcome") // SUCCEEDED | TEMPORARY_FAILURE | DEFINITIVE_FAILURE | SERVICE_UNAVAILABLE
+  revalidationFailures    Int                 @default(0) @map("revalidation_failures") // consecutive definitive failures
+  transientFailures       Int                 @default(0) @map("transient_failures") // consecutive temporary failures (not counted towards lapse)
+  failingSince            DateTime?           @map("failing_since") @db.Timestamptz(6)
+  pendingExpiresAt        DateTime?           @map("pending_expires_at") @db.Timestamptz(6)
+  verifiedAt              DateTime?           @map("verified_at") @db.Timestamptz(6)
+  lastReverifiedAt        DateTime?           @map("last_reverified_at") @db.Timestamptz(6)
+  lapsedAt                DateTime?           @map("lapsed_at") @db.Timestamptz(6)
+  releasedAt              DateTime?           @map("released_at") @db.Timestamptz(6)
+  releaseReason           String?             @map("release_reason") // ORG_DELETED | EXPIRED | TRANSFER | ADMIN | LAPSED
+  createdAt               DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  domainRegistry DomainRegistry       @relation(fields: [domainRegistryId], references: [id], onDelete: Restrict)
+  organization   Organization?        @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  verifications  DomainVerification[]
+  website        Website?
+
+  @@index([orgId, status])
+  @@index([status, pendingExpiresAt])
+  @@index([status, nextRevalidationAt])
+  @@map("domain_claims")
+}
+
+model DomainVerification {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId            String?            @map("org_id") @db.Uuid // tenant RLS (020 loop); NULL only for historical rows
+  domainClaimId    String             @map("domain_claim_id") @db.Uuid
+  scopeGranted     ClaimScope?        @map("scope_granted")
+  method           VerificationMethod
+  status           VerificationStatus @default(PENDING)
+  detail           Json? // resolver answers / fetched status — never page content
+  failureReason    String?            @map("failure_reason")
+  requestedAt      DateTime           @default(now()) @map("requested_at") @db.Timestamptz(6)
+  completedAt      DateTime?          @map("completed_at") @db.Timestamptz(6)
+  isReverification Boolean            @default(false) @map("is_reverification")
+
+  domainClaim DomainClaim @relation(fields: [domainClaimId], references: [id], onDelete: Cascade)
+
+  @@index([domainClaimId, requestedAt])
+  @@map("domain_verifications")
+}
+
+/// Every registration attempt including rejected duplicates — admin review & abuse analysis.
+/// This is the `domain_registration_history` entity from the spec.
+model DomainRegistrationAttempt {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domainRegistryId String?  @map("domain_registry_id") @db.Uuid
+  orgId            String?  @map("org_id") @db.Uuid
+  inputHost        String   @map("input_host") // normalized input host only
+  outcome          String // ACCEPTED | DUPLICATE | DUPLICATE_NAMESPACE | DUPLICATE_OWN | BLOCKED | INVALID | LIMIT | TRANSFER_REQUESTED
+  reason           String?
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  domainRegistry DomainRegistry? @relation(fields: [domainRegistryId], references: [id], onDelete: SetNull)
+
+  @@index([domainRegistryId, createdAt])
+  @@index([outcome, createdAt])
+  @@map("domain_registration_attempts")
+}
+
+model DomainTransfer {
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  domainRegistryId     String         @map("domain_registry_id") @db.Uuid
+  fromClaimId          String?        @map("from_claim_id") @db.Uuid
+  fromOrgId            String?        @map("from_org_id") @db.Uuid // current owner at request time (never shown to the requester)
+  toOrgId              String?        @map("to_org_id") @db.Uuid
+  requestedById        String?        @map("requested_by_id") @db.Uuid
+  verificationToken    String?        @map("verification_token") // requester's DNS proof value
+  tokenExpiresAt       DateTime?      @map("token_expires_at") @db.Timestamptz(6)
+  verificationAttempts Int            @default(0) @map("verification_attempts")
+  verifiedAt           DateTime?      @map("verified_at") @db.Timestamptz(6)
+  lastCheckDetail      Json?          @map("last_check_detail")
+  appliedAt            DateTime?      @map("applied_at") @db.Timestamptz(6)
+  toWebsiteId          String?        @map("to_website_id") @db.Uuid
+  toClaimId            String?        @map("to_claim_id") @db.Uuid // the requester's DNS-verified claim
+  status               TransferStatus @default(PENDING_VERIFICATION)
+  ownerResponse        String?        @map("owner_response") // NONE | CONTESTED | ACCEPTED
+  ownerRespondBy       DateTime?      @map("owner_respond_by") @db.Timestamptz(6)
+  decidedByAdminId     String?        @map("decided_by_admin_id") @db.Uuid
+  decisionReason       String?        @map("decision_reason")
+  autoApproved         Boolean        @default(false) @map("auto_approved")
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  decidedAt            DateTime?      @map("decided_at") @db.Timestamptz(6)
+
+  domainRegistry DomainRegistry @relation(fields: [domainRegistryId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@map("domain_transfers")
+}
+
+/// Permanent, minimal trial ledger keyed by registrable domain. No personal data, no org id.
+model DomainTrialLedger {
+  registrableDomain String    @id @map("registrable_domain")
+  firstRegisteredAt DateTime  @default(now()) @map("first_registered_at") @db.Timestamptz(6)
+  firstVerifiedAt   DateTime? @map("first_verified_at") @db.Timestamptz(6)
+  trialConsumedAt   DateTime? @map("trial_consumed_at") @db.Timestamptz(6)
+  trialCount        Int       @default(0) @map("trial_count")
+  registrationCount Int       @default(0) @map("registration_count")
+  lastReleasedAt    DateTime? @map("last_released_at") @db.Timestamptz(6)
+  flags             String[]  @default([])
+  adminResetAt      DateTime? @map("admin_reset_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("domain_trial_ledger")
+}
+
+/// Keyed-HMAC secondary anti-abuse signals. Unlinkable to an identity without the pepper.
+model AbuseSignal {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind        String // EMAIL | CARD_FINGERPRINT | IP_PREFIX
+  valueHash   String    @map("value_hash")
+  trialUsedAt DateTime? @map("trial_used_at") @db.Timestamptz(6)
+  seenCount   Int       @default(1) @map("seen_count")
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+
+  @@unique([kind, valueHash])
+  @@index([expiresAt])
+  @@map("abuse_signals")
+}
+
+model BlockedDomain {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pattern     String   @unique // registrable domain or host; exact match
+  reason      String
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("blocked_domains")
+}
+
+/// Admin-added suffixes treated as public (in addition to the PSL).
+model DomainPolicySuffix {
+  suffix    String   @id
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("domain_policy_suffixes")
+}
+
+/// Hosts approved for API monitoring beyond verified websites.
+model ApiHostAuthorization {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId             String?           @map("org_id") @db.Uuid // NULL = platform-wide allowlist entry
+  host              String
+  kind              HostAuthorization
+  verificationToken String?           @map("verification_token")
+  verifiedAt        DateTime?         @map("verified_at") @db.Timestamptz(6)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([orgId, host])
+  @@map("api_host_authorizations")
+}
+
+// ----------------------------------------------------------------------------
+// Websites, installation, configuration
+// ----------------------------------------------------------------------------
+
+model Website {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId              String        @map("org_id") @db.Uuid
+  domainClaimId      String        @unique @map("domain_claim_id") @db.Uuid
+  name               String
+  description        String?
+  category           String        @default("OTHER")
+  monitoringTimezone String        @default("UTC") @map("monitoring_timezone")
+  canonicalOrigin    String        @map("canonical_origin") // https://www.example.com
+  verifiedAt         DateTime?     @map("verified_at") @db.Timestamptz(6)
+  trialOutcome       String?       @map("trial_outcome") // decideTrial() outcome at first verification
+  status             WebsiteStatus @default(PENDING_VERIFICATION)
+  pausedAt           DateTime?     @map("paused_at") @db.Timestamptz(6)
+  suspendedReason    String?       @map("suspended_reason")
+  healthScore        Int?          @map("health_score") // latest, denormalized
+  healthBand         String?       @map("health_band")
+  lastCheckedAt      DateTime?     @map("last_checked_at") @db.Timestamptz(6)
+  currentState       String        @default("UNKNOWN") @map("current_state") // UP | DOWN | DEGRADED | UNKNOWN
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt         DateTime?     @map("archived_at") @db.Timestamptz(6)
+
+  organization       Organization             @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  domainClaim        DomainClaim              @relation(fields: [domainClaimId], references: [id], onDelete: Restrict)
+  installation       SiteInstallation?
+  config             MonitoringConfiguration?
+  maintenanceWindows MaintenanceWindow[]
+  authRecipes        AuthRecipe[]
+  discoveredPages    DiscoveredPage[]
+  monitoredPages     MonitoredPage[]
+  testCases          TestCase[]
+  apiEndpoints       ApiEndpoint[]
+  schedules          MonitoringSchedule[]
+  incidents          Incident[]
+  incidentRules      IncidentRule[]
+
+  @@index([orgId, status])
+  @@map("websites")
+}
+
+model SiteInstallation {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId                String             @map("org_id") @db.Uuid
+  websiteId            String             @unique @map("website_id") @db.Uuid
+  siteKey              String             @unique @map("site_key") // public "pk_live_…", ingest-only
+  previousSiteKey      String?            @map("previous_site_key") // accepted during rotation grace
+  previousKeyExpiresAt DateTime?          @map("previous_key_expires_at") @db.Timestamptz(6)
+  status               InstallationStatus @default(NOT_DETECTED) // legacy; state is derived (core installationState)
+  keyCreatedAt         DateTime           @default(now()) @map("key_created_at") @db.Timestamptz(6)
+  revokedAt            DateTime?          @map("revoked_at") @db.Timestamptz(6) // current key revoked (no key accepted)
+  telemetryPaused      Boolean            @default(false) @map("telemetry_paused")
+  sdkVersion           String?            @map("sdk_version")
+  firstSeenAt          DateTime?          @map("first_seen_at") @db.Timestamptz(6) // first VALID heartbeat
+  lastSeenAt           DateTime?          @map("last_seen_at") @db.Timestamptz(6) // last VALID heartbeat
+  heartbeatCount       Int                @default(0) @map("heartbeat_count") // distinct page loads (deduplicated)
+  lastInvalidAt        DateTime?          @map("last_invalid_at") @db.Timestamptz(6)
+  lastInvalidReason    String?            @map("last_invalid_reason") // ORIGIN_MISMATCH | REVOKED_KEY | WEBSITE_NOT_VERIFIED | EXPIRED_KEY
+  lastInvalidOrigin    String?            @map("last_invalid_origin")
+  lastCheck            Json?              @map("last_check") // server-side installation check result
+  lastCheckedAt        DateTime?          @map("last_checked_at") @db.Timestamptz(6)
+  sdkConfig            Json               @default("{}") @map("sdk_config") // sampling, capture flags, masking rules
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@map("site_installations")
+}
+
+/// Per-website monitoring settings. Validated against resolved entitlements on every write.
+model MonitoringConfiguration {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId                 String   @map("org_id") @db.Uuid
+  websiteId             String   @unique @map("website_id") @db.Uuid
+  t1IntervalSec         Int?     @map("t1_interval_sec") // customer-requested slower interval; NULL = entitled default (Phase 4C fix)
+  t2IntervalSec         Int?     @map("t2_interval_sec") // customer-requested slower interval; NULL = entitled default
+  t3IntervalSec         Int?     @map("t3_interval_sec") // customer-requested slower interval; NULL = entitled default
+  t1Urls                String[] @default([]) @map("t1_urls") // extra key URLs probed at T1
+  viewports             Json     @default("[{\"name\":\"desktop\",\"width\":1366,\"height\":768}]")
+  maxPages              Int?     @map("max_pages") // customer cap; NULL = plan limit (Phase 4E: default 25 removed)
+  maxDepth              Int?     @map("max_depth") // customer cap; NULL = plan limit (Phase 4E: default 3 removed)
+  includePatterns       String[] @default([]) @map("include_patterns")
+  excludePatterns       String[] @default([]) @map("exclude_patterns")
+  queryParamMode        String   @default("KEEP_MEANINGFUL") @map("query_param_mode") // KEEP_MEANINGFUL | IGNORE_ALL | ALLOWLIST (Phase 4E)
+  queryParamAllowlist   String[] @default([]) @map("query_param_allowlist")
+  respectRobots         Boolean  @default(true) @map("respect_robots")
+  performanceThresholds Json     @default("{}") @map("performance_thresholds")
+  componentSelectors    Json     @default("{}") @map("component_selectors") // customer overrides per type
+  keywordChecks         Json     @default("[]") @map("keyword_checks")
+  storeResponseSamples  Boolean  @default(false) @map("store_response_samples")
+  httpCheck             Json?    @map("http_check") // Phase 4C HttpCheckConfig (validated in @wim/core)
+  browserCheck          Json?    @map("browser_check") // Phase 4D BrowserCheckConfig (validated in @wim/core)
+  deepScan              Json?    @map("deep_scan") // Phase 4E DeepScanConfig (validated in @wim/core)
+  captureArtifactsOn    String   @default("FAILURE") @map("capture_artifacts_on") // NEVER | FAILURE | ALWAYS
+  version               Int      @default(1)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedById           String?  @map("updated_by_id") @db.Uuid
+
+  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@map("monitoring_configurations")
+}
+
+model MaintenanceWindow {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String   @map("org_id") @db.Uuid
+  websiteId   String?  @map("website_id") @db.Uuid // NULL = whole org
+  name        String
+  startsAt    DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime @map("ends_at") @db.Timestamptz(6)
+  rrule       String? // RFC 5545 recurrence
+  timezone    String   @default("UTC")
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  website Website? @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, startsAt, endsAt])
+  @@map("maintenance_windows")
+}
+
+/// Login recipe for monitoring authenticated areas. Secrets envelope-encrypted; decrypted only by browser workers.
+model AuthRecipe {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId           String   @map("org_id") @db.Uuid
+  websiteId       String   @map("website_id") @db.Uuid
+  name            String
+  loginUrl        String   @map("login_url")
+  steps           Json // constrained step DSL; credential placeholders only
+  credentialsEnc  Bytes    @map("credentials_enc")
+  keyVersion      Int      @map("key_version")
+  successSelector String   @map("success_selector")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@map("auth_recipes")
+}
+
+// ----------------------------------------------------------------------------
+// Pages, components, test cases
+// ----------------------------------------------------------------------------
+
+model DiscoveredPage {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId        String     @map("org_id") @db.Uuid
+  websiteId    String     @map("website_id") @db.Uuid
+  url          String // canonicalized
+  urlHash      String     @map("url_hash") // sha256(url) for unique index (urls can exceed btree limits)
+  pathTemplate String     @map("path_template") // /product/{n}
+  source       String // SITEMAP | ROBOTS | CRAWL | MANUAL | SDK
+  depth        Int        @default(0)
+  status       PageStatus @default(ACTIVE)
+  title        String?
+  contentHash  String?    @map("content_hash")
+  firstSeenAt  DateTime   @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt   DateTime   @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  missedCrawls Int        @default(0) @map("missed_crawls")
+
+  website   Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  monitored MonitoredPage?
+
+  @@unique([websiteId, urlHash])
+  @@index([orgId, websiteId, status])
+  @@map("discovered_pages")
+}
+
+model MonitoredPage {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId            String     @map("org_id") @db.Uuid
+  websiteId        String     @map("website_id") @db.Uuid
+  discoveredPageId String     @unique @map("discovered_page_id") @db.Uuid
+  pinned           Boolean    @default(false) // customer-selected; kept first under limits
+  t2Enabled        Boolean    @default(false) @map("t2_enabled")
+  status           PageStatus @default(ACTIVE)
+  currentState     String     @default("UNKNOWN") @map("current_state")
+  lastResultAt     DateTime?  @map("last_result_at") @db.Timestamptz(6)
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  website        Website         @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  discoveredPage DiscoveredPage  @relation(fields: [discoveredPageId], references: [id], onDelete: Cascade)
+  components     PageComponent[]
+
+  @@index([orgId, websiteId, status])
+  @@map("monitored_pages")
+}
+
+/// Stable identity of a detected component across runs.
+model PageComponent {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId           String        @map("org_id") @db.Uuid
+  monitoredPageId String        @map("monitored_page_id") @db.Uuid
+  type            ComponentType
+  selector        String
+  domPathHash     String        @map("dom_path_hash")
+  confidence      Float
+  evidence        Json // [{heuristic, detail}]
+  confirmed       Boolean       @default(false) // customer-confirmed selector → confidence 1.0
+  firstSeenAt     DateTime      @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt      DateTime      @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  // Phase 4F: inventory state and change detection (dom_path_hash = hash of the structural key)
+  websiteId       String        @map("website_id") @db.Uuid
+  status          String        @default("PRESENT") // PRESENT | REMOVED (after consecutive complete runs without it)
+  label           String?
+  detail          Json          @default("{}") // identity-relevant detail (links, fields, method, label…) — no page content
+  detailHash      String        @default("") @map("detail_hash")
+  viewports       String[]      @default([]) // viewports where it was visible in the last run
+  visibility      Json          @default("{}") // Phase 4G: last known {viewport: visible} per OBSERVED viewport
+  missedRuns      Int           @default(0) @map("missed_runs")
+  lastExecutionId String?       @map("last_execution_id") @db.Uuid
+  removedAt       DateTime?     @map("removed_at") @db.Timestamptz(6)
+
+  monitoredPage MonitoredPage    @relation(fields: [monitoredPageId], references: [id], onDelete: Cascade)
+  events        ComponentEvent[]
+
+  @@unique([monitoredPageId, type, domPathHash])
+  @@index([websiteId, status])
+  @@map("page_components")
+}
+
+/// Phase 4F: component history — one row per meaningful change, per execution.
+model ComponentEvent {
+  id              BigInt   @id @default(autoincrement())
+  orgId           String   @map("org_id") @db.Uuid
+  websiteId       String   @map("website_id") @db.Uuid
+  pageComponentId String   @map("page_component_id") @db.Uuid
+  executionId     String   @map("execution_id") @db.Uuid
+  type            String // ADDED | CHANGED | REMOVED | RESTORED | VISIBILITY (Phase 4G)
+  before          Json?
+  after           Json?
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  component PageComponent @relation(fields: [pageComponentId], references: [id], onDelete: Cascade)
+
+  @@unique([pageComponentId, executionId, type])
+  @@index([websiteId, createdAt(sort: Desc)])
+  @@map("component_events")
+}
+
+model TestCase {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId        String     @map("org_id") @db.Uuid
+  websiteId    String     @map("website_id") @db.Uuid
+  name         String
+  kind         String // BUILTIN | CUSTOM | JOURNEY
+  builtinKey   String?    @map("builtin_key")
+  appliesTo    Json       @map("applies_to") // {componentType} | {selector, pageIds} | {journey: true}
+  steps        Json // constrained step DSL (no arbitrary JS)
+  assertions   Json
+  safety       TestSafety @default(SAFE)
+  stepsHash    String     @map("steps_hash")
+  approvedById String?    @map("approved_by_id") @db.Uuid
+  approvedAt   DateTime?  @map("approved_at") @db.Timestamptz(6)
+  approvedHash String?    @map("approved_hash") // must equal steps_hash to run REQUIRES_APPROVAL
+  allowedHosts String[]   @default([]) @map("allowed_hosts")
+  authRecipeId String?    @map("auth_recipe_id") @db.Uuid
+  enabled      Boolean    @default(true)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, websiteId])
+  @@map("test_cases")
+}
+
+// ----------------------------------------------------------------------------
+// Scheduling & execution ledger
+// ----------------------------------------------------------------------------
+
+/// One schedule per (website|api endpoint, tier). Claimed by the scheduler via FOR UPDATE SKIP LOCKED.
+/// BullMQ jobs are the transport; this table + monitoring_executions are the durable ledger
+/// (the spec's `monitoring_jobs` entity).
+model MonitoringSchedule {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId          String         @map("org_id") @db.Uuid
+  websiteId      String         @map("website_id") @db.Uuid
+  apiEndpointId  String?        @map("api_endpoint_id") @db.Uuid
+  tier           CheckTier
+  intervalSec    Int            @map("interval_sec")
+  jitterSec      Int            @map("jitter_sec")
+  priority       Int            @default(5)
+  region         String         @default("r1")
+  status         ScheduleStatus @default(ACTIVE)
+  nextRunAt      DateTime       @map("next_run_at") @db.Timestamptz(6)
+  lastEnqueuedAt DateTime?      @map("last_enqueued_at") @db.Timestamptz(6)
+  missedSlots    Int            @default(0) @map("missed_slots")
+  state          Json? // Phase 4C: per-website monitor state (consecutive counters, open incident ids)
+  stateWindowAt  DateTime?      @map("state_window_at") @db.Timestamptz(6) // newest window applied to `state`
+  pausedReason   String?        @map("paused_reason") // WEBSITE_PAUSED | WEBSITE_INACTIVE | OWNERSHIP_LAPSED | ORG_SUSPENDED | NOT_ENTITLED | TIER_DISABLED | WEBSITE_LIMIT
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  website     Website      @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  apiEndpoint ApiEndpoint? @relation(fields: [apiEndpointId], references: [id], onDelete: Cascade)
+
+  @@unique([websiteId, apiEndpointId, tier]) // + NULLS NOT DISTINCT variant in sql/030
+  @@index([status, nextRunAt])
+  @@map("monitoring_schedules")
+}
+
+/// Every scheduled/manual run. UNIQUE(schedule_id, slot, started_partition) gives exactly-once recording. [PARTITIONED daily on queued_at]
+model MonitoringExecution {
+  id                String          @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  queuedAt          DateTime        @default(now()) @map("queued_at") @db.Timestamptz(6)
+  orgId             String          @map("org_id") @db.Uuid
+  websiteId         String          @map("website_id") @db.Uuid
+  scheduleId        String?         @map("schedule_id") @db.Uuid // NULL for manual runs
+  slot              BigInt? // floor(epoch / interval)
+  apiEndpointId     String?         @map("api_endpoint_id") @db.Uuid
+  tier              CheckTier
+  trigger           String          @default("SCHEDULE") // SCHEDULE | MANUAL | VERIFY | RECOVERY_CHECK
+  region            String          @default("r1")
+  status            ExecutionStatus @default(QUEUED)
+  attempt           Int             @default(1)
+  workerId          String?         @map("worker_id")
+  startedAt         DateTime?       @map("started_at") @db.Timestamptz(6)
+  finishedAt        DateTime?       @map("finished_at") @db.Timestamptz(6)
+  durationMs        Int?            @map("duration_ms")
+  configVersion     Int?            @map("config_version")
+  suppressAlerts    Boolean         @default(false) @map("suppress_alerts") // maintenance window
+  summary           Json? // {pages, passed, failed, signals}
+  errorCode         String?         @map("error_code") // infra error, not target error
+  errorMessage      String?         @map("error_message")
+  enqueuedAt        DateTime?       @map("enqueued_at") @db.Timestamptz(6)
+  leaseExpiresAt    DateTime?       @map("lease_expires_at") @db.Timestamptz(6) // RUNNING lease (crash detection)
+  failureCategory   String?         @map("failure_category") // TRANSIENT | PERMANENT | SECURITY | TIMEOUT | INELIGIBLE | CANCELLED
+  cancelRequestedAt DateTime?       @map("cancel_requested_at") @db.Timestamptz(6)
+
+  @@id([id, queuedAt])
+  @@unique([scheduleId, slot, queuedAt]) // effective dedupe is per-day partition; scheduler also dedupes via jobId
+  @@index([orgId, websiteId, queuedAt(sort: Desc)])
+  @@index([status, queuedAt])
+  @@index([orgId, status])
+  @@map("monitoring_executions")
+}
+
+// ----------------------------------------------------------------------------
+// Results (high-volume, raw, short retention) — all [PARTITIONED daily]
+// ----------------------------------------------------------------------------
+
+/// T1 HTTP probes and SSL checks.
+model CheckResult {
+  id              String       @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkedAt       DateTime     @map("checked_at") @db.Timestamptz(6)
+  orgId           String       @map("org_id") @db.Uuid
+  websiteId       String       @map("website_id") @db.Uuid
+  executionId     String       @map("execution_id") @db.Uuid
+  url             String
+  status          ResultStatus
+  failureKind     String?      @map("failure_kind") // DNS_FAIL | TIMEOUT | TLS | HTTP_5XX | ...
+  httpStatus      Int?         @map("http_status")
+  redirectChain   Json?        @map("redirect_chain")
+  dnsMs           Int?         @map("dns_ms")
+  connectMs       Int?         @map("connect_ms")
+  tlsMs           Int?         @map("tls_ms")
+  ttfbMs          Int?         @map("ttfb_ms")
+  totalMs         Int?         @map("total_ms")
+  bytes           Int?
+  resolvedIp      String?      @map("resolved_ip") @db.Inet
+  sslExpiresAt    DateTime?    @map("ssl_expires_at") @db.Timestamptz(6)
+  sslIssuer       String?      @map("ssl_issuer")
+  sslValid        Boolean?     @map("ssl_valid")
+  confirmed       Boolean      @default(false) // failure confirmed by retry / second region
+  region          String       @default("r1")
+  // Phase 4C: checked_at = the execution's scheduled window start (deterministic → idempotent key)
+  method          String? // GET | HEAD (after any HEAD→GET fallback)
+  finalUrl        String?      @map("final_url") // sanitised: no query values, credentials or fragment
+  contentType     String?      @map("content_type")
+  responseHeaders Json?        @map("response_headers") // allow-listed, truncated
+  failureCategory String?      @map("failure_category") // TARGET_TEMPORARY | TARGET_PERMANENT | GATEWAY_INFRASTRUCTURE | ...
+  available       Boolean? // uptime verdict: up / down / NULL = excluded
+  details         Json? // per-class verdicts, TLS facts, redirect hops' timings, truncation, HEAD fallback
+  attempt         Int?
+  startedAt       DateTime?    @map("started_at") @db.Timestamptz(6)
+  finishedAt      DateTime?    @map("finished_at") @db.Timestamptz(6)
+
+  @@id([id, checkedAt])
+  @@unique([executionId, checkedAt]) // one logical result per execution, however often it runs
+  @@index([websiteId, checkedAt(sort: Desc)])
+  @@map("check_results")
+}
+
+model PageTestResult {
+  id                 String       @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  testedAt           DateTime     @map("tested_at") @db.Timestamptz(6)
+  orgId              String       @map("org_id") @db.Uuid
+  websiteId          String       @map("website_id") @db.Uuid
+  monitoredPageId    String?      @map("monitored_page_id") @db.Uuid // NULL: configured path (Phase 4D), not a discovered page
+  executionId        String       @map("execution_id") @db.Uuid
+  tier               CheckTier
+  viewport           String
+  pagePath           String?      @map("page_path")
+  width              Int?
+  height             Int?
+  finalUrl           String?      @map("final_url") // sanitised
+  failureKind        String?      @map("failure_kind")
+  failureCategory    String?      @map("failure_category")
+  available          Boolean?
+  navigation         Json? // requested/final URL, redirects, readiness strategy+outcome, durations
+  rendering          Json? // blank, text length, visible area, broken images, failed fonts/stylesheets
+  network            Json? // failed requests grouped by host+type, HTTP error responses, counts
+  scripts            Json? // grouped JS exceptions / rejections / console errors (normalised signatures)
+  details            Json? // verdicts per check class, warnings
+  attempt            Int?
+  startedAt          DateTime?    @map("started_at") @db.Timestamptz(6)
+  finishedAt         DateTime?    @map("finished_at") @db.Timestamptz(6)
+  status             ResultStatus
+  httpStatus         Int?         @map("http_status")
+  blankPage          Boolean      @default(false) @map("blank_page")
+  jsErrorCount       Int          @default(0) @map("js_error_count")
+  consoleErrorCount  Int          @default(0) @map("console_error_count")
+  failedRequestCount Int          @default(0) @map("failed_request_count")
+  errors             Json? // redacted, fingerprinted, capped list
+  loadMs             Int?         @map("load_ms")
+  artifactIds        String[]     @default([]) @map("artifact_ids")
+
+  @@id([id, testedAt])
+  @@unique([executionId, viewport, testedAt])
+  @@index([monitoredPageId, testedAt(sort: Desc)])
+  @@index([websiteId, testedAt(sort: Desc)])
+  @@map("page_test_results")
+}
+
+model ComponentTestResult {
+  id              String        @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  testedAt        DateTime      @map("tested_at") @db.Timestamptz(6)
+  orgId           String        @map("org_id") @db.Uuid
+  websiteId       String        @map("website_id") @db.Uuid
+  monitoredPageId String        @map("monitored_page_id") @db.Uuid
+  pageComponentId String?       @map("page_component_id") @db.Uuid
+  testCaseId      String?       @map("test_case_id") @db.Uuid
+  executionId     String        @map("execution_id") @db.Uuid
+  componentType   ComponentType @map("component_type")
+  viewport        String
+  status          ResultStatus
+  confidence      Float
+  coverageNote    String?       @map("coverage_note")
+  steps           Json? // per-step outcome, timings
+  failureReason   String?       @map("failure_reason")
+  artifactIds     String[]      @default([]) @map("artifact_ids")
+  // Phase 4F: safe functional tests
+  testKind        String?       @map("test_kind") // SEARCH | NAVIGATION | FORM | BUTTON | RESPONSIVE_NAV
+  target          String? // what was exercised (label / destination path), never typed values
+  safety          String? // SAFE | UNSAFE | UNKNOWN (classifier verdict)
+  durationMs      Int?          @map("duration_ms")
+
+  @@id([id, testedAt])
+  @@index([monitoredPageId, testedAt(sort: Desc)])
+  @@index([websiteId, testedAt(sort: Desc)])
+  @@index([executionId])
+  @@map("component_test_results")
+}
+
+model ResponsiveTestResult {
+  id                   String       @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  testedAt             DateTime     @map("tested_at") @db.Timestamptz(6)
+  orgId                String       @map("org_id") @db.Uuid
+  websiteId            String       @map("website_id") @db.Uuid
+  monitoredPageId      String?      @map("monitored_page_id") @db.Uuid
+  pagePath             String?      @map("page_path")
+  executionId          String       @map("execution_id") @db.Uuid
+  viewport             String
+  width                Int
+  height               Int
+  status               ResultStatus
+  horizontalOverflowPx Int          @default(0) @map("horizontal_overflow_px")
+  offscreenElements    Int          @default(0) @map("offscreen_elements")
+  overlaps             Int          @default(0)
+  clippedText          Int          @default(0) @map("clipped_text")
+  oversizedImages      Int          @default(0) @map("oversized_images")
+  navState             String?      @map("nav_state") // VISIBLE | COLLAPSED_OK | BROKEN | MISSING
+  obscuredControls     Int          @default(0) @map("obscured_controls") // Phase 4F
+  offscreenControls    Int          @default(0) @map("offscreen_controls") // Phase 4F
+  findings             Json? // capped list of {selector, issue}
+  artifactIds          String[]     @default([]) @map("artifact_ids")
+
+  @@id([id, testedAt])
+  @@unique([executionId, viewport, testedAt])
+  @@index([monitoredPageId, testedAt(sort: Desc)])
+  @@index([websiteId, testedAt(sort: Desc)])
+  @@map("responsive_test_results")
+}
+
+model PerformanceMetric {
+  id               String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  measuredAt       DateTime @map("measured_at") @db.Timestamptz(6)
+  orgId            String   @map("org_id") @db.Uuid
+  websiteId        String   @map("website_id") @db.Uuid
+  monitoredPageId  String?  @map("monitored_page_id") @db.Uuid
+  executionId      String?  @map("execution_id") @db.Uuid
+  source           String   @default("SYNTHETIC") // SYNTHETIC | RUM (SDK)
+  viewport         String
+  pagePath         String?  @map("page_path")
+  navigationTiming Json?    @map("navigation_timing") // synthetic; DNS/connect are the proxy leg (see docs)
+  longTasks        Int?     @map("long_tasks")
+  fcpMs            Int?     @map("fcp_ms")
+  lcpMs            Int?     @map("lcp_ms")
+  cls              Float?
+  inpMs            Int?     @map("inp_ms") // RUM only
+  tbtMs            Int?     @map("tbt_ms") // synthetic proxy for INP
+  ttfbMs           Int?     @map("ttfb_ms")
+  loadMs           Int?     @map("load_ms")
+  transferBytes    Int?     @map("transfer_bytes")
+  requestCount     Int?     @map("request_count")
+  slowestResources Json?    @map("slowest_resources")
+
+  @@id([id, measuredAt])
+  @@unique([executionId, viewport, measuredAt])
+  @@index([monitoredPageId, measuredAt(sort: Desc)])
+  @@index([websiteId, measuredAt(sort: Desc)])
+  @@index([orgId, measuredAt(sort: Desc)]) // Phase 4G: organisation-wide performance status
+  @@map("performance_metrics")
+}
+
+/// Screenshots, trimmed HARs, traces, reports in object storage.
+model Artifact {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String   @map("org_id") @db.Uuid
+  websiteId   String?  @map("website_id") @db.Uuid
+  executionId String?  @map("execution_id") @db.Uuid
+  kind        String // SCREENSHOT | HAR | TRACE | REPORT
+  purpose     String? // FAILURE | VIEWPORT | FULL_PAGE (Phase 4D)
+  viewport    String?
+  storageKey  String   @unique @map("storage_key") // orgs/{orgId}/...
+  contentType String   @map("content_type")
+  bytes       Int
+  sha256      String
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([orgId, executionId])
+  @@index([expiresAt])
+  @@map("artifacts")
+}
+
+// ----------------------------------------------------------------------------
+// API monitoring
+// ----------------------------------------------------------------------------
+
+model ApiEndpoint {
+  id                      String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId                   String            @map("org_id") @db.Uuid
+  websiteId               String            @map("website_id") @db.Uuid
+  name                    String
+  method                  HttpMethod
+  url                     String
+  host                    String
+  hostAuthorization       HostAuthorization @map("host_authorization")
+  queryParams             Json              @default("{}") @map("query_params")
+  headers                 Json              @default("{}") // NON-secret headers only
+  bodyType                String?           @map("body_type") // JSON | FORM | RAW
+  body                    String? // non-secret body template; secrets referenced as {{credential.x}}
+  expectedStatus          Int[]             @default([200]) @map("expected_status")
+  assertions              Json              @default("[]")
+  responseTimeThresholdMs Int               @default(1000) @map("response_time_threshold_ms")
+  timeoutMs               Int               @default(10000) @map("timeout_ms")
+  intervalSec             Int               @map("interval_sec")
+  retryCount              Int               @default(1) @map("retry_count")
+  retryDelayMs            Int               @default(5000) @map("retry_delay_ms")
+  mutationAcknowledged    Boolean           @default(false) @map("mutation_acknowledged") // non-GET to 3rd-party host
+  enabled                 Boolean           @default(true)
+  currentState            String            @default("UNKNOWN") @map("current_state")
+  lastCheckedAt           DateTime?         @map("last_checked_at") @db.Timestamptz(6)
+  createdAt               DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  website    Website              @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  credential ApiCredential?
+  schedules  MonitoringSchedule[]
+
+  @@index([orgId, websiteId])
+  @@map("api_endpoints")
+}
+
+/// Write-only from the API's perspective. Only worker-http has the KEK grant to decrypt.
+model ApiCredential {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId         String      @map("org_id") @db.Uuid
+  apiEndpointId String      @unique @map("api_endpoint_id") @db.Uuid
+  authType      ApiAuthType @map("auth_type")
+  secretEnc     Bytes       @map("secret_enc") // {token|user/pass|key|clientId/secret/tokenUrl, secretHeaders}
+  keyVersion    Int         @map("key_version")
+  hint          String? // e.g. "…a9f2" for UI
+  rotatedAt     DateTime?   @map("rotated_at") @db.Timestamptz(6)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  apiEndpoint ApiEndpoint @relation(fields: [apiEndpointId], references: [id], onDelete: Cascade)
+
+  @@map("api_credentials")
+}
+
+/// [PARTITIONED daily]
+model ApiTestResult {
+  id               String       @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkedAt        DateTime     @map("checked_at") @db.Timestamptz(6)
+  orgId            String       @map("org_id") @db.Uuid
+  websiteId        String       @map("website_id") @db.Uuid
+  apiEndpointId    String       @map("api_endpoint_id") @db.Uuid
+  executionId      String       @map("execution_id") @db.Uuid
+  status           ResultStatus
+  httpStatus       Int?         @map("http_status")
+  failureKind      String?      @map("failure_kind")
+  responseTimeMs   Int?         @map("response_time_ms")
+  responseBytes    Int?         @map("response_bytes")
+  assertionResults Json         @map("assertion_results") // [{index, passed, actual(redacted)}]
+  responseHeaders  Json?        @map("response_headers") // allowlisted names only
+  bodySample       String?      @map("body_sample") // redacted, ≤2KB, only if enabled
+  attempt          Int          @default(1)
+  region           String       @default("r1")
+
+  @@id([id, checkedAt])
+  @@index([apiEndpointId, checkedAt(sort: Desc)])
+  @@map("api_test_results")
+}
+
+// ----------------------------------------------------------------------------
+// SDK telemetry
+// ----------------------------------------------------------------------------
+
+/// Raw RUM events (7-day default retention). [PARTITIONED daily]
+model SdkEvent {
+  id          String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receivedAt  DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  orgId       String   @map("org_id") @db.Uuid
+  websiteId   String   @map("website_id") @db.Uuid
+  type        String // JS_ERROR | REJECTION | RESOURCE | API_FAILURE | VITALS | NAV | FORM_FAIL | SEARCH_FAIL | CLICK_ERROR
+  fingerprint String?
+  pagePath    String   @map("page_path") // sanitized
+  sessionRef  String?  @map("session_ref") // ephemeral page-lifetime id
+  deviceType  String?  @map("device_type")
+  browser     String?
+  os          String?
+  viewportW   Int?     @map("viewport_w")
+  viewportH   Int?     @map("viewport_h")
+  sdkVersion  String?  @map("sdk_version")
+  payload     Json // masked, schema-validated
+
+  @@id([id, receivedAt])
+  @@index([websiteId, receivedAt(sort: Desc)])
+  @@index([websiteId, fingerprint, receivedAt])
+  @@map("sdk_events")
+}
+
+// ----------------------------------------------------------------------------
+// Rollups & health score
+// ----------------------------------------------------------------------------
+
+/// [PARTITIONED monthly on bucket]
+model MetricHourly {
+  bucket      DateTime @db.Timestamptz(6)
+  orgId       String   @map("org_id") @db.Uuid
+  websiteId   String   @map("website_id") @db.Uuid
+  subjectType String   @map("subject_type") // WEBSITE | PAGE | API | COMPONENT_TYPE
+  subjectId   String   @map("subject_id") @db.Uuid
+  metric      String // availability | response_ms | lcp_ms | js_errors | ...
+  count       Int
+  okCount     Int      @map("ok_count")
+  sum         Float
+  min         Float?
+  max         Float?
+  p50         Float?
+  p95         Float?
+  p75         Float? // Phase 4G
+  digest      Bytes? // serialized t-digest for re-aggregation
+  histogram   Json? // e.g. status class distribution
+
+  @@id([bucket, orgId, subjectType, subjectId, metric])
+  @@index([websiteId, metric, bucket])
+  @@index([orgId, metric, bucket]) // Phase 4G: organisation-wide trends
+  @@map("metrics_hourly")
+}
+
+/// [PARTITIONED monthly on bucket]
+model MetricDaily {
+  bucket      DateTime @db.Date
+  orgId       String   @map("org_id") @db.Uuid
+  websiteId   String   @map("website_id") @db.Uuid
+  subjectType String   @map("subject_type")
+  subjectId   String   @map("subject_id") @db.Uuid
+  metric      String
+  count       Int
+  okCount     Int      @map("ok_count")
+  sum         Float
+  min         Float?
+  max         Float?
+  p50         Float?
+  p95         Float?
+  p75         Float? // Phase 4G
+  digest      Bytes?
+  histogram   Json?
+  downtimeSec Int?     @map("downtime_sec")
+
+  @@id([bucket, orgId, subjectType, subjectId, metric])
+  @@index([websiteId, metric, bucket])
+  @@index([orgId, metric, bucket]) // Phase 4G
+  @@map("metrics_daily")
+}
+
+/// Phase 4G: rollup watermark (incremental, idempotent recomputation of dirty buckets from raw results).
+model RollupState {
+  name      String   @id
+  watermark DateTime @db.Timestamptz(6)
+  lastRunAt DateTime @map("last_run_at") @db.Timestamptz(6)
+  lastStats Json?    @map("last_stats")
+
+  @@map("rollup_state")
+}
+
+/// [PARTITIONED monthly]
+model WebsiteHealthScore {
+  computedAt    DateTime @map("computed_at") @db.Timestamptz(6)
+  orgId         String   @map("org_id") @db.Uuid
+  websiteId     String   @map("website_id") @db.Uuid
+  score         Int? // NULL = insufficient data
+  band          String
+  components    Json // {availability:{score,weight,samples}, ...}
+  coveragePct   Int      @map("coverage_pct")
+  configVersion Int      @map("config_version")
+  cappedBy      String?  @map("capped_by") // e.g. OPEN_CRITICAL_INCIDENT
+
+  @@id([websiteId, computedAt])
+  @@map("website_health_scores")
+}
+
+// ----------------------------------------------------------------------------
+// Incidents
+// ----------------------------------------------------------------------------
+
+/// Platform defaults (org_id NULL), org overrides, website overrides — bounded by plan.
+model IncidentRule {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId              String?          @map("org_id") @db.Uuid
+  websiteId          String?          @map("website_id") @db.Uuid
+  category           IncidentCategory
+  failureThreshold   Int              @default(2) @map("failure_threshold")
+  windowSec          Int              @default(300) @map("window_sec")
+  consecutive        Boolean          @default(true)
+  severity           Severity
+  reopenWindowSec    Int              @default(86400) @map("reopen_window_sec")
+  recoveryPasses     Int              @default(2) @map("recovery_passes")
+  escalateAfterSec   Int?             @map("escalate_after_sec")
+  escalateToSeverity Severity?        @map("escalate_to_severity")
+  flapThreshold      Int              @default(4) @map("flap_threshold")
+  flapWindowSec      Int              @default(3600) @map("flap_window_sec")
+  enabled            Boolean          @default(true)
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  website Website? @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, websiteId, category]) // NULLS NOT DISTINCT in sql/030
+  @@map("incident_rules")
+}
+
+/// One active incident per fingerprint — partial unique (sql/030):
+///   UNIQUE (org_id, fingerprint) WHERE status IN ('OPEN','ACKNOWLEDGED','INVESTIGATING','REOPENED')
+model Incident {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number           Int // per-org human id: INC-1042
+  orgId            String           @map("org_id") @db.Uuid
+  websiteId        String           @map("website_id") @db.Uuid
+  monitoredPageId  String?          @map("monitored_page_id") @db.Uuid
+  apiEndpointId    String?          @map("api_endpoint_id") @db.Uuid
+  fingerprint      String
+  checkKey         String           @map("check_key")
+  category         IncidentCategory
+  source           SignalSource
+  severity         Severity
+  status           IncidentStatus   @default(OPEN)
+  title            String
+  description      String
+  scope            String // page template / endpoint / site
+  diagnostics      Json // redacted summary; full detail in occurrences
+  occurrenceCount  Int              @default(1) @map("occurrence_count")
+  firstDetectedAt  DateTime         @map("first_detected_at") @db.Timestamptz(6)
+  lastDetectedAt   DateTime         @map("last_detected_at") @db.Timestamptz(6)
+  acknowledgedAt   DateTime?        @map("acknowledged_at") @db.Timestamptz(6)
+  acknowledgedById String?          @map("acknowledged_by_id") @db.Uuid
+  resolvedAt       DateTime?        @map("resolved_at") @db.Timestamptz(6)
+  resolvedById     String?          @map("resolved_by_id") @db.Uuid
+  autoResolved     Boolean          @default(false) @map("auto_resolved")
+  reopenCount      Int              @default(0) @map("reopen_count")
+  flapping         Boolean          @default(false)
+  inMaintenance    Boolean          @default(false) @map("in_maintenance")
+  ignoredUntil     DateTime?        @map("ignored_until") @db.Timestamptz(6)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  website      Website           @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  events       IncidentEvent[]
+  comments     IncidentComment[]
+
+  @@unique([orgId, number])
+  @@index([orgId, status, severity])
+  @@index([orgId, fingerprint, resolvedAt])
+  @@index([websiteId, firstDetectedAt(sort: Desc)])
+  @@index([orgId, lastDetectedAt(sort: Desc), id]) // Phase 4F: incident list + keyset cursor
+  @@map("incidents")
+}
+
+/// [PARTITIONED monthly on occurred_at]. No FK to incidents (partitioned); integrity by worker + purge job.
+model IncidentOccurrence {
+  id          String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  occurredAt  DateTime @map("occurred_at") @db.Timestamptz(6)
+  orgId       String   @map("org_id") @db.Uuid
+  incidentId  String   @map("incident_id") @db.Uuid
+  executionId String?  @map("execution_id") @db.Uuid
+  pageUrl     String?  @map("page_url")
+  viewport    String?
+  region      String?
+  details     Json // redacted
+  artifactIds String[] @default([]) @map("artifact_ids")
+
+  @@id([id, occurredAt])
+  @@index([incidentId, occurredAt(sort: Desc)])
+  @@map("incident_occurrences")
+}
+
+model IncidentEvent {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String            @map("org_id") @db.Uuid
+  incidentId String            @map("incident_id") @db.Uuid
+  type       IncidentEventType
+  actorType  ActorType         @map("actor_type")
+  actorId    String?           @map("actor_id") @db.Uuid
+  fromStatus IncidentStatus?   @map("from_status")
+  toStatus   IncidentStatus?   @map("to_status")
+  data       Json?
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, createdAt])
+  @@index([orgId, createdAt(sort: Desc)]) // Phase 4F: history + change feed
+  @@map("incident_events")
+}
+
+model IncidentComment {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  incidentId String    @map("incident_id") @db.Uuid
+  authorId   String    @map("author_id") @db.Uuid
+  body       String // markdown, rendered sanitized
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  editedAt   DateTime? @map("edited_at") @db.Timestamptz(6)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, createdAt])
+  @@map("incident_comments")
+}
+
+/// Transactional outbox: written in the same tx as domain changes, relayed to Redis Streams.
+model OutboxEvent {
+  id          BigInt    @id @default(autoincrement())
+  orgId       String?   @map("org_id") @db.Uuid
+  topic       String // incident.created, website.verified, subscription.changed, ...
+  payload     Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+  attempts    Int       @default(0)
+  dedupeKey   String?   @unique @map("dedupe_key") // Phase 4C: one event per logical occurrence
+
+  @@index([publishedAt, id])
+  @@map("outbox_events")
+}
+
+// ----------------------------------------------------------------------------
+// Notifications
+// ----------------------------------------------------------------------------
+
+model Notification {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  type       String // INCIDENT_CREATED | INCIDENT_RESOLVED | SSL_EXPIRING | BILLING_FAILED | ...
+  severity   Severity?
+  title      String
+  body       String
+  link       String?
+  incidentId String?   @map("incident_id") @db.Uuid
+  readAt     DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, orgId, readAt, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId            String      @map("org_id") @db.Uuid
+  userId           String      @map("user_id") @db.Uuid
+  channel          ChannelKind
+  minSeverity      Severity    @default(MEDIUM) @map("min_severity")
+  eventTypes       String[]    @default([]) @map("event_types") // empty = all
+  websiteIds       String[]    @default([]) @map("website_ids") @db.Uuid // empty = all
+  digest           String      @default("IMMEDIATE") // IMMEDIATE | HOURLY | DAILY
+  quietHours       Json?       @map("quiet_hours") // {start:"22:00", end:"07:00", tz, exceptCritical:true}
+  enabled          Boolean     @default(true) // Phase 4F: channel switched off by the user
+  soundEnabled     Boolean     @default(true) @map("sound_enabled")
+  soundMinSeverity Severity    @default(HIGH) @map("sound_min_severity")
+  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId, channel])
+  @@map("notification_preferences")
+}
+
+/// Org-level delivery targets beyond members (extra email recipients, future Slack/Teams/etc).
+model NotificationChannel {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String      @map("org_id") @db.Uuid
+  kind        ChannelKind
+  name        String
+  target      String? // e.g. email address (non-secret)
+  configEnc   Bytes?      @map("config_enc") // webhook URLs / tokens
+  keyVersion  Int?        @map("key_version")
+  minSeverity Severity    @default(HIGH) @map("min_severity")
+  verifiedAt  DateTime?   @map("verified_at") @db.Timestamptz(6) // email recipients confirm opt-in
+  enabled     Boolean     @default(true)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, kind])
+  @@map("notification_channels")
+}
+
+/// [PARTITIONED monthly on created_at]
+model NotificationDeliveryLog {
+  id                String         @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  orgId             String?        @map("org_id") @db.Uuid
+  channel           ChannelKind
+  recipientRef      String         @map("recipient_ref") // user id or channel id, never raw address
+  eventType         String         @map("event_type")
+  incidentId        String?        @map("incident_id") @db.Uuid
+  idempotencyKey    String         @map("idempotency_key")
+  status            DeliveryStatus
+  attempts          Int            @default(0)
+  providerMessageId String?        @map("provider_message_id")
+  lastError         String?        @map("last_error")
+  sentAt            DateTime?      @map("sent_at") @db.Timestamptz(6)
+
+  @@id([id, createdAt])
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([idempotencyKey])
+  @@map("notification_delivery_logs")
+}
+
+model EmailSuppression {
+  emailHash String   @id @map("email_hash") // HMAC
+  reason    String // BOUNCE | COMPLAINT | MANUAL
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("email_suppressions")
+}
+
+model EmailTemplate {
+  key         String   @id // incident.created, billing.failed, ...
+  subject     String
+  bodyMjml    String?  @map("body_mjml") // admin override; NULL = built-in React Email template
+  enabled     Boolean  @default(true)
+  version     Int      @default(1)
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("email_templates")
+}
+
+// ----------------------------------------------------------------------------
+// Billing
+// ----------------------------------------------------------------------------
+
+model SubscriptionPlan {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key           String    @unique // starter, professional, business
+  name          String
+  description   String
+  visible       Boolean   @default(true)
+  active        Boolean   @default(true)
+  trialEligible Boolean   @default(true) @map("trial_eligible")
+  priority      Int       @default(5) // scheduler priority
+  sortOrder     Int       @default(0) @map("sort_order")
+  archivedAt    DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  prices       PlanPrice[]
+  entitlements PlanEntitlement[]
+
+  @@map("subscription_plans")
+}
+
+/// Immutable price versions (gateway prices are immutable).
+model PlanPrice {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId         String          @map("plan_id") @db.Uuid
+  interval       BillingInterval
+  currency       String          @db.Char(3)
+  amountMinor    Int             @map("amount_minor") // cents / paise
+  version        Int
+  active         Boolean         @default(true)
+  stripePriceId  String?         @unique @map("stripe_price_id")
+  razorpayPlanId String?         @unique @map("razorpay_plan_id")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  plan          SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  subscriptions Subscription[]
+
+  @@unique([planId, interval, currency, version])
+  @@map("plan_prices")
+}
+
+model PlanEntitlement {
+  planId String @map("plan_id") @db.Uuid
+  key    String // registry key, e.g. "websites.max"
+  value  Json
+
+  plan SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@id([planId, key])
+  @@map("plan_entitlements")
+}
+
+/// Admin-set per-org overrides (the spec's `subscription_entitlements`).
+model EntitlementOverride {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  key         String
+  value       Json
+  reason      String
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, key])
+  @@map("entitlement_overrides")
+}
+
+model Subscription {
+  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId                 String             @map("org_id") @db.Uuid
+  planPriceId           String?            @map("plan_price_id") @db.Uuid // NULL while trialing w/o price
+  planId                String             @map("plan_id") @db.Uuid
+  gateway               GatewayKind?
+  gatewaySubscriptionId String?            @unique @map("gateway_subscription_id")
+  status                SubscriptionStatus
+  currentPeriodStart    DateTime?          @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd      DateTime?          @map("current_period_end") @db.Timestamptz(6)
+  cancelAtPeriodEnd     Boolean            @default(false) @map("cancel_at_period_end")
+  canceledAt            DateTime?          @map("canceled_at") @db.Timestamptz(6)
+  graceEndsAt           DateTime?          @map("grace_ends_at") @db.Timestamptz(6)
+  pendingPlanPriceId    String?            @map("pending_plan_price_id") @db.Uuid // scheduled downgrade
+  gatewayUpdatedAt      DateTime?          @map("gateway_updated_at") @db.Timestamptz(6) // out-of-order guard
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  planPrice    PlanPrice?   @relation(fields: [planPriceId], references: [id], onDelete: Restrict)
+
+  // + partial unique: one current subscription per org WHERE status NOT IN ('CANCELED','EXPIRED') (sql/030)
+  @@index([orgId, status])
+  @@index([status, currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+model Trial {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId             String      @map("org_id") @db.Uuid
+  planId            String?     @map("plan_id") @db.Uuid // assigned once plans exist (Phase 8; setting trial.planKey)
+  registrableDomain String      @map("registrable_domain") // the domain whose verification activated it
+  status            TrialStatus @default(ACTIVE)
+  startsAt          DateTime    @map("starts_at") @db.Timestamptz(6)
+  endsAt            DateTime    @map("ends_at") @db.Timestamptz(6)
+  extendedDays      Int         @default(0) @map("extended_days")
+  extendedById      String?     @map("extended_by_id") @db.Uuid
+  riskScore         Int?        @map("risk_score")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId]) // one trial per org, ever
+  @@index([status, endsAt])
+  @@map("trials")
+}
+
+model GatewayCustomer {
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId                String      @map("org_id") @db.Uuid
+  gateway              GatewayKind
+  gatewayCustomerId    String      @map("gateway_customer_id")
+  defaultPaymentMethod Json?       @map("default_payment_method") // {brand, last4, expMonth, expYear} only
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, gateway])
+  @@unique([gateway, gatewayCustomerId])
+  @@map("gateway_customers")
+}
+
+model Payment {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId            String        @map("org_id") @db.Uuid
+  subscriptionId   String?       @map("subscription_id") @db.Uuid
+  invoiceId        String?       @map("invoice_id") @db.Uuid
+  gateway          GatewayKind
+  gatewayPaymentId String        @map("gateway_payment_id")
+  amountMinor      Int           @map("amount_minor")
+  currency         String        @db.Char(3)
+  status           PaymentStatus
+  failureCode      String?       @map("failure_code")
+  failureMessage   String?       @map("failure_message")
+  refundedMinor    Int           @default(0) @map("refunded_minor")
+  paidAt           DateTime?     @map("paid_at") @db.Timestamptz(6)
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([gateway, gatewayPaymentId])
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("payments")
+}
+
+model Invoice {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId            String        @map("org_id") @db.Uuid
+  subscriptionId   String?       @map("subscription_id") @db.Uuid
+  number           String        @unique // sequential, gapless per series (sql/030 sequence)
+  gateway          GatewayKind?
+  gatewayInvoiceId String?       @map("gateway_invoice_id")
+  status           InvoiceStatus
+  currency         String        @db.Char(3)
+  subtotalMinor    Int           @map("subtotal_minor")
+  taxMinor         Int           @default(0) @map("tax_minor")
+  totalMinor       Int           @map("total_minor")
+  taxDetails       Json?         @map("tax_details")
+  billingDetails   Json?         @map("billing_details") // snapshot required for tax compliance
+  periodStart      DateTime?     @map("period_start") @db.Timestamptz(6)
+  periodEnd        DateTime?     @map("period_end") @db.Timestamptz(6)
+  pdfArtifactId    String?       @map("pdf_artifact_id") @db.Uuid
+  issuedAt         DateTime      @map("issued_at") @db.Timestamptz(6)
+  paidAt           DateTime?     @map("paid_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict) // legal retention
+
+  @@index([orgId, issuedAt(sort: Desc)])
+  @@map("invoices")
+}
+
+model PaymentWebhookEvent {
+  id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gateway        GatewayKind
+  eventId        String                  @map("event_id")
+  eventType      String                  @map("event_type")
+  signatureValid Boolean                 @map("signature_valid")
+  payload        Json // verified payload; card data never present (gateway-tokenized)
+  status         WebhookProcessingStatus @default(RECEIVED)
+  attempts       Int                     @default(0)
+  error          String?
+  receivedAt     DateTime                @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt    DateTime?               @map("processed_at") @db.Timestamptz(6)
+
+  @@unique([gateway, eventId])
+  @@index([status, receivedAt])
+  @@map("payment_webhook_events")
+}
+
+model PaymentGatewayConfig {
+  gateway     GatewayKind @id
+  enabled     Boolean     @default(false)
+  mode        String      @default("test") // test | live
+  publicKey   String?     @map("public_key")
+  secretsEnc  Bytes?      @map("secrets_enc") // secret key + webhook secret, platform DEK
+  keyVersion  Int?        @map("key_version")
+  secretHint  String?     @map("secret_hint")
+  currencies  String[]    @default([])
+  settings    Json        @default("{}") // tax mode, statement descriptor, …
+  updatedById String?     @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("payment_gateway_configs")
+}
+
+/// Metered usage per period (browser minutes, SDK events, executions).
+model UsageCounter {
+  orgId       String   @map("org_id") @db.Uuid
+  periodStart DateTime @map("period_start") @db.Date
+  key         String // browser.minutes, sdk.events, executions.t1, ...
+  value       BigInt   @default(0)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@id([orgId, periodStart, key])
+  @@map("usage_counters")
+}
+
+// ----------------------------------------------------------------------------
+// Audit, security, platform configuration, operations
+// ----------------------------------------------------------------------------
+
+/// Append-only, hash-chained per stream. App roles have INSERT/SELECT only; trigger rejects UPDATE/DELETE (sql/040).
+model AuditLog {
+  id         BigInt    @id @default(autoincrement())
+  stream     String // "platform" | "org:{orgId}"
+  seq        BigInt    @default(0) // per-stream sequence — assigned by trigger (sql/040)
+  occurredAt DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  orgId      String?   @map("org_id") @db.Uuid
+  actorType  ActorType @map("actor_type")
+  actorId    String?   @map("actor_id") @db.Uuid
+  actorLabel String?   @map("actor_label") // masked display
+  action     String // e.g. website.create, plan.update, breakglass.access
+  targetType String?   @map("target_type")
+  targetId   String?   @map("target_id")
+  ipPrefix   String?   @map("ip_prefix")
+  requestId  String?   @map("request_id")
+  changes    Json? // redacted before/after diff
+  reason     String?
+  prevHash   String    @default("") @map("prev_hash") // assigned by trigger
+  hash       String    @default("") // sha256(prev_hash || canonical row) — assigned by trigger
+
+  @@unique([stream, seq])
+  @@index([orgId, occurredAt(sort: Desc)])
+  @@index([action, occurredAt])
+  @@map("audit_logs")
+}
+
+model AuditAnchor {
+  id         BigInt   @id @default(autoincrement())
+  stream     String
+  seq        BigInt
+  hash       String
+  exportedTo String   @map("exported_to") // object-lock storage key
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([stream, seq])
+  @@map("audit_anchors")
+}
+
+/// [PARTITIONED monthly]
+model SecurityEvent {
+  id         String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  kind       String // SSRF_BLOCKED | WEBHOOK_SIG_INVALID | RATE_LIMITED | IDOR_PROBE | MFA_FAILED | SUSPICIOUS_SIGNUP ...
+  severity   Severity
+  orgId      String?  @map("org_id") @db.Uuid
+  actorRef   String?  @map("actor_ref")
+  ipPrefix   String?  @map("ip_prefix")
+  details    Json
+
+  @@id([id, occurredAt])
+  @@index([kind, occurredAt])
+  @@map("security_events")
+}
+
+model BreakGlassRequest {
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId                String           @map("org_id") @db.Uuid
+  requestedById        String           @map("requested_by_id") @db.Uuid
+  approvedById         String?          @map("approved_by_id") @db.Uuid // must differ from requester (CHECK)
+  customerApprovedById String?          @map("customer_approved_by_id") @db.Uuid
+  purpose              String
+  ticketRef            String           @map("ticket_ref")
+  scope                String[] // e.g. ["incident_details","screenshots"]
+  status               BreakGlassStatus @default(REQUESTED)
+  durationMin          Int              @map("duration_min")
+  activatedAt          DateTime?        @map("activated_at") @db.Timestamptz(6)
+  expiresAt            DateTime?        @map("expires_at") @db.Timestamptz(6)
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([orgId, status])
+  @@map("break_glass_requests")
+}
+
+model PlatformSetting {
+  key         String       @id
+  scope       SettingScope @default(PLATFORM)
+  value       Json // secrets stored as {enc: base64} with platform DEK
+  version     Int          @default(1)
+  updatedById String?      @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  history PlatformSettingHistory[]
+
+  @@map("platform_settings")
+}
+
+model PlatformSettingHistory {
+  id          BigInt   @id @default(autoincrement())
+  key         String
+  version     Int
+  value       Json
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  setting PlatformSetting @relation(fields: [key], references: [key], onDelete: Cascade)
+
+  @@unique([key, version])
+  @@map("platform_setting_history")
+}
+
+model FeatureFlag {
+  key          String   @id
+  description  String
+  enabled      Boolean  @default(false)
+  rolloutPct   Int      @default(0) @map("rollout_pct")
+  orgAllowlist String[] @default([]) @map("org_allowlist") @db.Uuid
+  planKeys     String[] @default([]) @map("plan_keys")
+  updatedById  String?  @map("updated_by_id") @db.Uuid
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("feature_flags")
+}
+
+model WorkerHeartbeat {
+  workerId   String    @id @map("worker_id")
+  kind       String // http | browser | incident | notify | maintenance | billing | scheduler
+  region     String
+  version    String
+  hostname   String
+  startedAt  DateTime  @map("started_at") @db.Timestamptz(6)
+  lastSeenAt DateTime  @map("last_seen_at") @db.Timestamptz(6)
+  activeJobs Int       @map("active_jobs")
+  capacity   Int
+  rssMb      Int?      @map("rss_mb")
+  isLeader   Boolean   @default(false) @map("is_leader")
+  /// Phase 4H: work actually done since start (alive ≠ processing), failures, timeouts, last job end
+  processed  Int       @default(0)
+  failed     Int       @default(0)
+  timeouts   Int       @default(0)
+  lastJobAt  DateTime? @map("last_job_at") @db.Timestamptz(6)
+  /// Phase 4H: dependency probes {redis|gateway|runner|storage|smtp: {ok, ms, at, error?}} and extra gauges (runner sessions …).
+  /// Never URLs, credentials or customer data.
+  deps       Json?
+  meta       Json?
+
+  @@index([kind, lastSeenAt])
+  @@map("worker_heartbeats")
+}
+
+/// Phase 4H: latest evaluated state per platform component (written by the health evaluator, read by Super Admin).
+/// Aggregate operational data only — never tenant identifiers, URLs or customer content.
+model PlatformHealth {
+  component   String   @id
+  state       String // HEALTHY | DEGRADED | UNHEALTHY | UNKNOWN
+  reasons     Json     @default("[]")
+  metrics     Json     @default("{}")
+  since       DateTime @db.Timestamptz(6) /// when the current state began
+  evaluatedAt DateTime @map("evaluated_at") @db.Timestamptz(6)
+  evaluatedBy String   @map("evaluated_by")
+
+  @@map("platform_health")
+}
+
+/// Phase 4H: platform self-alerts (separate from customer incidents). One open alert per fingerprint.
+model PlatformAlert {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fingerprint      String
+  rule             String
+  component        String
+  severity         String // CRITICAL | WARNING | INFO
+  state            String // OPEN | ACKNOWLEDGED | RECOVERED
+  reason           String
+  details          Json      @default("{}")
+  openedAt         DateTime  @default(now()) @map("opened_at") @db.Timestamptz(6)
+  lastSeenAt       DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  occurrences      Int       @default(1)
+  reopenCount      Int       @default(0) @map("reopen_count")
+  acknowledgedAt   DateTime? @map("acknowledged_at") @db.Timestamptz(6)
+  acknowledgedById String?   @map("acknowledged_by_id") @db.Uuid
+  recoveredAt      DateTime? @map("recovered_at") @db.Timestamptz(6)
+  /// set when a failing shared dependency explains this alert: recorded, not notified
+  suppressedBy     String?   @map("suppressed_by") @db.Uuid
+  lastNotifiedAt   DateTime? @map("last_notified_at") @db.Timestamptz(6)
+  notifyState      String    @default("PENDING") @map("notify_state") // PENDING | QUEUED | SENT | FAILED | SUPPRESSED | NONE
+
+  events PlatformAlertEvent[]
+
+  @@index([state, openedAt])
+  @@index([fingerprint, openedAt])
+  @@map("platform_alerts")
+}
+
+model PlatformAlertEvent {
+  id      BigInt   @id @default(autoincrement())
+  alertId String   @map("alert_id") @db.Uuid
+  at      DateTime @default(now()) @db.Timestamptz(6)
+  type    String // OPENED | REOPENED | ESCALATED | RECOVERED | ACKNOWLEDGED | NOTIFY_QUEUED | NOTIFY_SENT | NOTIFY_FAILED | NOTIFY_SUPPRESSED | SUPPRESSED
+  actorId String?  @map("actor_id") @db.Uuid
+  details Json     @default("{}")
+
+  alert PlatformAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, at])
+  @@map("platform_alert_events")
+}
+
+/// Phase 4H: usage reconciliation runs (requested by an operator or the daily job) and the discrepancies found.
+model UsageReconciliationRun {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day           DateTime  @db.Date
+  status        String // REQUESTED | RUNNING | DONE | FAILED
+  requestedById String?   @map("requested_by_id") @db.Uuid
+  requestedAt   DateTime  @default(now()) @map("requested_at") @db.Timestamptz(6)
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(6)
+  stats         Json?
+  error         String?
+
+  discrepancies UsageDiscrepancy[]
+
+  @@index([day, requestedAt])
+  @@map("usage_reconciliation_runs")
+}
+
+model UsageDiscrepancy {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId        String    @map("run_id") @db.Uuid
+  orgId        String    @map("org_id") @db.Uuid
+  day          DateTime  @db.Date
+  check        String // e.g. "http.checks~ledger"
+  key          String? // usage key the check compares (null for result-integrity checks)
+  recorded     BigInt
+  expected     BigInt
+  status       String    @default("OPEN") // OPEN | ADJUSTED | ACCEPTED
+  resolvedById String?   @map("resolved_by_id") @db.Uuid
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolution   String?
+
+  run UsageReconciliationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, orgId, check], map: "usage_discrepancies_unique")
+  @@index([runId])
+  @@index([orgId, day])
+  @@map("usage_discrepancies")
+}
+
+/// Phase 4H: every manual change to usage counters, with reason and actor (applied atomically with the counter).
+model UsageAdjustment {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  day           DateTime @db.Date
+  key           String
+  delta         BigInt
+  reason        String
+  actorId       String   @map("actor_id") @db.Uuid
+  discrepancyId String?  @map("discrepancy_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([orgId, day])
+  @@map("usage_adjustments")
+}
+
+/// [PARTITIONED monthly] Platform self-monitoring samples (queue depth, scheduler lag, …).
+model SystemHealthLog {
+  id         String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  component  String
+  metric     String
+  value      Float
+  labels     Json?
+
+  @@id([id, recordedAt])
+  @@index([component, metric, recordedAt])
+  @@map("system_health_logs")
+}
+
+/// Dead-letter ledger.
+model JobFailure {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  queue               String
+  jobId               String    @map("job_id")
+  orgId               String?   @map("org_id") @db.Uuid
+  payload             Json // already redacted (no secrets ever in payloads)
+  error               String
+  attempts            Int
+  failedAt            DateTime  @default(now()) @map("failed_at") @db.Timestamptz(6)
+  resolution          String? // REPLAYED | REPLAY_REFUSED | DISCARDED
+  resolvedAt          DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolvedById        String?   @map("resolved_by_id") @db.Uuid
+  executionId         String?   @map("execution_id") @db.Uuid
+  websiteId           String?   @map("website_id") @db.Uuid
+  jobType             String?   @map("job_type")
+  failureCategory     String?   @map("failure_category")
+  replayRequestedAt   DateTime? @map("replay_requested_at") @db.Timestamptz(6)
+  replayRequestedById String?   @map("replay_requested_by_id") @db.Uuid
+  replayReason        String?   @map("replay_reason")
+  replayExecutionId   String?   @map("replay_execution_id") @db.Uuid
+
+  @@index([queue, failedAt])
+  @@index([resolvedAt])
+  @@map("job_failures")
+}
+
+model ReportJob {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId         String       @map("org_id") @db.Uuid
+  requestedById String       @map("requested_by_id") @db.Uuid
+  kind          String // WEBSITE_HEALTH | UPTIME | API_HEALTH | INCIDENTS | PERFORMANCE | MONTHLY_SUMMARY
+  format        ReportFormat
+  params        Json // {websiteIds, from, to} — clamped to retention
+  state         JobState     @default(QUEUED)
+  artifactId    String?      @map("artifact_id") @db.Uuid
+  error         String?
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt   DateTime?    @map("completed_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("report_jobs")
+}
+
+/// Account/org data export and deletion workflows (GDPR-style).
+model DataRequest {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind         String // EXPORT | DELETE_ORG | DELETE_USER
+  orgId        String?   @map("org_id") @db.Uuid
+  userId       String?   @map("user_id") @db.Uuid
+  state        JobState  @default(QUEUED)
+  scheduledFor DateTime? @map("scheduled_for") @db.Timestamptz(6) // deletion grace end
+  artifactId   String?   @map("artifact_id") @db.Uuid
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([state, scheduledFor])
+  @@map("data_requests")
+}
+
+/// Phase 4D: one logical result per execution, across ALL engines and partitions (non-partitioned,
+/// so the execution id alone is unique). Result rows must reference a ledger row (trigger, sql/100).
+model ExecutionResult {
+  executionId String    @id @map("execution_id") @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  websiteId   String    @map("website_id") @db.Uuid
+  tier        CheckTier
+  windowStart DateTime  @map("window_start") @db.Timestamptz(6)
+  outcome     String // PASSED | FAILED | INCONCLUSIVE
+  attempt     Int
+  recordedAt  DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@index([websiteId, tier, windowStart(sort: Desc)])
+  @@index([recordedAt])
+  @@index([orgId, windowStart(sort: Desc)]) // Phase 4F: org-wide history
+  @@index([orgId, recordedAt]) // Phase 4F: change feed
+  @@map("execution_results")
+}
+
+/// Phase 4E: one deep scan per execution — progress, coverage and the config snapshot. A crash resumes from here.
+model DeepScan {
+  executionId         String    @id @map("execution_id") @db.Uuid
+  orgId               String    @map("org_id") @db.Uuid
+  websiteId           String    @map("website_id") @db.Uuid
+  trigger             String    @default("SCHEDULE") // SCHEDULE | MANUAL | REPLAY
+  status              String    @default("RUNNING") // RUNNING | COMPLETED | PARTIAL | CANCELLED | INCONCLUSIVE
+  complete            Boolean   @default(false) // every discovered in-scope page within limits was checked
+  stopReason          String?   @map("stop_reason") // FRONTIER_EXHAUSTED | PAGE_LIMIT | DURATION | REQUEST_BUDGET | DAILY_QUOTA | CANCELLED | INFRASTRUCTURE
+  config              Json // effective limits + scope snapshot (resume uses the same)
+  discovery           Json? // robots + sitemap summary; NULL until discovery finished
+  pagesDiscovered     Int       @default(0) @map("pages_discovered")
+  pagesCompleted      Int       @default(0) @map("pages_completed")
+  pagesFailed         Int       @default(0) @map("pages_failed")
+  pagesSkipped        Int       @default(0) @map("pages_skipped") // policy: robots, unsafe, blocked destination, invalid
+  pagesDropped        Int       @default(0) @map("pages_dropped") // coverage: not crawled because of page/depth/trap limits
+  pagesInconclusive   Int       @default(0) @map("pages_inconclusive")
+  resourcesChecked    Int       @default(0) @map("resources_checked")
+  requests            Int       @default(0)
+  bytes               BigInt    @default(0)
+  browserMs           Int       @default(0) @map("browser_ms")
+  findingsOpened      Int       @default(0) @map("findings_opened")
+  findingsResolved    Int       @default(0) @map("findings_resolved")
+  comparison          Json? // vs baseline (previous COMPLETED scan)
+  baselineExecutionId String?   @map("baseline_execution_id") @db.Uuid
+  startedAt           DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  finishedAt          DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  urls DeepScanUrl[]
+
+  @@index([websiteId, startedAt(sort: Desc)])
+  @@index([orgId, status])
+  @@index([orgId, updatedAt]) // Phase 4F: change feed
+  @@map("deep_scans")
+}
+
+/// Phase 4E: the resumable frontier and per-URL facts of one scan. url is normalised (tracking/sensitive params removed).
+model DeepScanUrl {
+  id            BigInt    @id @default(autoincrement())
+  executionId   String    @map("execution_id") @db.Uuid
+  orgId         String    @map("org_id") @db.Uuid
+  websiteId     String    @map("website_id") @db.Uuid
+  urlHash       String    @map("url_hash")
+  url           String
+  kind          String // PAGE | RESOURCE | EXTERNAL | SITEMAP
+  resourceType  String?   @map("resource_type") // image | stylesheet | script | font | other
+  state         String    @default("QUEUED") // QUEUED | DONE | FAILED | SKIPPED | INCONCLUSIVE
+  skipReason    String?   @map("skip_reason")
+  depth         Int       @default(0)
+  source        String // START | SITEMAP | CRAWL | BROWSER
+  inSitemap     Boolean   @default(false) @map("in_sitemap")
+  referrers     Int       @default(0) // pages linking here (bounded count)
+  firstReferrer String?   @map("first_referrer") // display form
+  statusCode    Int?      @map("status_code")
+  finalUrl      String?   @map("final_url") // display form
+  redirectChain Json?     @map("redirect_chain")
+  contentType   String?   @map("content_type")
+  bytes         Int?
+  durationMs    Int?      @map("duration_ms")
+  facts         Json? // title, description, canonical, robots, lang, h1s, headings, og, json-ld, a11y counts, hashes
+  error         String?
+  checkedAt     DateTime? @map("checked_at") @db.Timestamptz(6)
+
+  scan DeepScan @relation(fields: [executionId], references: [executionId], onDelete: Cascade)
+
+  @@unique([executionId, urlHash])
+  @@index([executionId, state, kind, depth])
+  @@map("deep_scan_urls")
+}
+
+/// Phase 4E: a finding = one problem on one subject (page/resource/sitemap/site), grouped across scans.
+model ScanFinding {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId               String    @map("org_id") @db.Uuid
+  websiteId           String    @map("website_id") @db.Uuid
+  fingerprint         String // category + subject (stable across scans)
+  category            String
+  groupKey            String    @map("group_key") // broken_pages | broken_resources | sitemap | seo | accessibility | structure
+  severity            String
+  status              String    @default("OPEN") // OPEN | RESOLVED
+  subject             String // display URL or "site"
+  title               String
+  evidence            Json
+  recommendation      String
+  detectionMethod     String    @map("detection_method")
+  confirmed           Boolean   @default(true)
+  occurrenceCount     Int       @default(1) @map("occurrence_count")
+  reopenCount         Int       @default(0) @map("reopen_count")
+  firstDetectedAt     DateTime  @map("first_detected_at") @db.Timestamptz(6)
+  lastDetectedAt      DateTime  @map("last_detected_at") @db.Timestamptz(6)
+  resolvedAt          DateTime? @map("resolved_at") @db.Timestamptz(6)
+  firstExecutionId    String    @map("first_execution_id") @db.Uuid
+  lastExecutionId     String    @map("last_execution_id") @db.Uuid
+  resolvedExecutionId String?   @map("resolved_execution_id") @db.Uuid
+
+  @@unique([websiteId, fingerprint])
+  @@index([orgId, websiteId, status, severity])
+  @@map("scan_findings")
+}
+
+model ScanFindingEvent {
+  id          BigInt   @id @default(autoincrement())
+  orgId       String   @map("org_id") @db.Uuid
+  findingId   String   @map("finding_id") @db.Uuid
+  executionId String   @map("execution_id") @db.Uuid
+  type        String // OPENED | RECURRED | RESOLVED | REOPENED
+  data        Json?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([findingId, executionId, type])
+  @@index([findingId, createdAt])
+  @@map("scan_finding_events")
+}

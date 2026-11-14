@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "wim-dev",
+      "credentials": [{ "accessKey": "wim_s3_dev", "secretKey": "wim_s3_dev_password" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@wim/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "validate": "prisma validate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy && node scripts/apply-sql.mjs && node scripts/seed.mjs",
+    "sql:apply": "node scripts/apply-sql.mjs",
+    "seed": "node scripts/seed.mjs",
+    "test:setup": "node scripts/setup-test-db.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "7.10.1",
+    "@prisma/adapter-pg": "7.10.1",
+    "pg": "8.23.1",
+    "@wim/core": "workspace:*"
+  },
+  "devDependencies": {
+    "prisma": "7.10.1",
+    "typescript": "5.9.3",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.0"
+  }
+}
