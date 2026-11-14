@@ -1,0 +1,146 @@
+# Network-isolation proof environment (SECURITY.md §25). Mirrors the production monitoring
+# topology with fixed subnets so probes can target exact addresses:
+#
+#   fakenet         10.250.77.0/24  internal  egress-gateway(.2) fixture-site(.10) fixture-dns(.11)   ← stands in for "the internet"
+#   data            10.250.10.0/24  internal  redis(.10) postgres(.11) worker(.20) scheduler(.30)
+#   http-egress     10.250.20.0/24  internal  egress-gateway(.2) worker(.20)
+#   browser-egress  10.250.30.0/24  internal  egress-gateway(.2) browser-runner(.20)
+#   browser-control 10.250.40.0/24  internal  worker(.20) browser-runner(.21)
+#   outbound        bridge (real internet)    egress-gateway only
+#
+# The only test allowance is EGRESS_TEST_ALLOW_CIDRS=10.250.77.0/24 on the gateway (the fixture
+# "internet"); it is refused unless NODE_ENV=test. Everything else is production policy.
+name: wim-isolation
+
+x-node: &node
+  image: node:24-alpine
+  working_dir: /repo
+  volumes: ["../../..:/repo:ro"]
+  read_only: true
+  tmpfs: ["/tmp"]
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  fixture-dns:
+    <<: *node
+    command: ["node", "infra/security/isolation/fixtures.mjs", "dns"]
+    networks: { fakenet: { ipv4_address: 10.250.77.11 } }
+  fixture-site:
+    <<: *node
+    command: ["node", "infra/security/isolation/fixtures.mjs", "site"]
+    networks: { fakenet: { ipv4_address: 10.250.77.10 } }
+
+  egress-gateway:
+    <<: *node
+    command: ["node", "apps/egress-gateway/dist/main.js"]
+    environment:
+      NODE_ENV: test
+      EGRESS_PORT: "8080"
+      EGRESS_TOKEN_SECRET: isolation-test-secret-0123456789abcdef
+      DNS_RESOLVERS: 10.250.77.11
+      EGRESS_TEST_ALLOW_CIDRS: 10.250.77.0/24
+      # info: ALLOWED decisions must be in the log, or the "nothing internal was ever allowed" check is vacuous
+      LOG_LEVEL: info
+    networks:
+      fakenet: { ipv4_address: 10.250.77.2 }
+      http-egress: { ipv4_address: 10.250.20.2 }
+      browser-egress: { ipv4_address: 10.250.30.2 }
+      outbound: {}
+    mem_limit: 256m
+    pids_limit: 256
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--requirepass", "isolation-redis"]
+    networks: { data: { ipv4_address: 10.250.10.10 } }
+  postgres:
+    image: postgres:16.6-alpine
+    environment: { POSTGRES_PASSWORD: isolation-pg }
+    networks: { data: { ipv4_address: 10.250.10.11 } }
+
+  # Stands in for worker-http / worker-browser: legitimately on data, never on the internet.
+  worker:
+    <<: *node
+    command: ["sleep", "3600"]
+    environment: { EGRESS_TOKEN_SECRET: isolation-test-secret-0123456789abcdef }
+    networks:
+      data: { ipv4_address: 10.250.10.20 }
+      http-egress: { ipv4_address: 10.250.20.20 }
+      browser-control: { ipv4_address: 10.250.40.20 }
+
+  # Phase 4B scheduler: data only. No egress network, no browser network, no gateway, no secrets but its DB/Redis credentials.
+  scheduler:
+    <<: *node
+    command: ["sleep", "3600"]
+    networks:
+      data: { ipv4_address: 10.250.10.30 }
+
+  # Phase 4E: worker-deepscan. Same networks as the HTTP worker (data + http-egress) plus browser-control for optional
+  # browser-assisted discovery; never on the internet, never on browser-egress. Holds no S3 credentials.
+  deepscan:
+    <<: *node
+    command: ["sleep", "3600"]
+    environment: { EGRESS_TOKEN_SECRET: isolation-test-secret-0123456789abcdef }
+    networks:
+      data: { ipv4_address: 10.250.10.40 }
+      http-egress: { ipv4_address: 10.250.20.40 }
+      browser-control: { ipv4_address: 10.250.40.40 }
+
+  # Phase 4D: the production browser runner (apps/browser-runner) exactly as deployed: Chromium sandbox ON
+  # under the custom seccomp profile, non-root, read-only, all capabilities dropped, no secrets, and the
+  # gateway configured by the runner itself. Driven by the worker over browser-control.
+  # Release readiness (blocker 1): RUNNER_IMAGE=<the production image built from infra/docker/browser-runner.Dockerfile>
+  # runs the image's own /app (its CMD) under the production run flags below. The repository is mounted read-only at
+  # /repo ONLY so the probe script can be executed inside the container; the runner itself never reads it.
+  # Without RUNNER_IMAGE (legacy) the stock Playwright image runs the mounted build.
+  browser-runner-svc:
+    image: ${RUNNER_IMAGE:-mcr.microsoft.com/playwright:v1.65.0-noble}
+    working_dir: ${RUNNER_WORKDIR:-/repo/apps/browser-runner}
+    volumes: ["../../..:/repo:ro"]
+    command: ["node", "dist/main.js"]
+    environment:
+      HOME: /tmp
+      RUNNER_GATEWAY_URL: http://10.250.30.2:8080
+      RUNNER_ADVERTISE_HOST: 10.250.40.22
+      RUNNER_MAX_SESSIONS: "2"
+      RUNNER_SANDBOX: "true"
+    read_only: true
+    tmpfs: ["/tmp:size=512m", "/dev/shm:size=256m"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true", "seccomp=../seccomp/chromium.json"]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 512
+    user: pwuser
+    networks:
+      browser-egress: { ipv4_address: 10.250.30.22 }
+      browser-control: { ipv4_address: 10.250.40.22 }
+
+  # Chromium runs here. No data network, no internet: only the gateway and the worker that drives it.
+  browser-runner:
+    image: mcr.microsoft.com/playwright:v1.65.0-noble
+    working_dir: /repo
+    volumes: ["../../..:/repo:ro"]
+    command: ["sleep", "3600"]
+    # No secrets: the capability token is minted by the worker and handed over per run.
+    environment: { HOME: /tmp }
+    read_only: true
+    tmpfs: ["/tmp:size=512m", "/dev/shm:size=256m"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 512
+    user: pwuser
+    networks:
+      browser-egress: { ipv4_address: 10.250.30.20 }
+      browser-control: { ipv4_address: 10.250.40.21 }
+
+networks:
+  fakenet:         { internal: true, ipam: { config: [{ subnet: 10.250.77.0/24 }] } }
+  data:            { internal: true, ipam: { config: [{ subnet: 10.250.10.0/24 }] } }
+  http-egress:     { internal: true, ipam: { config: [{ subnet: 10.250.20.0/24 }] } }
+  browser-egress:  { internal: true, ipam: { config: [{ subnet: 10.250.30.0/24 }] } }
+  browser-control: { internal: true, ipam: { config: [{ subnet: 10.250.40.0/24 }] } }
+  outbound:        {}
