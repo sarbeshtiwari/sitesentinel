@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75   # the full integration suite (real Chromium) takes ~45 min
     services:
       postgres:
         image: postgres:16.6-alpine
@@ -34,6 +34,13 @@ jobs:
         ports: ["51025:1025", "58025:8025"]
 
     steps:
+      # The integration suite (Chromium, partitioned test data, images) exhausted the runner's disk on the first run.
+      # Remove preinstalled toolchains this job never uses; report free space for the record.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -58,7 +65,15 @@ jobs:
       - run: pnpm turbo run typecheck
       - run: pnpm turbo run test:unit
       - name: Integration tests (real Postgres, Redis, Mailpit)
-        run: pnpm --filter @wim/api test:integration
+        run: |
+          ( while true; do echo "[disk $(date -u +%H:%M:%S)] $(df -h / | awk 'NR==2{print $4" free, "$5" used"}')"; sleep 30; done ) &
+          pnpm --filter @wim/api test:integration
+      - name: Disk usage diagnostics
+        if: failure()
+        run: |
+          df -h
+          sudo du -xh --max-depth=2 / 2>/dev/null | sort -rh | head -25
+          docker system df -v | head -40
       - name: Phase 1 database invariants
         run: PGPASSWORD=wim_owner_dev_password psql -h 127.0.0.1 -p 55432 -U wim_owner -d wim_test -v ON_ERROR_STOP=1 -f packages/db/tests/invariants.sql
       - name: Secret scan
