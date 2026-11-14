@@ -7,6 +7,9 @@
  */
 import "reflect-metadata";
 import { parseArgs } from "node:util";
+import { chmodSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import QRCode from "qrcode";
 import { generateTotpSecret, hashPassword, LocalKeyProvider, otpauthUrl, randomToken } from "@wim/crypto";
 import { createDb, loadSettings } from "@wim/db";
@@ -40,8 +43,15 @@ try {
   const url = otpauthUrl({ issuer, account: email, secret });
   console.log(`\nSuper Admin created: ${email} (${role})`);
   if (!process.env.ADMIN_PASSWORD) console.log(`One-time password (store it in your password manager now): ${password}`);
-  console.log(`\nAdd this account to your authenticator app (shown once):\n${url}\n`);
-  console.log(await QRCode.toString(url, { type: "terminal", small: true }));
+  console.log(`\nAdd this account to your authenticator app (shown once):`);
+  console.log(`  Manual entry → account: ${email}  key: ${secret.replace(/(.{4})/g, "$1 ").trim()}  (time-based)`);
+  console.log(`  otpauth URL: ${url}`);
+  // a real image scans reliably; terminal block characters often don't (line spacing breaks the pattern)
+  const png = join(mkdtempSync(join(tmpdir(), "wim-admin-")), "totp-qr.png");
+  await QRCode.toFile(png, url, { width: 360, margin: 4 });
+  chmodSync(png, 0o600);
+  console.log(`  QR code image: ${png}  (open it, scan it, then delete it — it contains the secret)\n`);
+  console.log(await QRCode.toString(url, { type: "terminal" }));
 } finally {
   await db.$disconnect();
 }
