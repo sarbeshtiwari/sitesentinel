@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Button, ConfirmDialog, FormField, Input, Spinner, Tabs } from "@wim/ui";
+import { Alert, Button, buttonVariants, ConfirmDialog, FormField, Input, Spinner, Tabs } from "@wim/ui";
 import type { DataEnvelope, LoginResultDto, MfaResetStatusDto } from "@wim/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -76,7 +76,7 @@ function SecondFactor() {
       <AuthCard title="Two-factor authentication">
         <div className="grid gap-4">
           <Alert tone="warning" title="Your sign-in timed out">Sign in again with your email and password.</Alert>
-          <Link href={`/login?next=${encodeURIComponent(next)}`}><Button className="w-full">Sign in</Button></Link>
+          <Link href={`/login?next=${encodeURIComponent(next)}`} className={buttonVariants({ size: "lg", className: "w-full" })}>Sign in</Link>
         </div>
       </AuthCard>
     );
@@ -101,17 +101,17 @@ function SecondFactor() {
           {error && <Alert tone="danger" title={error} />}
           {mode === "code" ? (
             <FormField label="6-digit code" htmlFor="code">
-              <Input id="code" inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} autoFocus value={value} onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))} className="font-mono tracking-widest" />
+              <Input id="code" inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} autoFocus value={value} onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))} className="h-11 text-center font-mono text-lg tracking-[0.4em]" />
             </FormField>
           ) : (
             <FormField label="Recovery code" htmlFor="recovery" hint="Format XXXX-XXXX-XXXX. Each code works once.">
-              <Input id="recovery" autoComplete="off" autoFocus value={value} onChange={(e) => setValue(e.target.value)} className="font-mono uppercase" />
+              <Input id="recovery" autoComplete="off" autoFocus value={value} onChange={(e) => setValue(e.target.value)} className="h-11 font-mono uppercase tracking-[0.15em]" />
             </FormField>
           )}
-          <Button type="submit" loading={busy} disabled={mode === "code" ? value.length !== 6 : value.length < 12} className="w-full">Verify</Button>
+          <Button type="submit" loading={busy} disabled={mode === "code" ? value.length !== 6 : value.length < 12} size="lg" className="mt-1 w-full">Verify</Button>
         </form>
-        {reset.isLoading ? <Spinner /> : !r && (
-          <Button variant="link" className="justify-self-center text-sm" onClick={() => setConfirmReset(true)}>Lost access to your authenticator and recovery codes?</Button>
+        {reset.isLoading ? <Spinner className="justify-self-center" /> : !r && (
+          <Button variant="link" className="justify-self-center whitespace-normal text-center text-sm" onClick={() => setConfirmReset(true)}>Lost access to your authenticator and recovery codes?</Button>
         )}
       </div>
       <ConfirmDialog

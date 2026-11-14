@@ -95,7 +95,7 @@ test("admin: sign in with password + TOTP → aggregate overview", async ({ page
   }
   await expect(page).toHaveURL(/\/overview/);
   await expect(page.getByText("Aggregate platform statistics only")).toBeVisible();
-  const users = page.locator("p", { hasText: /^Users$/ }).locator("xpath=following-sibling::p[1]");
+  const users = page.locator('[data-metric="Users"] [data-metric-value]');
   await expect(users).toHaveText(/^\d[\d,]*$/);
   expect(Number((await users.textContent())!.replace(/,/g, ""))).toBeGreaterThan(0);
 

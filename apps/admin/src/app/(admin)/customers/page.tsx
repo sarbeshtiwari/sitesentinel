@@ -28,11 +28,14 @@ export default function CustomersPage() {
   return (
     <>
       <PageHeader title="Customers" description="Organization metadata only. Owner emails are masked." />
-      <div className="relative mb-4 max-w-sm">
-        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
-        <Input aria-label="Search organizations" placeholder="Search by name or slug" className="pl-8" value={input} onChange={(e) => setInput(e.target.value)} />
-      </div>
-      <Card>
+      <Card className="overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="relative w-full max-w-sm">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input aria-label="Search organizations" placeholder="Search by name or slug" className="pl-8" value={input} onChange={(e) => setInput(e.target.value)} />
+          </div>
+          {rows.length > 0 && <span className="text-xs tabular-nums text-muted-foreground">{rows.length}{q.hasNextPage ? "+" : ""} organization{rows.length === 1 && !q.hasNextPage ? "" : "s"}{query ? " matching" : ""}</span>}
+        </div>
         <CardContent className="p-0">
           {q.isLoading ? <div className="p-5"><Skeleton className="h-40" /></div> : q.isError ? <div className="p-5"><Alert tone="danger" title={errorMessage(q.error)} /></div> : rows.length === 0 ? <div className="p-5"><EmptyState icon={<Building2 />} title={query ? "No organizations match" : "No organizations yet"} /></div> : (
             <Table>
@@ -40,21 +43,21 @@ export default function CustomersPage() {
               <TBody>
                 {rows.map((r) => (
                   <TR key={r.id}>
-                    <TD><div className="font-medium">{r.name}</div><div className="font-mono text-xs text-muted-foreground">{r.slug}</div></TD>
-                    <TD><Badge tone={tone(r.status)}>{r.status}</Badge></TD>
-                    <TD>{r.planKey ?? <span className="text-muted-foreground">—</span>}{r.subscriptionStatus && <div className="text-xs text-muted-foreground">{r.subscriptionStatus}</div>}</TD>
-                    <TD>{r.trialStatus ? <>{r.trialStatus}{r.trialEndsAt && <div className="text-xs text-muted-foreground">ends {new Date(r.trialEndsAt).toLocaleDateString()}</div>}</> : <span className="text-muted-foreground">—</span>}</TD>
+                    <TD><div className="font-medium">{r.name}</div><div className="font-mono text-[11px] text-muted-foreground">{r.slug}</div></TD>
+                    <TD><Badge tone={tone(r.status)}>{r.status.toLowerCase().replace(/_/g, " ")}</Badge></TD>
+                    <TD>{r.planKey ? <span className="font-mono text-xs">{r.planKey}</span> : <span className="text-muted-foreground">—</span>}{r.subscriptionStatus && <div className="text-xs text-muted-foreground">{r.subscriptionStatus}</div>}</TD>
+                    <TD>{r.trialStatus ? <>{r.trialStatus}{r.trialEndsAt && <div className="text-xs tabular-nums text-muted-foreground">ends {new Date(r.trialEndsAt).toLocaleDateString()}</div>}</> : <span className="text-muted-foreground">—</span>}</TD>
                     <TD className="text-right tabular-nums">{r.memberCount}</TD>
                     <TD className="text-right tabular-nums">{r.websiteCount}</TD>
                     <TD className="font-mono text-xs">{r.ownerEmailMasked ?? "—"}</TD>
-                    <TD className="whitespace-nowrap text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</TD>
+                    <TD className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</TD>
                   </TR>
                 ))}
               </TBody>
             </Table>
           )}
         </CardContent>
-        {q.hasNextPage && <CardFooter><Button variant="outline" loading={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Load more</Button></CardFooter>}
+        {q.hasNextPage && <CardFooter className="justify-center"><Button variant="outline" size="sm" loading={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Load more</Button></CardFooter>}
       </Card>
     </>
   );

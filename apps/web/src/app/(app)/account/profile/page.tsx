@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Button, Card, CardContent, CardFooter, CardHeader, CardTitle, FormField, Input, PageHeader, Skeleton, toast } from "@wim/ui";
+import { Alert, Avatar, Badge, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, FormField, Input, PageHeader, Skeleton, toast } from "@wim/ui";
 import { UpdateMeInput, type DataEnvelope, type MeDto } from "@wim/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -29,13 +29,19 @@ export default function ProfilePage() {
   return (
     <>
       <PageHeader title="Profile" description="Your personal details." />
-      <Card className="max-w-xl">
-        <CardHeader><CardTitle>Personal information</CardTitle></CardHeader>
+      <Card className="max-w-2xl">
+        <CardHeader className="flex-row items-center gap-4">
+          {me.data ? <Avatar name={me.data.name ?? me.data.email} className="h-11 w-11 text-base" /> : <Skeleton className="h-11 w-11 rounded-full" />}
+          <div className="grid min-w-0 gap-1">
+            <CardTitle>Personal information</CardTitle>
+            {me.data && <CardDescription className="flex flex-wrap items-center gap-2"><span className="truncate">{me.data.email}</span><Badge tone={me.data.emailVerified ? "success" : "warning"}>{me.data.emailVerified ? "Verified" : "Not verified"}</Badge></CardDescription>}
+          </div>
+        </CardHeader>
         {me.isLoading ? <CardContent><Skeleton className="h-32" /></CardContent> : (
           <form onSubmit={onSubmit} noValidate>
-            <CardContent className="grid gap-4">
-              {error && <Alert tone="danger" title={error} />}
-              <FormField label="Email" htmlFor="email" hint={me.data?.emailVerified ? "Verified" : "Not verified yet"}>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              {error && <Alert tone="danger" title={error} className="sm:col-span-2" />}
+              <FormField className="sm:col-span-2" label="Email" htmlFor="email" hint={me.data?.emailVerified ? "Verified" : "Not verified yet"}>
                 <Input id="email" value={me.data?.email ?? ""} readOnly disabled />
               </FormField>
               <FormField label="Name" htmlFor="name" error={errors.name?.message}>

@@ -47,7 +47,7 @@ function LoginForm() {
         <FormField label={<span className="flex w-full justify-between">Password <Link href="/forgot-password" className="text-xs font-normal text-primary hover:underline">Forgot password?</Link></span>} htmlFor="password" error={errors.password?.message}>
           <Input id="password" type="password" autoComplete="current-password" aria-invalid={!!errors.password} {...form.register("password")} />
         </FormField>
-        <Button type="submit" loading={isSubmitting} className="w-full">Sign in</Button>
+        <Button type="submit" size="lg" loading={isSubmitting} className="mt-1 w-full">Sign in</Button>
       </form>
     </AuthCard>
   );

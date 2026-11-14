@@ -1,8 +1,10 @@
 "use client";
-import { Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, ConfirmDialog, FormField, Input, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
+import { Alert, Badge, Button, ConfirmDialog, EmptyState, FormField, Input, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
 import type { DataEnvelope, TransferDto } from "@wim/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeftRight, CheckCircle2, ChevronLeft, Globe, Send, ShieldAlert } from "lucide-react";
 import Link from "next/link";
+import { Section } from "@/components/monitoring";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { CodeBlock } from "@/components/copy";
@@ -60,34 +62,32 @@ export default function TransfersPage() {
 
   return (
     <>
-      <div className="mb-2 text-sm"><Link href={`/o/${orgId}/websites`} className="text-muted-foreground hover:underline">← Websites</Link></div>
+      <div className="mb-3"><Link href={`/o/${orgId}/websites`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" aria-hidden /> Websites</Link></div>
       <PageHeader title="Domain ownership transfers" description="Take over a domain another organization registered, after proving you control its DNS. A platform administrator reviews every request; no data is moved between organizations." />
-      <div className="grid gap-6">
+      <div className="grid gap-5">
         {write && (
-          <Card>
-            <CardHeader><CardTitle>Request a transfer</CardTitle></CardHeader>
-            <CardContent>
-              <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void run("request", async () => { await post(`/orgs/${orgId}/domain-transfers`, { url }); setUrl(""); }, "Transfer requested — publish the DNS record below"); }}>
+          <Section title="Request a transfer" icon={<ArrowLeftRight />} description="You'll get a DNS TXT record to publish on the domain to prove you control it.">
+            <div>
+              <form className="flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={(e) => { e.preventDefault(); void run("request", async () => { await post(`/orgs/${orgId}/domain-transfers`, { url }); setUrl(""); }, "Transfer requested — publish the DNS record below"); }}>
                 <FormField label="Domain" htmlFor="tr-url" className="min-w-64 flex-1"><Input id="tr-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="example.co.in" /></FormField>
                 <Button type="submit" loading={busy === "request"} disabled={!url.trim()}>Request transfer</Button>
               </form>
-            </CardContent>
-          </Card>
+            </div>
+          </Section>
         )}
-        <Card>
-          <CardHeader><CardTitle>Your requests</CardTitle></CardHeader>
-          <CardContent className="grid gap-4">
+        <Section title="Your requests" icon={<Send />}>
+          <div className="grid gap-3">
             {mine.isLoading ? <Skeleton className="h-24" /> : mine.isError ? <Alert tone="danger" title={errorMessage(mine.error)} /> : !mine.data?.length ? (
-              <p className="text-sm text-muted-foreground">No transfer requests.</p>
+              <EmptyState icon={<ArrowLeftRight />} title="No transfer requests." description="Requests you make to take over a domain appear here." className="py-6" />
             ) : mine.data.map((t) => (
-              <div key={t.id} className="grid gap-3 rounded-md border border-border p-4">
+              <div key={t.id} className="grid gap-3 rounded-lg border border-border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">{t.displayHost}</span>
+                  <span className="flex min-w-0 items-center gap-2 font-medium"><Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /><span className="break-all">{t.displayHost}</span></span>
                   <Badge tone={STATUS[t.status]?.tone ?? "neutral"}>{STATUS[t.status]?.label ?? t.status}</Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">Requested {fmt(t.createdAt)}{t.verifiedAt ? ` · DNS verified ${fmt(t.verifiedAt)}` : ""}{t.decidedAt ? ` · decided ${fmt(t.decidedAt)}` : ""}</p>
                 {t.record && (
-                  <div className="grid gap-2">
+                  <div className="grid gap-2 rounded-md bg-sunken p-3">
                     <p className="text-sm">Add this TXT record to {t.displayHost}'s DNS (valid until {fmt(t.tokenExpiresAt)}):</p>
                     <CodeBlock value={t.record.name} label="Copy name" />
                     <CodeBlock value={t.record.value} label="Copy value" />
@@ -102,24 +102,20 @@ export default function TransfersPage() {
                 {write && t.status === "PENDING_ADMIN" && <div><Button size="sm" variant="outline" onClick={() => setCancelId(t.id)}>Cancel request</Button></div>}
               </div>
             ))}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Requests against your domains</CardTitle>
-            <CardDescription>Another organization proved DNS control of one of your domains. You won't see who; contest it if you still own the domain.</CardDescription>
-          </CardHeader>
-          {incoming.isLoading ? <CardContent><Skeleton className="h-16" /></CardContent> : !incoming.data?.length ? (
-            <CardContent><p className="text-sm text-muted-foreground">None.</p></CardContent>
+          </div>
+        </Section>
+        <Section title="Requests against your domains" icon={<ShieldAlert />} flush description="Another organization proved DNS control of one of your domains. You won't see who; contest it if you still own the domain.">
+          {incoming.isLoading ? <div className="p-4"><Skeleton className="h-16" /></div> : !incoming.data?.length ? (
+            <p className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground sm:px-5"><CheckCircle2 className="h-4 w-4 text-success" aria-hidden />None.</p>
           ) : (
             <Table>
               <THead><TR><TH>Domain</TH><TH>Status</TH><TH className="hidden sm:table-cell">Respond by</TH><TH><span className="sr-only">Actions</span></TH></TR></THead>
               <TBody>
                 {incoming.data.map((t) => (
                   <TR key={t.id}>
-                    <TD>{t.websiteId ? <Link className="hover:underline" href={`/o/${orgId}/websites/${t.websiteId}`}>{t.displayHost}</Link> : t.displayHost}</TD>
+                    <TD className="font-medium">{t.websiteId ? <Link className="hover:text-primary" href={`/o/${orgId}/websites/${t.websiteId}`}>{t.displayHost}</Link> : t.displayHost}</TD>
                     <TD><Badge tone={STATUS[t.status]?.tone ?? "neutral"}>{STATUS[t.status]?.label ?? t.status}</Badge></TD>
-                    <TD className="hidden sm:table-cell">{fmt(t.ownerRespondBy)}</TD>
+                    <TD className="hidden text-muted-foreground sm:table-cell">{fmt(t.ownerRespondBy)}</TD>
                     <TD className="text-right">
                       {t.ownerResponse === "CONTESTED" ? <span className="text-xs text-muted-foreground">Contested</span>
                         : write && ["PENDING_VERIFICATION", "PENDING_ADMIN"].includes(t.status) && (
@@ -131,7 +127,7 @@ export default function TransfersPage() {
               </TBody>
             </Table>
           )}
-        </Card>
+        </Section>
       </div>
       <ConfirmDialog
         open={cancelId !== null}

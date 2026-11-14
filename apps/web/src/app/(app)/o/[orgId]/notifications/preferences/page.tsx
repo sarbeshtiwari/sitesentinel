@@ -1,5 +1,6 @@
 "use client";
-import { Button, Card, Checkbox, PageHeader, Select, toast } from "@wim/ui";
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Checkbox, FormField, PageHeader, Select, toast } from "@wim/ui";
+import { ArrowLeft, Mail, MonitorSmartphone } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -35,24 +36,29 @@ export default function PreferencesPage() {
   };
   return (
     <>
-      <div className="mb-2 text-sm"><Link href={`/o/${orgId}/notifications`} className="text-muted-foreground hover:underline">← Notifications</Link></div>
+      <div className="mb-3 text-sm"><Link href={`/o/${orgId}/notifications`} className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden />Notifications</Link></div>
       <PageHeader title="Notification preferences" description="Your own preferences for this organisation. Each notification is sent once per incident change, however often you reload." />
       <QueryState q={q}>
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-2">
           {prefs.map((p, i) => (
-            <Card key={p.channel} className="grid gap-4 p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold">{CHANNEL[p.channel]}</h2>
-                <label className="flex items-center gap-2 text-sm"><Checkbox checked={p.enabled} onChange={(e) => upd(i, { enabled: e.currentTarget.checked })} /> Enabled</label>
-              </div>
+            <Card key={p.channel}>
+              <CardHeader className="flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span aria-hidden className="flex h-8 w-8 items-center justify-center rounded-md bg-primary-soft text-primary">{p.channel === "EMAIL" ? <Mail className="h-4 w-4" /> : <MonitorSmartphone className="h-4 w-4" />}</span>
+                  <CardTitle>{CHANNEL[p.channel]}</CardTitle>
+                  {!p.enabled && <Badge>Off</Badge>}
+                </div>
+                <label className="flex items-center gap-2 text-sm font-medium"><Checkbox checked={p.enabled} onChange={(e) => upd(i, { enabled: e.currentTarget.checked })} /> Enabled</label>
+              </CardHeader>
+              <CardContent className="grid gap-5">
               {p.isDefault && <Hint>Using the default: {p.enabled ? "owners and admins get medium severity and above" : "off for your role"}. Saving makes it your own setting.</Hint>}
-              <label className="grid gap-1 text-sm">Minimum severity
-                <Select value={p.minSeverity} disabled={!p.enabled} onChange={(e) => upd(i, { minSeverity: e.target.value as NotificationPreferenceDto["minSeverity"] })}>
+              <FormField label="Minimum severity" htmlFor={`sev-${p.channel}`}>
+                <Select id={`sev-${p.channel}`} value={p.minSeverity} disabled={!p.enabled} onChange={(e) => upd(i, { minSeverity: e.target.value as NotificationPreferenceDto["minSeverity"] })}>
                   {["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"].map((s) => <option key={s} value={s}>{s[0] + s.slice(1).toLowerCase()} and above</option>)}
                 </Select>
-              </label>
-              <fieldset className="grid gap-1.5 text-sm" disabled={!p.enabled}>
-                <legend className="mb-1 font-medium">Notify me about {p.eventTypes.length ? "" : "(everything)"}</legend>
+              </FormField>
+              <fieldset className="grid gap-2 text-sm disabled:opacity-60" disabled={!p.enabled}>
+                <legend className="mb-2 text-sm font-medium">Notify me about {p.eventTypes.length ? "" : "(everything)"}</legend>
                 {EVENTS.map(([k, l]) => (
                   <label key={k} className="flex items-center gap-2"><Checkbox checked={!p.eventTypes.length || p.eventTypes.includes(k)}
                     onChange={(e) => {
@@ -62,8 +68,8 @@ export default function PreferencesPage() {
                     }} />{l}</label>
                 ))}
               </fieldset>
-              <fieldset className="grid gap-1.5 text-sm" disabled={!p.enabled}>
-                <legend className="mb-1 font-medium">Websites {p.websiteIds.length ? "" : "(all)"}</legend>
+              <fieldset className="grid gap-2 text-sm disabled:opacity-60" disabled={!p.enabled}>
+                <legend className="mb-2 text-sm font-medium">Websites {p.websiteIds.length ? "" : "(all)"}</legend>
                 {(sites.data ?? []).map((w) => (
                   <label key={w.id} className="flex items-center gap-2"><Checkbox checked={!p.websiteIds.length || p.websiteIds.includes(w.id)}
                     onChange={(e) => {
@@ -73,10 +79,11 @@ export default function PreferencesPage() {
                     }} />{w.name}</label>
                 ))}
               </fieldset>
+              </CardContent>
             </Card>
           ))}
         </div>
-        <div className="mt-6"><Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save preferences"}</Button></div>
+        <div className="mt-5 flex justify-end"><Button onClick={save} loading={busy}>{busy ? "Saving…" : "Save preferences"}</Button></div>
       </QueryState>
     </>
   );

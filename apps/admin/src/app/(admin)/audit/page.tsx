@@ -46,7 +46,7 @@ export default function AuditPage() {
   return (
     <>
       <PageHeader title="Audit log" description="Append-only, hash-chained records. Each stream is an independent chain." actions={<Button variant="outline" loading={verifying} onClick={verify}>Verify chain</Button>} />
-      <form onSubmit={apply} className="mb-4 grid gap-3 sm:grid-cols-[10rem_1fr_auto] sm:items-end">
+      <form onSubmit={apply} className="mb-4 grid gap-3 rounded-lg border border-border bg-card p-4 shadow-xs sm:grid-cols-[11rem_minmax(0,28rem)_auto] sm:items-end">
         <FormField label="Stream" htmlFor="kind">
           <Select id="kind" value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
             <option value="platform">Platform</option>
@@ -61,10 +61,14 @@ export default function AuditPage() {
       </form>
       {chain && (
         <Alert tone={chain.valid ? "success" : "danger"} className="mb-4" title={<span className="flex items-center gap-2">{chain.valid ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}{chain.valid ? `Chain intact — ${chain.checked} entries verified` : `Chain broken at seq ${chain.firstBrokenSeq}`}</span>}>
-          Stream <code>{chain.stream}</code>{chain.reason ? `: ${chain.reason}` : ""}
+          Stream <code className="font-mono text-xs">{chain.stream}</code>{chain.reason ? `: ${chain.reason}` : ""}
         </Alert>
       )}
-      <Card>
+      <Card className="overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 text-xs text-muted-foreground">
+          <span>Stream <code className="font-mono text-foreground">{stream}</code></span>
+          {rows.length > 0 && <span className="tabular-nums">{rows.length}{q.hasNextPage ? "+" : ""} entr{rows.length === 1 && !q.hasNextPage ? "y" : "ies"}</span>}
+        </div>
         <CardContent className="p-0">
           {q.isLoading ? <div className="p-5"><Skeleton className="h-40" /></div> : q.isError ? <div className="p-5"><Alert tone="danger" title={errorMessage(q.error)} /></div> : rows.length === 0 ? <div className="p-5"><EmptyState icon={<ScrollText />} title="No entries in this stream" /></div> : (
             <Table>
@@ -72,20 +76,20 @@ export default function AuditPage() {
               <TBody>
                 {rows.map((r) => (
                   <TR key={r.id}>
-                    <TD className="font-mono text-xs">{r.seq}</TD>
-                    <TD className="whitespace-nowrap text-muted-foreground">{new Date(r.occurredAt).toLocaleString()}</TD>
+                    <TD className="font-mono text-xs tabular-nums text-muted-foreground">{r.seq}</TD>
+                    <TD className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">{new Date(r.occurredAt).toLocaleString()}</TD>
                     <TD className="max-w-[12rem] truncate">{r.actorLabel ?? r.actorType}</TD>
-                    <TD className="font-mono text-xs">{r.action}</TD>
+                    <TD className="font-mono text-xs font-medium">{r.action}</TD>
                     <TD className="max-w-[14rem] truncate font-mono text-xs">{r.targetType ? `${r.targetType}:${r.targetId ?? ""}` : "—"}</TD>
                     <TD className="max-w-xs truncate text-xs" title={r.reason ?? ""}>{r.reason ?? "—"}</TD>
-                    <TD className="font-mono text-xs">{r.ipPrefix ?? "—"}</TD>
+                    <TD className="font-mono text-xs text-muted-foreground">{r.ipPrefix ?? "—"}</TD>
                   </TR>
                 ))}
               </TBody>
             </Table>
           )}
         </CardContent>
-        {q.hasNextPage && <CardFooter><Button variant="outline" loading={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Load more</Button></CardFooter>}
+        {q.hasNextPage && <CardFooter className="justify-center"><Button variant="outline" size="sm" loading={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Load more</Button></CardFooter>}
       </Card>
     </>
   );

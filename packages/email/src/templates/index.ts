@@ -16,7 +16,7 @@ export function esc(s: string): string {
 }
 
 function layout(b: Branding, title: string, paragraphs: string[], cta?: { label: string; url: string }): string {
-  const color = /^#[0-9a-fA-F]{6}$/.test(b.primaryColor) ? b.primaryColor : "#2563eb";
+  const color = /^#[0-9a-fA-F]{6}$/.test(b.primaryColor) ? b.primaryColor : "#4f46e5";
   const logo = b.logoUrl && /^https:\/\//.test(b.logoUrl)
     ? `<img src="${esc(b.logoUrl)}" alt="${esc(b.productName)}" height="28" style="height:28px">`
     : `<strong style="font-size:16px">${esc(b.productName)}</strong>`;

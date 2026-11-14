@@ -6,7 +6,7 @@ export default function Page() {
   return (
     <>
       <PageHeader title="API monitoring" description="Scheduled checks of your API endpoints with assertions." />
-      <EmptyState icon={<Webhook />} title="Available in a later phase" description="This section isn't released yet. It will show real monitoring data only — nothing here is simulated." />
+      <EmptyState icon={<Webhook />} title="Not released yet" description="API monitoring is planned for a later release. When it ships, it will show real monitoring data only — nothing here is simulated." />
     </>
   );
 }

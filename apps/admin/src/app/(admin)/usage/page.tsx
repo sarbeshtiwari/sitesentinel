@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, FormField, Input, PageHeader, Skeleton, Table, TBody, TD, Textarea, TH, THead, TR, toast } from "@wim/ui";
+import { Alert, Badge, Button, Card, CardDescription, CardHeader, CardTitle, ConfirmDialog, FilterBar, FormField, Input, PageHeader, Skeleton, Table, TBody, TD, Textarea, TH, THead, TR, toast } from "@wim/ui";
 import type { DataEnvelope } from "@wim/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -43,56 +43,56 @@ export default function UsagePage() {
   return (
     <>
       <PageHeader title="Usage accounting" description="Recorded usage, billable quantities and reconciliation against the execution ledger. Counts only — no customer content." />
-      <div className="mb-4 flex flex-wrap items-end gap-2">
+      <FilterBar trailing={<span className="text-xs tabular-nums text-muted-foreground">{range.from} → {range.to} (UTC)</span>}>
         <FormField label="From" htmlFor="from"><Input id="from" type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} /></FormField>
         <FormField label="To" htmlFor="to"><Input id="to" type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} /></FormField>
-      </div>
+      </FilterBar>
       {u.isLoading ? <Skeleton className="h-64" /> : u.isError ? <Alert tone="danger" title={errorMessage(u.error)} /> : u.data && (
         <div className="grid gap-6">
           <Alert title="Accounting rules">{u.data.policy}</Alert>
           <Card className="overflow-hidden">
-            <CardHeader><CardTitle>Billable usage by organisation (top 100)</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Billable usage by organisation (top 100)</CardTitle><CardDescription>Billable counts per organisation for the selected range</CardDescription></CardHeader>
             <Table>
-              <THead><TR><TH>Organisation</TH>{COLS.map((c) => <TH key={c} className="text-right">{c}</TH>)}</TR></THead>
+              <THead><TR><TH>Organisation</TH>{COLS.map((c) => <TH key={c} className="text-right font-mono normal-case tracking-normal">{c}</TH>)}</TR></THead>
               <TBody>{u.data.organisations.length ? u.data.organisations.map((o) => (
-                <TR key={o.orgId}><TD className="text-sm">{o.name ?? o.orgId.slice(0, 8)}</TD>{COLS.map((c) => <TD key={c} className="text-right tabular-nums text-xs">{v(o.billable[c])}</TD>)}</TR>
-              )) : <TR><TD colSpan={COLS.length + 1} className="text-sm text-muted-foreground">No usage in this range.</TD></TR>}</TBody>
+                <TR key={o.orgId}><TD className={o.name ? "font-medium" : "font-mono text-xs"}>{o.name ?? o.orgId.slice(0, 8)}</TD>{COLS.map((c) => <TD key={c} className="text-right tabular-nums text-xs">{v(o.billable[c])}</TD>)}</TR>
+              )) : <TR><TD colSpan={COLS.length + 1} className="py-8 text-center text-sm text-muted-foreground">No usage in this range.</TD></TR>}</TBody>
             </Table>
           </Card>
           <Card className="overflow-hidden">
-            <CardHeader><CardTitle>All recorded counters</CardTitle></CardHeader>
+            <CardHeader><CardTitle>All recorded counters</CardTitle><CardDescription>Totals for the selected range, by counter kind</CardDescription></CardHeader>
             <Table>
               <THead><TR><TH>Counter</TH><TH>Kind</TH><TH className="text-right">Total</TH></TR></THead>
-              <TBody>{u.data.totals.map((x) => <TR key={x.key}><TD className="text-xs"><span className="font-mono">{x.key}</span> <span className="text-muted-foreground">{x.label}</span></TD><TD><Badge tone={x.kind === "work" ? "brand" : x.kind === "overhead" ? "warning" : "neutral"}>{x.kind}</Badge></TD><TD className="text-right tabular-nums text-xs">{v(x.value)}</TD></TR>)}</TBody>
+              <TBody>{u.data.totals.map((x) => <TR key={x.key}><TD className="text-xs"><span className="font-mono font-medium">{x.key}</span> <span className="text-muted-foreground">{x.label}</span></TD><TD><Badge tone={x.kind === "work" ? "brand" : x.kind === "overhead" ? "warning" : "neutral"}>{x.kind}</Badge></TD><TD className="text-right tabular-nums text-xs">{v(x.value)}</TD></TR>)}</TBody>
             </Table>
           </Card>
         </div>
       )}
-      <Card className="mt-6">
-        <CardHeader className="flex flex-row items-center justify-between gap-2"><CardTitle>Reconciliation</CardTitle>
+      <Card className="mt-6 overflow-hidden">
+        <CardHeader className="flex flex-row items-center justify-between gap-2"><div className="grid gap-1"><CardTitle>Reconciliation</CardTitle><CardDescription>Daily comparison of recorded usage with the execution ledger</CardDescription></div>
           <Button size="sm" variant="outline" onClick={() => setDlg({ kind: "reconcile" })}>Reconcile a day…</Button></CardHeader>
-        <CardContent>
+        <div>
           <Table>
             <THead><TR><TH>Day</TH><TH>Status</TH><TH className="text-right">Discrepancies</TH><TH>Finished</TH></TR></THead>
             <TBody>{(runs.data ?? []).map((r) => (
-              <TR key={r.id}><TD><button type="button" className="hover:underline" onClick={() => setSel(r.id)}>{r.day}</button></TD><TD><Badge tone={r.status === "DONE" ? (r.discrepancies ? "warning" : "success") : r.status === "FAILED" ? "danger" : "neutral"}>{r.status.toLowerCase()}</Badge>{r.error && <div className="text-xs text-danger">{r.error}</div>}</TD>
-                <TD className="text-right tabular-nums">{r.discrepancies}</TD><TD className="text-xs">{r.finishedAt?.slice(0, 19).replace("T", " ") ?? "—"}{r.stats?.ms != null ? ` · ${r.stats.ms} ms, ${r.stats.orgs} orgs` : ""}</TD></TR>
-            ))}</TBody>
+              <TR key={r.id} className={sel === r.id ? "bg-sunken/70" : undefined}><TD><button type="button" className="font-medium tabular-nums text-primary underline-offset-2 hover:underline" onClick={() => setSel(r.id)}>{r.day}</button></TD><TD><Badge tone={r.status === "DONE" ? (r.discrepancies ? "warning" : "success") : r.status === "FAILED" ? "danger" : "neutral"}>{r.status.toLowerCase()}</Badge>{r.error && <div className="text-xs text-danger">{r.error}</div>}</TD>
+                <TD className="text-right tabular-nums">{r.discrepancies}</TD><TD className="text-xs tabular-nums text-muted-foreground">{r.finishedAt?.slice(0, 19).replace("T", " ") ?? "—"}{r.stats?.ms != null ? ` · ${r.stats.ms} ms, ${r.stats.orgs} orgs` : ""}</TD></TR>
+            ))}{runs.data && !runs.data.length && <TR><TD colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No reconciliation runs yet.</TD></TR>}</TBody>
           </Table>
           {sel && run.data && (
-            <div className="mt-4">
-              <p className="mb-2 text-sm font-medium">Discrepancies for {run.data.day} — nothing is corrected automatically</p>
+            <div className="border-t border-border">
+              <p className="bg-sunken/50 px-4 py-2.5 text-sm font-medium">Discrepancies for <span className="tabular-nums">{run.data.day}</span> <span className="font-normal text-muted-foreground">— nothing is corrected automatically</span></p>
               <Table>
-                <THead><TR><TH>Organisation</TH><TH>Check</TH><TH className="text-right">Recorded</TH><TH className="text-right">Expected</TH><TH>Status</TH><TH /></TR></THead>
+                <THead><TR><TH>Organisation</TH><TH>Check</TH><TH className="text-right">Recorded</TH><TH className="text-right">Expected</TH><TH>Status</TH><TH className="relative"><span className="sr-only">Actions</span></TH></TR></THead>
                 <TBody>{run.data.discrepancies.length ? run.data.discrepancies.map((x) => (
-                  <TR key={x.id}><TD className="text-xs">{x.orgName ?? x.orgId.slice(0, 8)}</TD><TD className="font-mono text-xs">{x.check}</TD><TD className="text-right tabular-nums text-xs">{v(x.recorded)}</TD><TD className="text-right tabular-nums text-xs">{v(x.expected)}</TD>
-                    <TD className="text-xs">{x.status.toLowerCase()}{x.resolution ? ` — ${x.resolution}` : ""}</TD>
-                    <TD>{x.status === "OPEN" && me.can("admin:usage:adjust") && <div className="flex gap-1">{x.key && <Button size="sm" variant="outline" onClick={() => setDlg({ kind: "adjust", d: x, day: run.data!.day })}>Adjust</Button>}<Button size="sm" variant="ghost" onClick={() => setDlg({ kind: "accept", d: x })}>Accept</Button></div>}</TD></TR>
-                )) : <TR><TD colSpan={6} className="text-sm text-muted-foreground">Usage matches the ledger for this day.</TD></TR>}</TBody>
+                  <TR key={x.id}><TD className={x.orgName ? "text-xs" : "font-mono text-xs"}>{x.orgName ?? x.orgId.slice(0, 8)}</TD><TD className="font-mono text-xs">{x.check}</TD><TD className="text-right tabular-nums text-xs">{v(x.recorded)}</TD><TD className="text-right tabular-nums text-xs">{v(x.expected)}</TD>
+                    <TD className="text-xs"><Badge tone={x.status === "OPEN" ? "warning" : "neutral"}>{x.status.toLowerCase()}</Badge>{x.resolution ? <span className="text-muted-foreground"> — {x.resolution}</span> : ""}</TD>
+                    <TD className="text-right">{x.status === "OPEN" && me.can("admin:usage:adjust") && <div className="flex justify-end gap-1">{x.key && <Button size="sm" variant="outline" onClick={() => setDlg({ kind: "adjust", d: x, day: run.data!.day })}>Adjust</Button>}<Button size="sm" variant="ghost" onClick={() => setDlg({ kind: "accept", d: x })}>Accept</Button></div>}</TD></TR>
+                )) : <TR><TD colSpan={6} className="py-6 text-center text-sm text-muted-foreground">Usage matches the ledger for this day.</TD></TR>}</TBody>
               </Table>
             </div>
           )}
-        </CardContent>
+        </div>
       </Card>
       <ConfirmDialog open={Boolean(dlg)} onOpenChange={(o) => !o && setDlg(null)} loading={busy} confirmDisabled={reason.trim().length < minReason} onConfirm={act}
         title={dlg?.kind === "reconcile" ? "Reconcile a day" : dlg?.kind === "adjust" ? "Adjust usage counter" : "Accept discrepancy"}

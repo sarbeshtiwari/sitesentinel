@@ -173,7 +173,7 @@ test("admin: website statistics are aggregate-only", async ({ page }) => {
   }
   await page.getByRole("link", { name: "Websites & domains" }).click();
   await expect(page.getByText("Aggregate counts only")).toBeVisible();
-  const websites = page.locator("div", { has: page.getByText("Websites", { exact: true }) }).locator("p.text-2xl").first();
+  const websites = page.locator('[data-metric="Websites"] [data-metric-value]').first();
   await expect(websites).not.toHaveText("0");
   await expect(page.locator("body")).not.toContainText(domain);
   await page.getByRole("link", { name: "Domain transfers" }).click();

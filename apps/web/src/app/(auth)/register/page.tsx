@@ -41,7 +41,7 @@ function RegisterForm() {
     return (
       <AuthCard title="Check your email" footer={<Link className="text-primary hover:underline" href={loginHref}>Back to sign in</Link>}>
         <div className="grid gap-3 text-sm">
-          <MailCheck className="h-8 w-8 text-primary" aria-hidden />
+          <span aria-hidden className="flex h-11 w-11 items-center justify-center rounded-full bg-primary-soft text-primary"><MailCheck className="h-5 w-5" /></span>
           <p>If <strong>{sentTo}</strong> can be used for a new account, we've sent a verification link to it. The link expires in 24 hours.</p>
           <p className="text-muted-foreground">Already have an account with this address? We've emailed you instead.</p>
         </div>
@@ -69,7 +69,7 @@ function RegisterForm() {
           <Input id="password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} aria-describedby="password-hint" {...form.register("password")} />
         </FormField>
         <div className="grid gap-1">
-          <label className="flex items-start gap-2 text-sm">
+          <label className="flex items-start gap-2 text-sm text-muted-foreground">
             <Checkbox className="mt-0.5" {...form.register("acceptTerms")} />
             <span>
               I agree to the {config.termsUrl ? <a href={config.termsUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">terms of service</a> : "terms of service"}
@@ -78,7 +78,7 @@ function RegisterForm() {
           </label>
           {errors.acceptTerms && <p role="alert" className="text-xs text-danger">Please accept the terms to continue</p>}
         </div>
-        <Button type="submit" loading={isSubmitting} disabled={isLoading} className="w-full">Create account</Button>
+        <Button type="submit" size="lg" loading={isSubmitting} disabled={isLoading} className="mt-1 w-full">Create account</Button>
       </form>
     </AuthCard>
   );

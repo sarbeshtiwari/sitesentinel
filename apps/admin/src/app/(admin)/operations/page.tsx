@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, Checkbox, ConfirmDialog, FormField, Input, PageHeader, Skeleton, Table, TBody, TD, Textarea, TH, THead, TR, toast } from "@wim/ui";
+import { Alert, Badge, Button, Card, CardDescription, CardHeader, CardTitle, Checkbox, ConfirmDialog, FormField, Input, PageHeader, Skeleton, Table, TBody, TD, Textarea, TH, THead, TR, toast } from "@wim/ui";
 import type { DataEnvelope } from "@wim/contracts";
 import { isSettingKey, SETTINGS } from "@wim/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -61,28 +61,27 @@ export default function OperationsConfigPage() {
           <Alert title="Scope">{d.notes.join(" ")} <Link className="underline" href="/settings">All settings</Link></Alert>
           {d.sections.filter((s) => s.settings.length).map((sec) => (
             <Card key={sec.section} className="overflow-hidden">
-              <CardHeader><CardTitle>{TITLE[sec.section] ?? sec.section}</CardTitle></CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 py-3"><CardTitle>{TITLE[sec.section] ?? sec.section}</CardTitle><span className="text-xs tabular-nums text-muted-foreground">{sec.settings.length} setting{sec.settings.length === 1 ? "" : "s"}{sec.settings.some((x) => !x.isDefault) ? ` · ${sec.settings.filter((x) => !x.isDefault).length} changed` : ""}</span></CardHeader>
               <Table>
-                <THead><TR><TH>Setting</TH><TH>Value</TH><TH>Default</TH><TH /></TR></THead>
+                <THead><TR><TH>Setting</TH><TH>Value</TH><TH>Default</TH><TH className="relative"><span className="sr-only">Actions</span></TH></TR></THead>
                 <TBody>{sec.settings.map((s) => (
                   <TR key={s.key}>
-                    <TD className="max-w-96"><div className="flex flex-wrap items-center gap-1"><span className="font-mono text-xs">{s.key}</span>{s.protected && <Badge tone="danger" className="text-[10px]">protected</Badge>}{s.apply === "restart" && <Badge tone="warning" className="text-[10px]">restart required</Badge>}<Badge className="text-[10px]">{s.scope}</Badge></div><div className="text-xs text-muted-foreground">{s.description}</div></TD>
-                    <TD className="max-w-72 break-all font-mono text-xs">{show(s.value)}{!s.isDefault && <div className="font-sans text-muted-foreground">v{s.version} · {s.updatedAt?.slice(0, 16).replace("T", " ")}</div>}</TD>
+                    <TD className="max-w-96"><div className="flex flex-wrap items-center gap-1"><span className="font-mono text-xs font-medium">{s.key}</span>{s.protected && <Badge tone="danger" className="text-[10px]">protected</Badge>}{s.apply === "restart" && <Badge tone="warning" className="text-[10px]">restart required</Badge>}<Badge className="text-[10px]">{s.scope}</Badge></div><div className="mt-0.5 text-xs text-muted-foreground">{s.description}</div></TD>
+                    <TD className="max-w-72 break-all font-mono text-xs"><span className={s.isDefault ? undefined : "font-semibold text-foreground"}>{show(s.value)}</span>{!s.isDefault && <div className="font-sans tabular-nums text-muted-foreground">v{s.version} · {s.updatedAt?.slice(0, 16).replace("T", " ")}</div>}</TD>
                     <TD className="max-w-48 break-all font-mono text-xs text-muted-foreground">{show(s.defaultValue)}</TD>
-                    <TD>{canWrite && (!s.protected || canProtected) && <Button size="sm" variant="outline" onClick={() => { setReason(""); setEdit({ s, raw: show(s.value) }); }}>Change</Button>}</TD>
+                    <TD className="text-right">{canWrite && (!s.protected || canProtected) && <Button size="sm" variant="outline" onClick={() => { setReason(""); setEdit({ s, raw: show(s.value) }); }}>Change</Button>}</TD>
                   </TR>
                 ))}</TBody>
               </Table>
             </Card>
           ))}
           <Card className="overflow-hidden">
-            <CardHeader><CardTitle>History retention (partitioned tables)</CardTitle></CardHeader>
-            <CardContent className="pb-0 text-xs text-muted-foreground">Older partitions are dropped by the hourly maintenance job. Minimums protect audit, security and reconciliation needs.</CardContent>
+            <CardHeader className="py-3"><CardTitle>History retention (partitioned tables)</CardTitle><CardDescription className="text-xs">Older partitions are dropped by the hourly maintenance job. Minimums protect audit, security and reconciliation needs.</CardDescription></CardHeader>
             <Table>
-              <THead><TR><TH>Table</TH><TH className="text-right">Kept (days)</TH><TH className="text-right">Minimum</TH><TH /></TR></THead>
+              <THead><TR><TH>Table</TH><TH className="text-right">Kept (days)</TH><TH className="text-right">Minimum</TH><TH className="relative"><span className="sr-only">Actions</span></TH></TR></THead>
               <TBody>{d.retention.map((r) => (
-                <TR key={r.table}><TD className="font-mono text-xs">{r.table}</TD><TD className="text-right tabular-nums">{r.retainDays}</TD><TD className="text-right tabular-nums text-muted-foreground">{r.minimumDays}</TD>
-                  <TD>{canWrite && <Button size="sm" variant="outline" onClick={() => { setReason(""); setRet({ table: r.table, days: String(r.retainDays), min: r.minimumDays }); }}>Change</Button>}</TD></TR>
+                <TR key={r.table}><TD className="font-mono text-xs font-medium">{r.table}</TD><TD className="text-right tabular-nums">{r.retainDays}</TD><TD className="text-right tabular-nums text-muted-foreground">{r.minimumDays}</TD>
+                  <TD className="text-right">{canWrite && <Button size="sm" variant="outline" onClick={() => { setReason(""); setRet({ table: r.table, days: String(r.retainDays), min: r.minimumDays }); }}>Change</Button>}</TD></TR>
               ))}</TBody>
             </Table>
           </Card>

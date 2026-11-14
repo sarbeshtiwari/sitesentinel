@@ -1,7 +1,8 @@
 "use client";
-import { Alert, Badge, Button, Card, ConfirmDialog, FormField, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR, Textarea, toast } from "@wim/ui";
+import { Alert, Badge, Button, Card, ConfirmDialog, EmptyState, FormField, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR, Textarea, toast } from "@wim/ui";
 import type { DataEnvelope } from "@wim/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeftRight } from "lucide-react";
 import { useState } from "react";
 import { errorMessage, get, post } from "@/lib/api";
 import { qk, useAdminMe } from "@/lib/hooks";
@@ -43,20 +44,24 @@ export default function TransfersPage() {
     <>
       <PageHeader title="Domain transfers" description="Requests where another organization proved DNS control of a registered domain. Approving moves the domain registration only — no customer data moves." />
       {q.isLoading ? <Skeleton className="h-40" /> : q.isError ? <Alert tone="danger" title={errorMessage(q.error)} /> : !q.data?.length ? (
-        <Alert title="No transfer requests" />
+        <EmptyState icon={<ArrowLeftRight />} title="No transfer requests" description="Requests appear here when another organization proves DNS control of a registered domain." />
       ) : (
-        <Card className="overflow-x-auto">
+        <Card className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 text-xs text-muted-foreground">
+            <span className="tabular-nums">{q.data.length} request{q.data.length === 1 ? "" : "s"}</span>
+            {q.data.some((r) => r.status === "PENDING_ADMIN") && <Badge tone="brand" className="tabular-nums">{q.data.filter((r) => r.status === "PENDING_ADMIN").length} awaiting review</Badge>}
+          </div>
           <Table>
-            <THead><TR><TH>Domain</TH><TH>Status</TH><TH>Current owner</TH><TH>Requester</TH><TH className="hidden lg:table-cell">Owner response</TH><TH className="hidden lg:table-cell">Requested</TH><TH><span className="sr-only">Actions</span></TH></TR></THead>
+            <THead><TR><TH>Domain</TH><TH>Status</TH><TH>Current owner</TH><TH>Requester</TH><TH className="hidden lg:table-cell">Owner response</TH><TH className="hidden lg:table-cell">Requested</TH><TH className="relative"><span className="sr-only">Actions</span></TH></TR></THead>
             <TBody>
               {q.data.map((r) => (
                 <TR key={r.id}>
-                  <TD><div className="font-medium">{r.displayHost}</div><div className="text-xs text-muted-foreground">DNS verified {fmt(r.verifiedAt)}</div></TD>
+                  <TD><div className="font-mono text-[13px] font-medium">{r.displayHost}</div><div className="text-xs tabular-nums text-muted-foreground">DNS verified {fmt(r.verifiedAt)}</div></TD>
                   <TD><Badge tone={TONE[r.status] ?? "neutral"}>{r.status.replace(/_/g, " ").toLowerCase()}</Badge>{r.decisionReason && <div className="mt-1 max-w-48 text-xs text-muted-foreground">{r.decisionReason}</div>}</TD>
                   <TD>{r.fromOrg?.name ?? "—"}<div className="text-xs text-muted-foreground">claim {r.currentClaimStatus?.toLowerCase() ?? "—"}</div></TD>
                   <TD>{r.toOrg?.name ?? "—"}</TD>
-                  <TD className="hidden lg:table-cell">{r.ownerResponse === "CONTESTED" ? <Badge tone="danger">Contested</Badge> : r.ownerResponse ? r.ownerResponse.toLowerCase() : "—"}<div className="text-xs text-muted-foreground">by {fmt(r.ownerRespondBy)}</div></TD>
-                  <TD className="hidden whitespace-nowrap lg:table-cell">{fmt(r.createdAt)}</TD>
+                  <TD className="hidden lg:table-cell">{r.ownerResponse === "CONTESTED" ? <Badge tone="danger">Contested</Badge> : r.ownerResponse ? r.ownerResponse.toLowerCase() : "—"}<div className="text-xs tabular-nums text-muted-foreground">by {fmt(r.ownerRespondBy)}</div></TD>
+                  <TD className="hidden whitespace-nowrap text-xs tabular-nums text-muted-foreground lg:table-cell">{fmt(r.createdAt)}</TD>
                   <TD className="text-right">
                     {canDecide && r.status === "PENDING_ADMIN" && (
                       <div className="flex justify-end gap-2">

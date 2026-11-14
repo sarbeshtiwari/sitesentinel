@@ -1,6 +1,7 @@
 "use client";
-import { Badge, Button, Card, ConfirmDialog, Input, StatCard, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
+import { Badge, Button, ConfirmDialog, EmptyState, Input, MetricCard, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarClock, CheckCircle2, FileSearch, History, ListTree, Loader2, Pause, Play, ScanSearch, ShieldAlert, Square, Timer, Unlink } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import type { DataEnvelope } from "@wim/contracts";
@@ -57,58 +58,62 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
   const pagePath = `/o/${orgId}/websites/${websiteId}/deep-scan`;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-5">
       <QueryState q={sum}>
         {s && !s.entitled ? (
-          <Section title="Deep scans"><p className="text-sm">Deep scans are unavailable: {entitledReason ?? "not included in your plan"}.</p>
-            <Hint>A deep scan crawls your verified website (only its own pages, respecting robots.txt) and reports broken pages and resources, SEO, structure and automated accessibility issues.</Hint></Section>
+          <Section title="Deep scans" icon={<ScanSearch />}>
+            <EmptyState icon={<ScanSearch />} title={`Deep scans are unavailable: ${entitledReason ?? "not included in your plan"}.`}
+              description="A deep scan crawls your verified website (only its own pages, respecting robots.txt) and reports broken pages and resources, SEO, structure and automated accessibility issues." />
+          </Section>
         ) : s && (
           <>
-            <Section title="Deep scans" description={s.enabled ? (s.nextRunAt ? `Next scheduled scan ${fmtUtc(s.nextRunAt)}` : "Scheduled") : s.pausedReason === "DISABLED_BY_CUSTOMER" ? "Paused by your organisation" : "Not scheduled yet"}
+            <Section title="Deep scans" icon={<ScanSearch />} description={s.enabled ? (s.nextRunAt ? `Next scheduled scan ${fmtUtc(s.nextRunAt)}` : "Scheduled") : s.pausedReason === "DISABLED_BY_CUSTOMER" ? "Paused by your organisation" : "Not scheduled yet"}
               actions={canWrite && (
                 <div className="flex flex-wrap gap-2">
-                  {!running && s.enabled && <Button size="sm" onClick={() => act(() => post(`${base}/start`), "Scan requested")}>Start scan</Button>}
-                  {running && <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")}>Cancel scan</Button>}
+                  {!running && s.enabled && <Button size="sm" onClick={() => act(() => post(`${base}/start`), "Scan requested")}><Play /> Start scan</Button>}
+                  {running && <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")}><Square /> Cancel scan</Button>}
                   <Button size="sm" variant="outline" onClick={() => act(() => post(`${base}/pause`, { paused: s.pausedReason !== "DISABLED_BY_CUSTOMER" }), s.pausedReason === "DISABLED_BY_CUSTOMER" ? "Deep scans resumed" : "Deep scans paused")}>
-                    {s.pausedReason === "DISABLED_BY_CUSTOMER" ? "Resume" : "Pause"}
+                    {s.pausedReason === "DISABLED_BY_CUSTOMER" ? <><Play /> Resume</> : <><Pause /> Pause</>}
                   </Button>
                 </div>
               )}>
-              {!latest ? <p className="text-sm text-muted-foreground">No scan has run yet.</p> : (
+              {!latest ? <EmptyState icon={<ScanSearch />} title="No scan has run yet." description={canWrite && s.enabled ? "Start a scan now, or wait for the next scheduled one." : undefined} /> : (
                 <div className="grid gap-4">
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    Latest: <Link className="font-medium hover:underline" href={`${pagePath}/scans/${latest.executionId}`}>{fmtUtc(latest.startedAt)}</Link>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-sunken/50 px-3.5 py-2.5 text-sm">
+                    {running ? <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden /> : <CalendarClock className="h-4 w-4 text-muted-foreground" aria-hidden />}
+                    <span><span className="text-muted-foreground">Latest:</span> <Link className="font-medium hover:text-primary" href={`${pagePath}/scans/${latest.executionId}`}>{fmtUtc(latest.startedAt)}</Link></span>
                     <ScanStatusBadge s={latest} /><span className="text-xs text-muted-foreground">{running ? "in progress…" : stopLabel(latest.stopReason)}</span>
                   </div>
                   {latest.status !== "COMPLETED" && !running && <Hint>A {latest.status.toLowerCase()} scan did not check everything: it never marks findings as fixed or pages as removed.</Hint>}
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <StatCard label="Pages discovered" value={latest.coverage.pagesDiscovered} hint={`${latest.coverage.pagesChecked} checked · ${latest.coverage.pagesSkippedByPolicy} skipped by policy · ${latest.coverage.pagesNotCrawledLimits} over limits`} />
-                    <StatCard label="Broken pages" value={count("broken_pages")} hint={`${count("broken_resources")} broken resources`} />
-                    <StatCard label="SEO / structure" value={count("seo") + count("structure") + count("sitemap")} hint={`${count("accessibility")} accessibility (automated)`} />
-                    <StatCard label="Duration" value={latest.finishedAt ? fmtDuration(Math.round((new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) / 1000)) : "—"} hint={`${latest.requests} requests · ${latest.coverage.resourcesChecked} resources`} />
+                    <MetricCard label="Pages discovered" icon={<FileSearch />} tone="brand" value={latest.coverage.pagesDiscovered} hint={`${latest.coverage.pagesChecked} checked · ${latest.coverage.pagesSkippedByPolicy} skipped by policy · ${latest.coverage.pagesNotCrawledLimits} over limits`} />
+                    <MetricCard label="Broken pages" icon={<Unlink />} tone={count("broken_pages") ? "danger" : "neutral"} value={count("broken_pages")} hint={`${count("broken_resources")} broken resources`} />
+                    <MetricCard label="SEO / structure" icon={<ListTree />} tone={count("seo") + count("structure") + count("sitemap") ? "warning" : "neutral"} value={count("seo") + count("structure") + count("sitemap")} hint={`${count("accessibility")} accessibility (automated)`} />
+                    <MetricCard label="Duration" icon={<Timer />} tone="info" value={latest.finishedAt ? fmtDuration(Math.round((new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) / 1000)) : "—"} hint={`${latest.requests} requests · ${latest.coverage.resourcesChecked} resources`} />
                   </div>
-                  {completed && <p className="text-xs text-muted-foreground">Last completed scan: <Link className="hover:underline" href={`${pagePath}/scans/${completed.executionId}`}>{fmtUtc(completed.startedAt)}</Link>. Limits: up to {s.effectiveLimits.maxPages} pages, depth {s.effectiveLimits.maxDepth}{s.effectiveLimits.browserPages ? ", browser-assisted discovery" : ""}{s.effectiveLimits.externalLinks ? ", external links" : ""}. <Link className="hover:underline" href={`/o/${orgId}/usage`}>Usage against quota</Link></p>}
+                  {completed && <Hint>Last completed scan: <Link className="text-foreground hover:text-primary" href={`${pagePath}/scans/${completed.executionId}`}>{fmtUtc(completed.startedAt)}</Link>. Limits: up to {s.effectiveLimits.maxPages} pages, depth {s.effectiveLimits.maxDepth}{s.effectiveLimits.browserPages ? ", browser-assisted discovery" : ""}{s.effectiveLimits.externalLinks ? ", external links" : ""}. <Link className="text-primary hover:underline" href={`/o/${orgId}/usage`}>Usage against quota</Link></Hint>}
                 </div>
               )}
             </Section>
-            <Section title="Findings" actions={
-              <div className="flex flex-wrap gap-2">
+            <Section title="Findings" icon={<ShieldAlert />} flush>
+              <div className="border-b border-border px-4 py-3 sm:px-5">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-end [&_select]:min-w-0 sm:[&_select]:min-w-36">
                 <FilterSelect label="Status" value={f.status} onChange={(v) => setF({ ...f, status: v })} options={[["OPEN", "Open"], ["RESOLVED", "Resolved"], ["ALL", "All"]]} />
                 <FilterSelect label="Category" value={f.group} onChange={(v) => setF({ ...f, group: v })} options={[["", "All"], ...Object.entries(GROUP_LABEL)]} />
                 <FilterSelect label="Severity" value={f.severity} onChange={(v) => setF({ ...f, severity: v })} options={[["", "All"], ["CRITICAL", "Critical"], ["HIGH", "High"], ["MEDIUM", "Medium"], ["LOW", "Low"], ["INFO", "Info"]]} />
-                <label className="grid gap-1 text-xs font-medium text-muted-foreground">URL contains<Input className="h-9 w-44" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="/blog" /></label>
+                <label className="grid gap-1 text-xs font-medium text-muted-foreground">URL contains<Input className="h-9 sm:w-44" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="/blog" /></label>
               </div>
-            }>
-              <QueryState q={findings}>
-                {!findings.data?.length ? <p className="text-sm text-muted-foreground">No findings match.</p> : (
+              </div>
+              <QueryState q={findings} skeleton="h-40 m-4">
+                {!findings.data?.length ? <p className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground sm:px-5"><CheckCircle2 className="h-4 w-4 text-success" aria-hidden />No findings match.</p> : (
                   <Table>
                     <THead><TR><TH>Finding</TH><TH>Severity</TH><TH className="hidden md:table-cell">Where</TH><TH className="hidden lg:table-cell">Seen</TH><TH>Status</TH></TR></THead>
                     <TBody>
                       {findings.data.map((x) => (
                         <TR key={x.id}>
-                          <TD><Link className="font-medium hover:underline" href={`${pagePath}/findings/${x.id}`}>{x.title}</Link><div className="text-xs text-muted-foreground">{GROUP_LABEL[x.group] ?? x.group}</div></TD>
+                          <TD className="max-w-96"><Link className="font-medium hover:text-primary" href={`${pagePath}/findings/${x.id}`}>{x.title}</Link><div className="text-xs text-muted-foreground">{GROUP_LABEL[x.group] ?? x.group}</div></TD>
                           <TD><Badge tone={SEVERITY_TONE[x.severity]}>{x.severity}</Badge></TD>
-                          <TD className="hidden max-w-72 truncate text-xs md:table-cell">{x.subject}</TD>
+                          <TD className="hidden max-w-72 truncate font-mono text-xs md:table-cell">{x.subject}</TD>
                           <TD className="hidden text-xs text-muted-foreground lg:table-cell">{x.occurrenceCount}× · last {fmtUtc(x.lastDetectedAt)}</TD>
                           <TD><Badge tone={x.status === "OPEN" ? "warning" : "success"}>{x.status === "OPEN" ? "Open" : "Resolved"}</Badge></TD>
                         </TR>
@@ -118,25 +123,25 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
                 )}
               </QueryState>
             </Section>
-            <Section title="Scan history">
-              <QueryState q={scans}>
-                {!scans.data?.length ? <p className="text-sm text-muted-foreground">No scans yet.</p> : (
-                  <Card className="overflow-hidden">
+            <Section title="Scan history" icon={<History />} flush>
+              <QueryState q={scans} skeleton="h-32 m-4">
+                {!scans.data?.length ? <p className="px-4 py-6 text-sm text-muted-foreground sm:px-5">No scans yet.</p> : (
+                  <>
                     <Table>
                       <THead><TR><TH>Started (UTC)</TH><TH>Status</TH><TH className="hidden md:table-cell">Pages checked</TH><TH className="hidden md:table-cell">Findings</TH><TH className="hidden lg:table-cell">Trigger</TH></TR></THead>
                       <TBody>
                         {scans.data.map((x) => (
                           <TR key={x.executionId}>
-                            <TD className="text-xs"><Link className="hover:underline" href={`${pagePath}/scans/${x.executionId}`}>{fmtUtc(x.startedAt)}</Link></TD>
+                            <TD className="whitespace-nowrap text-xs"><Link className="font-medium hover:text-primary" href={`${pagePath}/scans/${x.executionId}`}>{fmtUtc(x.startedAt)}</Link></TD>
                             <TD><ScanStatusBadge s={x} /></TD>
                             <TD className="hidden tabular-nums md:table-cell">{x.coverage.pagesChecked} / {x.coverage.pagesDiscovered}</TD>
-                            <TD className="hidden text-xs md:table-cell">+{x.findingsOpened} · −{x.findingsResolved}</TD>
+                            <TD className="hidden text-xs tabular-nums md:table-cell"><span className="text-danger">+{x.findingsOpened}</span> <span className="text-muted-foreground">·</span> <span className="text-success">−{x.findingsResolved}</span></TD>
                             <TD className="hidden text-xs lg:table-cell">{x.trigger === "MANUAL" ? "Manual" : "Scheduled"}</TD>
                           </TR>
                         ))}
                       </TBody>
                     </Table>
-                  </Card>
+                  </>
                 )}
               </QueryState>
             </Section>

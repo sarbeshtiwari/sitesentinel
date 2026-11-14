@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Badge, Button, Card, Select, Skeleton } from "@wim/ui";
+import { Alert, Badge, Button, Card, cn, ErrorState, Select, Skeleton } from "@wim/ui";
 import { Info } from "lucide-react";
 import { useState } from "react";
 import { errorMessage, ApiError } from "@/lib/api";
@@ -12,18 +12,18 @@ export function HealthBadge({ state, className }: { state: string | null | undef
 }
 
 export function Dot({ tone }: { tone: Tone }) {
-  const c = tone === "success" ? "bg-success" : tone === "danger" ? "bg-danger" : tone === "warning" ? "bg-warning" : tone === "brand" ? "bg-primary" : "bg-muted-foreground/50";
+  const c = tone === "success" ? "bg-success" : tone === "danger" ? "bg-danger" : tone === "warning" ? "bg-warning" : tone === "brand" ? "bg-primary" : "bg-subtle-foreground";
   return <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${c}`} />;
 }
 
 /** Loading / error / permission states, one convention for every monitoring page. */
-export function QueryState({ q, skeleton = "h-40", children }: { q: { isLoading: boolean; isError: boolean; error: unknown }; skeleton?: string; children: React.ReactNode }) {
-  if (q.isLoading) return <Skeleton className={skeleton} />;
+export function QueryState({ q, skeleton = "h-40", children }: { q: { isLoading: boolean; isError: boolean; error: unknown; refetch?: () => unknown }; skeleton?: string; children: React.ReactNode }) {
+  if (q.isLoading) return <div role="status" aria-label="Loading"><Skeleton className={skeleton} /></div>;
   if (q.isError) {
     const e = q.error;
     if (e instanceof ApiError && e.status === 403) return <Alert tone="warning" title="You don't have access to this">Ask an organisation owner or admin for the required permission.</Alert>;
     if (e instanceof ApiError && e.status === 404) return <Alert tone="warning" title="Not found">It may have been removed, or it belongs to another organisation.</Alert>;
-    return <Alert tone="danger" title="Couldn't load this data">{errorMessage(e)}</Alert>;
+    return <ErrorState title="Couldn't load this data" description={errorMessage(e)} onRetry={q.refetch ? () => void q.refetch!() : undefined} />;
   }
   return <>{children}</>;
 }
@@ -41,24 +41,24 @@ export function RangePicker({ value, onChange }: { value: Range; onChange: (r: R
   };
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div role="group" aria-label="Time range" className="inline-flex rounded-md border border-border p-0.5">
+      <div role="group" aria-label="Time range" className="inline-flex max-w-full overflow-x-auto rounded-lg border border-border bg-sunken p-0.5">
         {(["24h", "7d", "30d", "custom"] as RangeKey[]).map((k) => (
           <button key={k} type="button" aria-pressed={value.key === k}
-            className={`rounded px-2.5 py-1 text-xs font-medium ${value.key === k ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            className={`cursor-pointer whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${value.key === k ? "bg-card text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
             onClick={() => (k === "custom" ? onChange({ ...value, key: "custom" }) : onChange(presetRange(k)))}>
-            {k === "custom" ? "Custom" : `Last ${k.replace("h", " hours").replace("d", " days")}`}
+            {k === "custom" ? "Custom" : k}
           </button>
         ))}
       </div>
       {value.key === "custom" && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <label className="flex items-center gap-1">From <input type="datetime-local" className="rounded border border-border bg-background px-1.5 py-1" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} /></label>
-          <label className="flex items-center gap-1">To <input type="datetime-local" className="rounded border border-border bg-background px-1.5 py-1" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></label>
+          <label className="flex items-center gap-1">From <input type="datetime-local" className="h-8 rounded-md border border-input bg-card px-2 text-xs" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} /></label>
+          <label className="flex items-center gap-1">To <input type="datetime-local" className="h-8 rounded-md border border-input bg-card px-2 text-xs" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} /></label>
           <Button size="sm" variant="outline" onClick={apply}>Apply</Button>
           {err && <span role="alert" className="text-danger">{err}</span>}
         </div>
       )}
-      <span className="text-xs text-muted-foreground">Times in UTC</span>
+      <span className="text-xs text-subtle-foreground">UTC</span>
     </div>
   );
 }
@@ -95,6 +95,7 @@ export function StackedBars({ bars, height = 120, ariaLabel }: { bars: Bar[]; he
     <figure>
       <svg role="img" aria-label={ariaLabel} viewBox={`0 0 100 ${height}`} preserveAspectRatio="none" className="h-32 w-full">
         <defs><pattern id="gap" width="2" height="2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="1" height="2" fill="var(--border)" /></pattern></defs>
+        {[0.25, 0.5, 0.75].map((g) => <line key={g} x1="0" x2="100" y1={height * g} y2={height * g} stroke="var(--border)" strokeDasharray="1 1.5" vectorEffect="non-scaling-stroke" />)}
         {bars.map((b, i) => {
           const total = b.values.reduce((a, x) => a + x.v, 0);
           if (!total) return <rect key={b.t} x={i * w + w * 0.1} y={height - 6} width={w * 0.8} height={6} fill="url(#gap)"><title>{b.label}: no data</title></rect>;
@@ -125,6 +126,7 @@ export function LineChart({ points, series, height = 120, ariaLabel, unit = "ms"
   return (
     <figure>
       <svg role="img" aria-label={ariaLabel} viewBox={`0 0 100 ${height}`} preserveAspectRatio="none" className="h-32 w-full">
+        {[0.25, 0.5, 0.75].map((g) => <line key={g} x1="0" x2="100" y1={height * g} y2={height * g} stroke="var(--border)" strokeDasharray="1 1.5" vectorEffect="non-scaling-stroke" />)}
         {series.map((s) => {
           const segs: string[] = [];
           let cur = "";
@@ -133,7 +135,7 @@ export function LineChart({ points, series, height = 120, ariaLabel, unit = "ms"
             cur += `${cur ? "L" : "M"}${x(i).toFixed(2)},${y(v).toFixed(2)}`;
           });
           if (cur) segs.push(cur);
-          return <path key={s.name} d={segs.join(" ")} fill="none" stroke={s.color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />;
+          return <path key={s.name} d={segs.join(" ")} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />;
         })}
       </svg>
       <figcaption className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -153,7 +155,7 @@ export function Distribution({ items, ariaLabel }: { items: Array<{ label: strin
       {items.map((i) => (
         <li key={i.label} className="grid grid-cols-[7rem_1fr_3rem] items-center gap-2 text-sm">
           <span className="truncate">{i.label}</span>
-          <span className="h-2 rounded bg-muted"><span className={`block h-2 rounded ${i.tone === "danger" ? "bg-danger" : i.tone === "warning" ? "bg-warning" : i.tone === "success" ? "bg-success" : "bg-primary"}`} style={{ width: `${(i.count / total) * 100}%` }} /></span>
+          <span className="h-2 rounded-full bg-muted"><span className={`block h-2 rounded-full ${i.tone === "danger" ? "bg-danger" : i.tone === "warning" ? "bg-warning" : i.tone === "success" ? "bg-success" : "bg-primary"}`} style={{ width: `${(i.count / total) * 100}%` }} /></span>
           <span className="text-right tabular-nums text-muted-foreground">{i.count}</span>
         </li>
       ))}
@@ -164,19 +166,22 @@ export function Distribution({ items, ariaLabel }: { items: Array<{ label: strin
 export function KeyValue({ items }: { items: Array<[string, React.ReactNode]> }) {
   return (
     <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-      {items.map(([k, v]) => <div key={k}><dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{k}</dt><dd className="mt-0.5 text-sm">{v}</dd></div>)}
+      {items.map(([k, v]) => <div key={k}><dt className="text-xs font-medium text-muted-foreground">{k}</dt><dd className="mt-0.5 text-sm">{v}</dd></div>)}
     </dl>
   );
 }
 
-export function Section({ title, description, actions, children }: { title: string; description?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode }) {
+export function Section({ title, description, actions, children, className, flush, icon }: { title: string; description?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; className?: string; flush?: boolean; icon?: React.ReactNode }) {
   return (
-    <Card className="p-4 sm:p-5">
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div><h2 className="text-sm font-semibold">{title}</h2>{description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}</div>
-        {actions}
+    <Card className={cn("overflow-hidden", className)}>
+      <div className={cn("flex flex-col gap-2 px-4 pt-4 sm:flex-row sm:items-start sm:justify-between sm:px-5", flush ? "border-b border-border pb-3.5" : "")}>
+        <div className="flex min-w-0 items-start gap-2.5">
+          {icon && <span aria-hidden className="mt-px flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-sunken text-muted-foreground ring-1 ring-border [&_svg]:h-4 [&_svg]:w-4">{icon}</span>}
+          <div className="min-w-0"><h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>{description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}</div>
+        </div>
+        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
-      {children}
+      <div className={flush ? "" : "px-4 pb-4 pt-4 sm:px-5 sm:pb-5"}>{children}</div>
     </Card>
   );
 }

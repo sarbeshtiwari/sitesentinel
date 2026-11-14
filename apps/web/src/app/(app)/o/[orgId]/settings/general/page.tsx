@@ -1,5 +1,6 @@
 "use client";
-import { Alert, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, ConfirmDialog, FormField, Input, PageHeader, toast } from "@wim/ui";
+import { Alert, Badge, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, ConfirmDialog, FormField, Input, PageHeader, toast } from "@wim/ui";
+import { Building2, Trash2 } from "lucide-react";
 import { UpdateOrgInput, type DataEnvelope, type OrgDto } from "@wim/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -50,9 +51,12 @@ export default function GeneralSettingsPage() {
   return (
     <>
       <PageHeader title="General" description="Organization name and preferences." />
-      <div className="grid max-w-2xl gap-6">
+      <div className="grid max-w-2xl gap-5">
         <Card>
-          <CardHeader><CardTitle>Organization</CardTitle></CardHeader>
+          <CardHeader className="flex-row items-start gap-3">
+            <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary"><Building2 className="h-4 w-4" /></span>
+            <div className="grid gap-1"><CardTitle>Organization</CardTitle><CardDescription>How your organization appears to members and in notifications.</CardDescription></div>
+          </CardHeader>
           <form onSubmit={onSubmit} noValidate>
             <CardContent className="grid gap-4">
               {!editable && <Alert title="Read-only">Your role can't change organization settings.</Alert>}
@@ -63,7 +67,7 @@ export default function GeneralSettingsPage() {
               <FormField label="Timezone" htmlFor="timezone" error={form.formState.errors.timezone?.message} hint="Used for reports and schedules (IANA name).">
                 <Input id="timezone" disabled={!editable} {...form.register("timezone")} />
               </FormField>
-              <p className="text-xs text-muted-foreground">Currency: {org.currency} · Created {new Date(org.createdAt).toLocaleDateString()}</p>
+              <p className="flex flex-wrap items-center gap-2 border-t border-border pt-4 text-xs text-muted-foreground"><Badge>{org.currency}</Badge>Currency: {org.currency} · Created {new Date(org.createdAt).toLocaleDateString()}</p>
             </CardContent>
             {editable && <CardFooter><Button type="submit" loading={form.formState.isSubmitting}>Save changes</Button></CardFooter>}
           </form>
@@ -71,13 +75,13 @@ export default function GeneralSettingsPage() {
         {can("org:delete") && (
           <Card className="border-[color-mix(in_srgb,var(--danger)_40%,transparent)]">
             <CardHeader>
-              <CardTitle>Delete organization</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-danger"><Trash2 className="h-4 w-4" aria-hidden />Delete organization</CardTitle>
               <CardDescription>Deletion happens after a 14-day grace period, during which it can be cancelled. Minimal domain registration history is retained to prevent trial abuse, as described in the privacy policy.</CardDescription>
             </CardHeader>
             <CardContent>
               {pending ? (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <Alert tone="warning" title="Deletion is scheduled" />
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <Alert tone="warning" title="Deletion is scheduled" className="flex-1" />
                   <Button variant="outline" onClick={() => setConfirm("cancel")}>Cancel deletion</Button>
                 </div>
               ) : (

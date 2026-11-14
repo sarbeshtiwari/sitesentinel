@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Button, Spinner } from "@wim/ui";
+import { Alert, buttonVariants, Spinner } from "@wim/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -28,13 +28,13 @@ function Verify() {
       {state === "ok" && (
         <div className="grid gap-4">
           <Alert tone="success" title="Your email address is verified." />
-          <Link href="/"><Button className="w-full">Continue</Button></Link>
+          <Link href="/" className={buttonVariants({ size: "lg", className: "w-full" })}>Continue</Link>
         </div>
       )}
       {state === "error" && (
         <div className="grid gap-4">
           <Alert tone="danger" title="We couldn't verify your email">{error} Sign in to request a new link.</Alert>
-          <Link href="/login"><Button variant="outline" className="w-full">Sign in</Button></Link>
+          <Link href="/login" className={buttonVariants({ variant: "outline", size: "lg", className: "w-full" })}>Sign in</Link>
         </div>
       )}
     </AuthCard>

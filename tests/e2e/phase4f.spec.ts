@@ -240,7 +240,7 @@ test("deep scan from the dashboard; usage, settings (audited) and entitlement ex
   await page.getByRole("button", { name: "Save HTTP settings" }).click();
   await expect(page.getByText("HTTP settings saved")).toBeVisible();
   await page.goto(`${orgUrl}/settings/audit`);
-  await expect(page.getByText(/monitoring_schedule_updated|Monitoring schedule updated/).first()).toBeVisible();
+  await expect(page.getByText(/monitoring_schedule_updated|Monitoring schedule updated/).filter({ visible: true }).first()).toBeVisible(); // the list renders as cards on phones and a table on wider screens
 
   await page.goto(`${orgUrl}/usage`);
   await expect(page.getByRole("heading", { name: "Usage and plan limits" })).toBeVisible();

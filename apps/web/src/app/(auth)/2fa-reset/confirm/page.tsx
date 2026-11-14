@@ -29,13 +29,13 @@ function Confirm() {
         <div className="grid gap-4 text-sm">
           <p>Confirming starts a security waiting period. After it ends you can sign in with your password only and set up two-factor authentication again.</p>
           <p className="text-muted-foreground">If you didn't request this, don't confirm. Change your password instead.</p>
-          <Button onClick={run} disabled={!token}>Confirm reset request</Button>
+          <Button size="lg" className="mt-1 w-full" onClick={run} disabled={!token}>Confirm reset request</Button>
         </div>
       )}
-      {state === "working" && <Spinner />}
+      {state === "working" && <Spinner label="Confirming…" />}
       {state === "ok" && <Alert tone="success" title="Reset scheduled">Two-factor authentication can be removed after {new Date(eligibleAt).toLocaleString()}. Sign in then to complete it. We emailed you a link to cancel.</Alert>}
       {state === "error" && <Alert tone="danger" title="We couldn't confirm this request">{error}</Alert>}
-      <p className="mt-4 text-center text-sm"><Link className="text-primary hover:underline" href="/login">Back to sign in</Link></p>
+      <p className="mt-6 text-center text-sm text-muted-foreground"><Link className="text-primary hover:underline" href="/login">Back to sign in</Link></p>
     </AuthCard>
   );
 }

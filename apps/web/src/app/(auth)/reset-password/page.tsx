@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Button, FormField, Input } from "@wim/ui";
+import { Alert, Button, buttonVariants, FormField, Input } from "@wim/ui";
 import { Password } from "@wim/contracts";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -31,20 +31,20 @@ function Reset() {
       {done ? (
         <div className="grid gap-4">
           <Alert tone="success" title="Password updated">You've been signed out of all sessions. Sign in with your new password.</Alert>
-          <Link href="/login"><Button className="w-full">Sign in</Button></Link>
+          <Link href="/login" className={buttonVariants({ size: "lg", className: "w-full" })}>Sign in</Link>
         </div>
       ) : !token ? (
-        <Alert tone="danger" title="This link is missing its token." />
+        <div className="grid gap-4"><Alert tone="danger" title="This link is missing its token." /><Link href="/forgot-password" className="text-sm text-primary hover:underline">Request a new link</Link></div>
       ) : (
         <form onSubmit={onSubmit} className="grid gap-4" noValidate>
-          {error && <Alert tone="danger" title={error}><Link href="/forgot-password">Request a new link</Link></Alert>}
+          {error && <Alert tone="danger" title={error}><Link href="/forgot-password" className="text-primary hover:underline">Request a new link</Link></Alert>}
           <FormField label="New password" htmlFor="password" error={errors.password?.message}>
             <Input id="password" type="password" autoComplete="new-password" autoFocus {...form.register("password")} />
           </FormField>
           <FormField label="Confirm password" htmlFor="confirm" error={errors.confirm?.message}>
             <Input id="confirm" type="password" autoComplete="new-password" {...form.register("confirm")} />
           </FormField>
-          <Button type="submit" loading={form.formState.isSubmitting} className="w-full">Update password</Button>
+          <Button type="submit" size="lg" loading={form.formState.isSubmitting} className="mt-1 w-full">Update password</Button>
         </form>
       )}
     </AuthCard>

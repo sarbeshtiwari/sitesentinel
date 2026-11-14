@@ -20,7 +20,7 @@ export const qk = {
 };
 
 export const FALLBACK_CONFIG: PublicConfigDto = {
-  productName: "SiteSentinel", logoUrl: null, faviconUrl: null, primaryColor: "#2563eb", supportEmail: null,
+  productName: "SiteSentinel", logoUrl: null, faviconUrl: null, primaryColor: "#4f46e5", supportEmail: null,
   termsUrl: null, privacyUrl: null, termsVersion: "", registration: "OPEN", passwordMinLength: 12, maintenanceMode: false,
 };
 

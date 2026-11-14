@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Button, Skeleton } from "@wim/ui";
+import { Alert, Button, buttonVariants, Skeleton } from "@wim/ui";
 import type { DataEnvelope, InvitationPreviewDto, OrgMembershipDto } from "@wim/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -57,19 +57,19 @@ function Accept() {
         {error && <Alert tone="danger" title={error} />}
         {!signedIn && (
           <>
-            <p className="text-sm">Sign in or create an account with <strong>{inv.email}</strong> to accept.</p>
+            <p className="text-sm text-muted-foreground">Sign in or create an account with <strong>{inv.email}</strong> to accept.</p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <Link href={`/login?next=${encodeURIComponent(here)}`}><Button className="w-full">Sign in</Button></Link>
-              <Link href={`/register?next=${encodeURIComponent(here)}`}><Button variant="outline" className="w-full">Create account</Button></Link>
+              <Link href={`/login?next=${encodeURIComponent(here)}`} className={buttonVariants({ size: "lg", className: "w-full" })}>Sign in</Link>
+              <Link href={`/register?next=${encodeURIComponent(here)}`} className={buttonVariants({ variant: "outline", size: "lg", className: "w-full" })}>Create account</Link>
             </div>
           </>
         )}
         {wrongUser && <Alert tone="warning" title="You're signed in with a different email">You're signed in as {me.data!.email}. Sign out and sign in as {inv.email} to accept.</Alert>}
         {signedIn && !wrongUser && !me.data.emailVerified && <Alert tone="warning" title="Verify your email first">Open the verification link we emailed to {me.data.email}, then come back to this page.</Alert>}
         {signedIn && !wrongUser && (
-          <div className="flex gap-2">
-            <Button className="flex-1" loading={busy} disabled={!me.data.emailVerified} onClick={() => act("accept")}>Accept invitation</Button>
-            <Button variant="outline" disabled={busy} onClick={() => act("decline")}>Decline</Button>
+          <div className="mt-1 flex gap-2">
+            <Button size="lg" className="flex-1" loading={busy} disabled={!me.data.emailVerified} onClick={() => act("accept")}>Accept invitation</Button>
+            <Button variant="outline" size="lg" disabled={busy} onClick={() => act("decline")}>Decline</Button>
           </div>
         )}
         <p className="text-xs text-muted-foreground">Expires {new Date(inv.expiresAt).toLocaleDateString()}.</p>

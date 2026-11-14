@@ -1,5 +1,6 @@
 "use client";
-import { Alert, Badge, Button, PageHeader } from "@wim/ui";
+import { Alert, Badge, Button, MetricCard, PageHeader } from "@wim/ui";
+import { CalendarCheck, ChevronLeft, Clock, FlaskConical, Image as ImageIcon, MonitorSmartphone, MousePointerClick, RotateCw, Smartphone } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -21,16 +22,20 @@ export default function BrowserExecutionPage() {
   const r = q.data;
   return (
     <>
-      <div className="mb-2 text-sm"><Link href={`/o/${orgId}/websites/${websiteId}?tab=browser`} className="text-muted-foreground hover:underline">← Browser monitoring</Link></div>
+      <div className="mb-3"><Link href={`/o/${orgId}/websites/${websiteId}?tab=browser`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" aria-hidden /> Browser monitoring</Link></div>
       <QueryState q={q} skeleton="h-96">
         {r && (
           <>
-            <PageHeader title={`Browser check · ${fmtUtc(r.windowStart)}`} description="Synthetic measurement: one Chromium through our egress gateway, without a real visitor's cache, device or network."
+            <PageHeader eyebrow={<span className="inline-flex items-center gap-1.5"><FlaskConical className="h-3.5 w-3.5" aria-hidden />Synthetic browser check</span>} title={`Browser check · ${fmtUtc(r.windowStart)}`}
+              description="Synthetic measurement: one Chromium through our egress gateway, without a real visitor's cache, device or network."
               actions={<Badge tone={outcome(r.outcome).tone}>{outcome(r.outcome).label}</Badge>} />
-            <div className="grid gap-6">
-              <Section title="Summary">
-                <KeyValue items={[["Started window", fmtUtc(r.windowStart)], ["Recorded", fmtUtc(r.recordedAt)], ["Attempt", r.attempt], ["Viewports", r.viewports.length]]} />
-              </Section>
+            <div className="grid gap-5">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <MetricCard label="Started window" value={<span className="text-base">{fmtUtc(r.windowStart)}</span>} icon={<Clock />} />
+                <MetricCard label="Recorded" value={<span className="text-base">{fmtUtc(r.recordedAt)}</span>} icon={<CalendarCheck />} />
+                <MetricCard label="Attempt" value={r.attempt} icon={<RotateCw />} />
+                <MetricCard label="Viewports" value={r.viewports.length} icon={<MonitorSmartphone />} tone="brand" />
+              </div>
               {r.responsive && r.responsive.length > 0 && <ResponsiveMatrix rows={r.responsive} />}
               {r.functional && r.functional.length > 0 && <FunctionalTests rows={r.functional} />}
               {r.viewports.map((v) => <ViewportCard key={v.viewport} orgId={orgId} v={v} />)}
@@ -50,7 +55,7 @@ function ViewportCard({ orgId, v }: { orgId: string; v: BrowserViewportResultDto
   const p = v.syntheticPerformance;
   const blank = v.failureKind === "BLANK_PAGE";
   return (
-    <Section title={`${v.viewport}${v.width ? ` · ${v.width}×${v.height}` : ""}`} description={v.failureDescription ?? "No problem detected"}
+    <Section title={`${v.viewport}${v.width ? ` · ${v.width}×${v.height}` : ""}`} icon={<MonitorSmartphone />} description={v.failureDescription ?? "No problem detected"}
       actions={<Badge tone={outcome(v.outcome).tone}>{outcome(v.outcome).label}</Badge>}>
       <div className="grid gap-5">
         <KeyValue items={[
@@ -63,12 +68,12 @@ function ViewportCard({ orgId, v }: { orgId: string; v: BrowserViewportResultDto
           ["Failed stylesheets", rend.failedStylesheets ?? 0],
           ["Layout overflow", v.layout ? (v.layout.horizontalOverflowPx > 4 ? `${v.layout.horizontalOverflowPx} px horizontal scroll` : "None") : "—"],
         ]} />
-        <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Synthetic performance</h3>
+        <div className="border-t border-border pt-4">
+          <SubHeading>Synthetic performance <Badge tone="info" className="ml-1">Lab, not real users</Badge></SubHeading>
           {p ? (
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+            <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-6">
               {([["FCP", fmtMs(p.fcpMs)], ["LCP", fmtMs(p.lcpMs)], ["CLS", p.cls?.toFixed(3) ?? "—"], ["TBT", fmtMs(p.tbtMs)], ["TTFB", fmtMs(p.ttfbMs)], ["Load", fmtMs(p.loadMs)]] as const).map(([k, val]) => (
-                <div key={k} className="rounded-md border border-border px-2 py-1.5"><p className="text-xs text-muted-foreground">{k}</p><p className="text-sm font-semibold tabular-nums">{val}</p></div>
+                <div key={k} className="bg-card px-3 py-2"><p className="text-xs text-muted-foreground">{k}</p><p className="mt-0.5 text-sm font-semibold tabular-nums">{val}</p></div>
               ))}
             </div>
           ) : <p className="text-sm text-muted-foreground">Not measured (the page did not load).</p>}
@@ -80,7 +85,7 @@ function ViewportCard({ orgId, v }: { orgId: string; v: BrowserViewportResultDto
         <NetList title="Failed requests" items={arr<NetIssue>(net.failed)} />
         <NetList title="HTTP errors on resources" items={arr<NetIssue>(net.httpErrors)} />
         {arr<{ src: string }>(rend.brokenImages).length > 0 && (
-          <div><h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Broken images</h3>
+          <div><SubHeading>Broken images</SubHeading>
             <ul className="grid gap-1 text-xs">{arr<{ src: string }>(rend.brokenImages).map((b, i) => <li key={i} className="break-all">{b.src}</li>)}</ul></div>
         )}
         {v.artifacts.map((a) => <Screenshot key={a.id} orgId={orgId} artifact={a} />)}
@@ -89,12 +94,16 @@ function ViewportCard({ orgId, v }: { orgId: string; v: BrowserViewportResultDto
   );
 }
 
+function SubHeading({ children }: { children: React.ReactNode }) {
+  return <h3 className="mb-2 flex flex-wrap items-center gap-1 text-sm font-semibold">{children}</h3>;
+}
+
 function IssueList({ title, items }: { title: string; items: Issue[] }) {
   if (!items.length) return null;
   return (
     <div>
-      <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{title} ({items.reduce((a, b) => a + (b.count ?? 1), 0)})</h3>
-      <ul className="grid gap-1">{items.map((x, i) => <li key={x.signature ?? i} className="rounded bg-muted px-2 py-1 font-mono text-xs"><span className="break-all">{x.message}</span>{x.count && x.count > 1 ? ` ×${x.count}` : ""}{x.source ? <span className="text-muted-foreground"> · {x.source}</span> : null}</li>)}</ul>
+      <SubHeading>{title} <span className="font-normal tabular-nums text-muted-foreground">({items.reduce((a, b) => a + (b.count ?? 1), 0)})</span></SubHeading>
+      <ul className="grid gap-1">{items.map((x, i) => <li key={x.signature ?? i} className="rounded-md border border-border bg-sunken px-2.5 py-1.5 font-mono text-xs"><span className="break-all">{x.message}</span>{x.count && x.count > 1 ? ` ×${x.count}` : ""}{x.source ? <span className="text-muted-foreground"> · {x.source}</span> : null}</li>)}</ul>
     </div>
   );
 }
@@ -102,8 +111,8 @@ function NetList({ title, items }: { title: string; items: NetIssue[] }) {
   if (!items.length) return null;
   return (
     <div>
-      <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
-      <ul className="grid gap-1 text-xs">{items.map((x, i) => <li key={i}>{x.type ?? "resource"} from {x.host ?? "unknown host"}{x.firstParty === false ? " (third party)" : ""}: {x.status ?? x.error}{x.count && x.count > 1 ? ` ×${x.count}` : ""}</li>)}</ul>
+      <SubHeading>{title}</SubHeading>
+      <ul className="grid gap-1 rounded-md border border-border bg-sunken px-2.5 py-1.5 text-xs">{items.map((x, i) => <li key={i}>{x.type ?? "resource"} from {x.host ?? "unknown host"}{x.firstParty === false ? " (third party)" : ""}: {x.status ?? x.error}{x.count && x.count > 1 ? ` ×${x.count}` : ""}</li>)}</ul>
     </div>
   );
 }
@@ -123,12 +132,12 @@ function Screenshot({ orgId, artifact }: { orgId: string; artifact: { id: string
     }
   };
   return (
-    <div>
-      <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Screenshot ({(artifact.purpose ?? "capture").toLowerCase()}, {fmtBytes(artifact.bytes)})</h3>
+    <div className="grid gap-2 border-t border-border pt-4">
+      <SubHeading>Screenshot <span className="font-normal text-muted-foreground">({(artifact.purpose ?? "capture").toLowerCase()}, {fmtBytes(artifact.bytes)})</span></SubHeading>
       {expired ? <Alert title="Screenshot expired">Screenshots are kept until {fmtUtc(artifact.expiresAt)} under your retention policy.</Alert>
         : state.error ? <Alert tone="warning" title={state.error} />
-        : state.url ? <img src={state.url} alt={`Screenshot of the page (${(artifact.purpose ?? "capture").toLowerCase()})`} className="max-h-[32rem] w-auto rounded border border-border" referrerPolicy="no-referrer" onError={() => setState({ error: "The screenshot link expired; load it again." })} />
-        : <Button size="sm" variant="outline" onClick={load} disabled={state.loading}>{state.loading ? "Loading…" : "Show screenshot"}</Button>}
+        : state.url ? <img src={state.url} alt={`Screenshot of the page (${(artifact.purpose ?? "capture").toLowerCase()})`} className="max-h-[32rem] w-auto max-w-full rounded-md border border-border shadow-xs" referrerPolicy="no-referrer" onError={() => setState({ error: "The screenshot link expired; load it again." })} />
+        : <div><Button size="sm" variant="outline" onClick={load} disabled={state.loading}><ImageIcon />{state.loading ? "Loading…" : "Show screenshot"}</Button></div>}
       <Hint>Form fields and configured areas are masked before capture. Links expire after 5 minutes.</Hint>
     </div>
   );
@@ -140,13 +149,13 @@ const KIND: Record<string, string> = { SEARCH: "Search", NAVIGATION: "Navigation
 
 function ResponsiveMatrix({ rows }: { rows: ResponsiveResultDto[] }) {
   return (
-    <Section title="Responsive matrix" description="Layout checks at each viewport rendered in this run (synthetic). Objective problems fail the check; heuristics are shown for review.">
+    <Section title="Responsive matrix" icon={<Smartphone />} flush description="Layout checks at each viewport rendered in this run (synthetic). Objective problems fail the check; heuristics are shown for review.">
       <Table>
         <THead><TR><TH>Viewport</TH><TH>Result</TH><TH>Navigation</TH><TH className="hidden md:table-cell">Overflow</TH><TH className="hidden md:table-cell">Controls covered / off-screen</TH><TH className="hidden lg:table-cell">Findings</TH></TR></THead>
         <TBody>
           {rows.map((x) => (
             <TR key={x.viewport}>
-              <TD className="text-xs">{x.viewport} <span className="text-muted-foreground">{x.width}×{x.height}</span></TD>
+              <TD className="text-xs"><span className="font-medium">{x.viewport}</span> <span className="text-muted-foreground tabular-nums">{x.width}×{x.height}</span></TD>
               <TD><Badge tone={x.status === "FAILED" ? "danger" : "success"}>{x.status === "FAILED" ? "Problems" : "OK"}</Badge></TD>
               <TD className="text-xs">{NAV_STATE[x.navState ?? "NONE"] ?? x.navState}</TD>
               <TD className="hidden tabular-nums md:table-cell">{x.overflowPx ? `${x.overflowPx}px` : "—"}</TD>
@@ -163,13 +172,13 @@ function ResponsiveMatrix({ rows }: { rows: ResponsiveResultDto[] }) {
 function FunctionalTests({ rows }: { rows: FunctionalTestDto[] }) {
   const n = (o: string) => rows.filter((r) => r.outcome === o).length;
   return (
-    <Section title="Functional tests" description={`${n("PASSED")} passed · ${n("FAILED")} failed · ${n("SKIPPED")} skipped · ${n("INCONCLUSIVE")} inconclusive. Forms are never submitted; actions that could buy, delete, log out or send data are never performed.`}>
+    <Section title="Functional tests" icon={<MousePointerClick />} flush description={`${n("PASSED")} passed · ${n("FAILED")} failed · ${n("SKIPPED")} skipped · ${n("INCONCLUSIVE")} inconclusive. Forms are never submitted; actions that could buy, delete, log out or send data are never performed.`}>
       <Table>
         <THead><TR><TH>Test</TH><TH>Target</TH><TH>Result</TH><TH className="hidden md:table-cell">Reason</TH></TR></THead>
         <TBody>
           {rows.map((r, i) => (
             <TR key={i}>
-              <TD className="text-xs">{KIND[r.kind] ?? r.kind}<div className="text-muted-foreground">{r.viewport}</div></TD>
+              <TD className="text-xs"><span className="font-medium">{KIND[r.kind] ?? r.kind}</span><div className="text-muted-foreground">{r.viewport}</div></TD>
               <TD className="max-w-64 break-words text-xs">{r.target}</TD>
               <TD><Badge tone={TEST_TONE[r.outcome]}>{r.outcome.toLowerCase()}</Badge>{r.safety === "UNSAFE" && <span className="ml-1 text-xs text-muted-foreground">(unsafe)</span>}</TD>
               <TD className="hidden max-w-72 text-xs text-muted-foreground md:table-cell">{r.reason ?? "—"}</TD>
@@ -177,7 +186,7 @@ function FunctionalTests({ rows }: { rows: FunctionalTestDto[] }) {
           ))}
         </TBody>
       </Table>
-      <div className="mt-2"><Hint>Skipped and inconclusive tests never count against your website: they mean the action wasn't safe to perform, or our infrastructure couldn't complete it.</Hint></div>
+      <div className="border-t border-border px-4 py-3 sm:px-5"><Hint>Skipped and inconclusive tests never count against your website: they mean the action wasn't safe to perform, or our infrastructure couldn't complete it.</Hint></div>
     </Section>
   );
 }

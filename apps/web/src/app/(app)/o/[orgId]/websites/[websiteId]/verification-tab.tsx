@@ -3,11 +3,17 @@ import { Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, C
 import type { DataEnvelope, VerificationAttemptDto, WebsiteDetailDto } from "@wim/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { History, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
+import { Section } from "@/components/monitoring";
 import { CodeBlock } from "@/components/copy";
 import { errorMessage, get, post } from "@/lib/api";
 import { failureText, fmt, METHOD_LABEL, relative, wk } from "@/lib/websites";
 
 type Method = "DNS_TXT" | "WELL_KNOWN_FILE" | "HTML_META" | "ANY";
+
+function MethodNumber({ n }: { n: number }) {
+  return <span aria-hidden className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold tabular-nums text-muted-foreground">{n}</span>;
+}
 
 export function VerificationTab({ w, orgId, canWrite }: { w: WebsiteDetailDto; orgId: string; canWrite: boolean }) {
   const qc = useQueryClient();
@@ -73,7 +79,7 @@ export function VerificationTab({ w, orgId, canWrite }: { w: WebsiteDetailDto; o
 
   const ins = w.instructions;
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-5">
       {w.claim.revalidation?.state === "FAILING" && (
         <Alert tone="warning" title="We couldn't confirm you still own this domain">
           Our periodic check couldn't find your {METHOD_LABEL[w.claim.verifiedMethod ?? ""]?.toLowerCase() ?? "verification"} (last check {relative(w.claim.revalidation.lastCheckedAt)}).
@@ -100,59 +106,58 @@ export function VerificationTab({ w, orgId, canWrite }: { w: WebsiteDetailDto; o
       )}
       {ins && (
         <>
-          <Card>
+          <Card className="overflow-hidden">
             <CardHeader>
-              <CardTitle>Prove that you control {w.displayHost}</CardTitle>
+              <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-muted-foreground" aria-hidden />Prove that you control {w.displayHost}</CardTitle>
               <CardDescription>
                 {w.claim.status === "PENDING"
                   ? <>Publish the token using one method below, then run the check. The window closes {relative(w.claim.pendingExpiresAt)} ({fmt(w.claim.pendingExpiresAt)}). Checks used with this token: {w.claim.attemptsUsed} of {w.claim.attemptsAllowed}.</>
                   : <>Make sure this record is still published (it was used to verify the website originally), then run a check.</>}
               </CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-5">
-              <section className="grid gap-2" aria-labelledby="m-dns">
-                <h3 id="m-dns" className="flex items-center gap-2 text-sm font-semibold">DNS TXT record <Badge tone="success">Recommended</Badge></h3>
+            <CardContent className="grid gap-0 divide-y divide-border p-0">
+              <section className="grid gap-2 px-5 py-4" aria-labelledby="m-dns">
+                <h3 id="m-dns" className="flex items-center gap-2 text-sm font-semibold"><MethodNumber n={1} />DNS TXT record <Badge tone="success">Recommended</Badge></h3>
                 <p className="text-xs text-muted-foreground">Add a TXT record at your DNS provider. Some providers want only the part before your domain as the name.</p>
                 <dl className="grid gap-2">
-                  <div><dt className="text-xs text-muted-foreground">Name</dt><dd><CodeBlock testId="dns-record-name" value={ins.dns.hostRecord.name} /></dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Value</dt><dd><CodeBlock testId="dns-record-value" value={ins.dns.hostRecord.value} /></dd></div>
+                  <div><dt className="mb-1 text-xs text-muted-foreground">Name</dt><dd><CodeBlock testId="dns-record-name" value={ins.dns.hostRecord.name} /></dd></div>
+                  <div><dt className="mb-1 text-xs text-muted-foreground">Value</dt><dd><CodeBlock testId="dns-record-value" value={ins.dns.hostRecord.value} /></dd></div>
                 </dl>
                 {w.hostKey !== w.registrableDomain && <p className="text-xs text-muted-foreground">Publishing it at <code>{ins.dns.rootRecord.name}</code> instead also works.</p>}
                 {w.hostKey === w.registrableDomain && <p className="text-xs text-muted-foreground">DNS verification of the registrable domain also reserves its subdomains for your organization.</p>}
               </section>
-              <section className="grid gap-2" aria-labelledby="m-file">
-                <h3 id="m-file" className="text-sm font-semibold">HTML verification file</h3>
+              <section className="grid gap-2 px-5 py-4" aria-labelledby="m-file">
+                <h3 id="m-file" className="flex items-center gap-2 text-sm font-semibold"><MethodNumber n={2} />HTML verification file</h3>
                 <p className="text-xs text-muted-foreground">Serve a plain-text file at this exact URL (HTTP 200) containing the value on its own line.</p>
                 <CodeBlock value={ins.file.url} label="Copy URL" />
                 <CodeBlock value={ins.file.content} label="Copy content" />
               </section>
-              <section className="grid gap-2" aria-labelledby="m-meta">
-                <h3 id="m-meta" className="text-sm font-semibold">HTML meta tag</h3>
+              <section className="grid gap-2 px-5 py-4" aria-labelledby="m-meta">
+                <h3 id="m-meta" className="flex items-center gap-2 text-sm font-semibold"><MethodNumber n={3} />HTML meta tag</h3>
                 <p className="text-xs text-muted-foreground">Add this tag inside the <code>&lt;head&gt;</code> of your home page.</p>
                 <CodeBlock value={ins.meta.tag} />
               </section>
             </CardContent>
-          </Card>
-          {canWrite && (
-            <Card>
-              <CardContent className="flex flex-wrap items-end gap-3 pt-5">
-                <div className="grid gap-1.5">
+            {canWrite && (
+              <div className="flex flex-col gap-3 border-t border-border bg-sunken/50 px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
+                <div className="grid gap-1.5 sm:min-w-64">
                   <label htmlFor="method" className="text-sm font-medium">Method to check</label>
                   <Select id="method" value={method} onChange={(e) => setMethod(e.target.value as Method)}>
                     {(["DNS_TXT", "WELL_KNOWN_FILE", "HTML_META", "ANY"] as const).map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
                   </Select>
                 </div>
-                <Button onClick={verify} loading={checking}>{checking ? "Checking…" : "Verify now"}</Button>
-                {w.claim.status === "PENDING" && <Button variant="outline" onClick={() => setConfirmToken(true)}>Generate new token</Button>}
-              </CardContent>
-            </Card>
-          )}
+                <div className="flex flex-wrap gap-2 sm:justify-end">
+                  {w.claim.status === "PENDING" && <Button variant="outline" onClick={() => setConfirmToken(true)}><RefreshCw /> Generate new token</Button>}
+                  <Button onClick={verify} loading={checking}>{!checking && <ShieldCheck />}{checking ? "Checking…" : "Verify now"}</Button>
+                </div>
+              </div>
+            )}
+          </Card>
         </>
       )}
-      <Card>
-        <CardHeader><CardTitle>Verification history</CardTitle></CardHeader>
-        {history.isLoading ? <CardContent><Skeleton className="h-24" /></CardContent> : !history.data?.length ? (
-          <CardContent><p className="text-sm text-muted-foreground">No checks yet.</p></CardContent>
+      <Section title="Verification history" icon={<History />} flush>
+        {history.isLoading ? <div className="p-4"><Skeleton className="h-24" /></div> : !history.data?.length ? (
+          <p className="px-4 py-6 text-sm text-muted-foreground sm:px-5">No checks yet.</p>
         ) : (
           <Table>
             <THead><TR><TH>When</TH><TH>Method</TH><TH>Result</TH><TH className="hidden sm:table-cell">Details</TH></TR></THead>
@@ -168,7 +173,7 @@ export function VerificationTab({ w, orgId, canWrite }: { w: WebsiteDetailDto; o
             </TBody>
           </Table>
         )}
-      </Card>
+      </Section>
       <ConfirmDialog
         open={confirmToken}
         onOpenChange={setConfirmToken}

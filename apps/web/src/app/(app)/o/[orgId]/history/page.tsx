@@ -1,9 +1,9 @@
 "use client";
-import { Badge, Card, EmptyState, PageHeader } from "@wim/ui";
+import { Badge, EmptyState, FilterBar, PageHeader } from "@wim/ui";
 import { History } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { FilterSelect, LoadMore, QueryState } from "@/components/monitoring";
+import { Dot, FilterSelect, Hint, LoadMore, QueryState, Section } from "@/components/monitoring";
 import { useOrg } from "@/lib/hooks";
 import { fmtUtc, outcome, presetRange, SOURCE_LABEL, useHistory } from "@/lib/monitoring";
 import { useWebsites } from "@/lib/websites";
@@ -31,34 +31,37 @@ export default function HistoryPage() {
   return (
     <>
       <PageHeader title="Monitoring history" description="Every recorded check, incident change, configuration change and interruption, newest first. Times in UTC." />
-      <div className="mb-4 flex flex-wrap gap-2">
+      <FilterBar>
         <FilterSelect label="Website" value={f.websiteId} onChange={(v) => set("websiteId", v)} options={[["", "All websites"], ...(sites.data ?? []).map((w) => [w.id, w.name] as [string, string])]} />
         <FilterSelect label="Event" value={f.type} onChange={(v) => set("type", v)} options={[["", "All events"], ["CHECK", "Checks"], ["INCIDENT", "Incidents"], ["CONFIG", "Configuration"], ["VERIFICATION", "Verification"], ["INTERRUPTION", "Interruptions"], ["COMPONENT", "Component changes"], ["FUNCTIONAL", "Functional test failures"], ["RESPONSIVE", "Responsive problems"]]} />
         <FilterSelect label="Source" value={f.source} onChange={(v) => set("source", v)} options={[["", "All"], ["HTTP", "HTTP"], ["BROWSER", "Browser"], ["DEEP_SCAN", "Deep scan"]]} />
         <FilterSelect label="Result" value={f.result} onChange={(v) => set("result", v)} options={[["", "Any"], ["PASSED", "Passed"], ["FAILED", "Failed"], ["INCONCLUSIVE", "Inconclusive"]]} />
         <FilterSelect label="Period" value={f.since} onChange={(v) => set("since", v)} options={[["", "All retained"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]]} />
-      </div>
+      </FilterBar>
       <QueryState q={q}>
         {!rows.length ? <EmptyState icon={<History />} title="Nothing recorded yet" description="Events appear here as monitoring runs. Only recorded events are shown — nothing is generated." /> : (
           <div className="grid gap-4">
             {[...days].map(([day, items]) => (
-              <Card key={day} className="p-4">
-                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{day}</h2>
+              <Section key={day} title={day} description={`${items.length} event${items.length === 1 ? "" : "s"} loaded`} flush>
                 <ul className="divide-y divide-border">
                   {items.map((e) => (
-                    <li key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
-                      <span className="w-12 shrink-0 text-xs tabular-nums text-muted-foreground">{e.at.slice(11, 16)}</span>
-                      <Badge tone={e.type === "INTERRUPTION" ? "neutral" : e.type === "INCIDENT" ? "warning" : "neutral"}>{TYPE_LABEL[e.type]}</Badge>
-                      {e.result && e.type === "CHECK" && <Badge tone={outcome(e.result).tone}>{outcome(e.result).label}</Badge>}
-                      {e.link ? <Link className="hover:underline" href={`/o/${orgId}${e.link}`}>{e.title}</Link> : <span>{e.title}</span>}
-                      <span className="text-xs text-muted-foreground">{[e.websiteName, e.source ? SOURCE_LABEL[e.source] : null].filter(Boolean).join(" · ")}</span>
+                    <li key={e.id} className="flex items-start gap-3 px-4 py-2.5 text-sm sm:px-5">
+                      <span className="w-11 shrink-0 pt-0.5 text-xs tabular-nums text-muted-foreground">{e.at.slice(11, 16)}</span>
+                      <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
+                        <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+                          <Badge tone={e.type === "INTERRUPTION" ? "neutral" : e.type === "INCIDENT" ? "warning" : "neutral"}>{TYPE_LABEL[e.type]}</Badge>
+                          {e.result && e.type === "CHECK" && <Badge tone={outcome(e.result).tone}><Dot tone={outcome(e.result).tone} />{outcome(e.result).label}</Badge>}
+                        </span>
+                        {e.link ? <Link className="min-w-0 break-words font-medium hover:text-primary" href={`/o/${orgId}${e.link}`}>{e.title}</Link> : <span className="min-w-0 break-words">{e.title}</span>}
+                        <span className="text-xs text-muted-foreground">{[e.websiteName, e.source ? SOURCE_LABEL[e.source] : null].filter(Boolean).join(" · ")}</span>
+                      </div>
                     </li>
                   ))}
                 </ul>
-              </Card>
+              </Section>
             ))}
             <LoadMore q={q} />
-            <p className="text-xs text-muted-foreground">{fmtUtc(rows[rows.length - 1]?.at)} is the oldest event loaded.{q.data?.pages[0]?.retention ? ` Checks are kept ${q.data.pages[0].retention.checksDays} days and browser results ${q.data.pages[0].retention.browserDays} days; older events have expired, not disappeared.` : ""}</p>
+            <Hint>{fmtUtc(rows[rows.length - 1]?.at)} is the oldest event loaded.{q.data?.pages[0]?.retention ? ` Checks are kept ${q.data.pages[0].retention.checksDays} days and browser results ${q.data.pages[0].retention.browserDays} days; older events have expired, not disappeared.` : ""}</Hint>
           </div>
         )}
       </QueryState>

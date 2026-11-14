@@ -129,7 +129,7 @@ describe("operational settings (database-backed, audited, hot-reloaded)", () => 
     expect(entry).toMatchObject({ reason: "Rebrand for pilot customer", changes: { from: "SiteSentinel", to: "Acme Watch" } });
     const history = await h.owner.query("SELECT count(*)::int AS n FROM platform_setting_history WHERE key = 'branding.productName'");
     expect(history.rows[0].n).toBeGreaterThanOrEqual(1);
-    await sa.patch("/api/admin/v1/settings", { changes: [{ key: "branding.productName", value: "SiteSentinel" }, { key: "branding.primaryColor", value: "#2563eb" }], reason: "Restore default branding" });
+    await sa.patch("/api/admin/v1/settings", { changes: [{ key: "branding.productName", value: "SiteSentinel" }, { key: "branding.primaryColor", value: "#4f46e5" }], reason: "Restore default branding" });
   });
 
   it("validates values, requires a reason, and rejects unknown keys", async () => {

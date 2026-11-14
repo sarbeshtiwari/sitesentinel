@@ -30,7 +30,7 @@ export default function ForgotPasswordPage() {
           <FormField label="Email" htmlFor="email" error={form.formState.errors.email?.message}>
             <Input id="email" type="email" autoComplete="email" autoFocus {...form.register("email")} />
           </FormField>
-          <Button type="submit" loading={form.formState.isSubmitting} className="w-full">Send reset link</Button>
+          <Button type="submit" size="lg" loading={form.formState.isSubmitting} className="mt-1 w-full">Send reset link</Button>
         </form>
       )}
     </AuthCard>

@@ -29,19 +29,19 @@ export function Dialog({
       aria-labelledby={titleId}
       onClose={() => onOpenChange(false)}
       onClick={(e) => { if (e.target === ref.current) onOpenChange(false); }}
-      className={cn("m-auto w-[calc(100%-2rem)] max-w-lg rounded-lg border border-border bg-card p-0 text-foreground shadow-xl", className)}
+      className={cn("m-auto w-[calc(100%-2rem)] max-w-lg rounded-xl border border-border bg-card p-0 text-foreground shadow-lg", className)}
     >
       {open && (
-        <div className="grid gap-4 p-5">
+        <div className="grid gap-4 p-6">
           <div className="flex items-start justify-between gap-4">
             <div className="grid gap-1">
-              <h2 id={titleId} className="text-base font-semibold">{title}</h2>
+              <h2 id={titleId} className="text-base font-semibold tracking-tight">{title}</h2>
               {description && <p className="text-sm text-muted-foreground">{description}</p>}
             </div>
-            <Button variant="ghost" size="icon" aria-label="Close" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /></Button>
+            <Button variant="ghost" size="icon" className="-mr-2 -mt-2 h-8 w-8" aria-label="Close" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /></Button>
           </div>
           {children}
-          {footer && <div className="flex flex-wrap justify-end gap-2">{footer}</div>}
+          {footer && <div className="-mx-6 -mb-6 mt-1 flex flex-wrap justify-end gap-2 rounded-b-xl border-t border-border bg-sunken/60 px-6 py-3">{footer}</div>}
         </div>
       )}
     </dialog>
@@ -81,7 +81,7 @@ export function ConfirmDialog({
 }
 
 // ---------------------------------------------------------------- DropdownMenu
-export function DropdownMenu({ trigger, children, align = "end", label }: { trigger: React.ReactNode; children: React.ReactNode; align?: "start" | "end"; label: string }) {
+export function DropdownMenu({ trigger, children, align = "end", label, triggerClassName }: { trigger: React.ReactNode; children: React.ReactNode; align?: "start" | "end"; label: string; triggerClassName?: string }) {
   const [open, setOpen] = React.useState(false);
   const root = React.useRef<HTMLDivElement>(null);
   const menuId = React.useId();
@@ -102,7 +102,7 @@ export function DropdownMenu({ trigger, children, align = "end", label }: { trig
   };
   return (
     <div ref={root} className="relative">
-      <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((o) => !o)} className="rounded-md">
+      <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((o) => !o)} className={cn("rounded-md", triggerClassName)}>
         {trigger}
       </button>
       {open && (
@@ -111,7 +111,7 @@ export function DropdownMenu({ trigger, children, align = "end", label }: { trig
           role="menu"
           onKeyDown={onMenuKey}
           onClick={() => setOpen(false)}
-          className={cn("absolute z-50 mt-1 min-w-52 rounded-md border border-border bg-card p-1 shadow-lg", align === "end" ? "right-0" : "left-0")}
+          className={cn("absolute z-50 mt-1.5 min-w-56 rounded-lg border border-border bg-card p-1 shadow-lg", align === "end" ? "right-0" : "left-0")}
         >
           {children}
         </div>
@@ -125,7 +125,7 @@ export function DropdownItem({ className, danger, ...props }: React.ButtonHTMLAt
     <button
       type="button"
       role="menuitem"
-      className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted focus:bg-muted focus:outline-none", danger && "text-danger", className)}
+      className={cn("flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted focus:bg-muted focus:outline-none [&_svg]:h-4 [&_svg]:w-4 [&_svg]:text-muted-foreground", danger && "text-danger [&_svg]:text-danger", className)}
       {...props}
     />
   );
@@ -141,7 +141,7 @@ export function DropdownSeparator() {
 // ---------------------------------------------------------------- Tabs
 export function Tabs<T extends string>({ value, onChange, items, label }: { value: T; onChange: (v: T) => void; items: Array<{ value: T; label: React.ReactNode }>; label: string }) {
   return (
-    <div role="tablist" aria-label={label} className="inline-flex rounded-md border border-border bg-muted p-0.5">
+    <div role="tablist" aria-label={label} className="inline-flex max-w-full overflow-x-auto rounded-lg border border-border bg-sunken p-0.5">
       {items.map((it) => (
         <button
           key={it.value}
@@ -149,11 +149,61 @@ export function Tabs<T extends string>({ value, onChange, items, label }: { valu
           role="tab"
           aria-selected={value === it.value}
           onClick={() => onChange(it.value)}
-          className={cn("rounded px-3 py-1 text-sm", value === it.value ? "bg-card font-medium shadow-xs" : "text-muted-foreground hover:text-foreground")}
+          className={cn("cursor-pointer whitespace-nowrap rounded-md px-3 py-1 text-sm transition-colors", value === it.value ? "bg-card font-medium text-foreground shadow-xs ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}
         >
           {it.label}
         </button>
       ))}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- Drawer (side sheet on native <dialog>)
+export function Drawer({
+  open, onOpenChange, title, description, children, footer, side = "right", className,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  children?: React.ReactNode;
+  footer?: React.ReactNode;
+  side?: "left" | "right";
+  className?: string;
+}) {
+  const ref = React.useRef<HTMLDialogElement>(null);
+  const titleId = React.useId();
+  React.useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    if (open && !d.open) d.showModal();
+    if (!open && d.open) d.close();
+  }, [open]);
+  return (
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      onClose={() => onOpenChange(false)}
+      onClick={(e) => { if (e.target === ref.current) onOpenChange(false); }}
+      className={cn(
+        "m-0 h-dvh max-h-dvh w-[min(28rem,100vw)] max-w-none border-border bg-card p-0 text-foreground shadow-lg",
+        side === "right" ? "ml-auto border-l" : "mr-auto border-r",
+        className,
+      )}
+    >
+      {open && (
+        <div className="flex h-full flex-col">
+          <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+            <div className="grid gap-1">
+              <h2 id={titleId} className="text-base font-semibold tracking-tight">{title}</h2>
+              {description && <p className="text-sm text-muted-foreground">{description}</p>}
+            </div>
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Close" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+          {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-border bg-sunken/60 px-5 py-3">{footer}</div>}
+        </div>
+      )}
+    </dialog>
   );
 }

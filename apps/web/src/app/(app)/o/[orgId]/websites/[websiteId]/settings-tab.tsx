@@ -1,8 +1,10 @@
 "use client";
-import { Alert, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, ConfirmDialog, FormField, Input, Select, Textarea, toast } from "@wim/ui";
+import { Alert, Button, Card, CardContent, CardHeader, CardTitle, ConfirmDialog, FormField, Input, Select, Textarea, toast } from "@wim/ui";
 import { UpdateWebsiteInput, type WebsiteDetailDto } from "@wim/contracts";
 import { useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Settings2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { Section } from "@/components/monitoring";
 import { useEffect, useState } from "react";
 import { errorMessage, patch, post } from "@/lib/api";
 import { applyServerErrors, useZodForm } from "@/lib/form";
@@ -49,10 +51,9 @@ export function SettingsTab({ w, orgId, canWrite, canDelete }: { w: WebsiteDetai
   return (
     <div className="grid max-w-2xl gap-6">
       {canWrite && (
-        <Card>
-          <CardHeader><CardTitle>Website details</CardTitle><CardDescription>The domain itself can't be changed; add a new website for a different domain.</CardDescription></CardHeader>
+        <Section title="Website details" icon={<Settings2 />} description="The domain itself can't be changed; add a new website for a different domain." flush>
           <form onSubmit={onSubmit} noValidate>
-            <CardContent className="grid gap-4">
+            <div className="grid gap-4 px-4 py-5 sm:px-5">
               {error && <Alert tone="danger" title={error} />}
               <FormField label="Website name" htmlFor="ws-name" error={errs.name?.message}><Input id="ws-name" {...form.register("name")} /></FormField>
               <FormField label="Description" htmlFor="ws-desc" error={errs.description?.message}><Textarea id="ws-desc" rows={2} {...form.register("description")} /></FormField>
@@ -62,18 +63,23 @@ export function SettingsTab({ w, orgId, canWrite, canDelete }: { w: WebsiteDetai
                 </FormField>
                 <FormField label="Monitoring timezone" htmlFor="ws-tz" error={errs.monitoringTimezone?.message}><Input id="ws-tz" {...form.register("monitoringTimezone")} /></FormField>
               </div>
-            </CardContent>
-            <CardFooter><Button type="submit" loading={form.formState.isSubmitting}>Save changes</Button></CardFooter>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border bg-sunken/50 px-4 py-3 sm:px-5"><Button type="submit" loading={form.formState.isSubmitting}>Save changes</Button></div>
           </form>
-        </Card>
+        </Section>
       )}
       {canDelete && (
-        <Card className="border-[color-mix(in_srgb,var(--danger)_40%,transparent)]">
-          <CardHeader>
-            <CardTitle>Delete website</CardTitle>
-            <CardDescription>Removes the website from your organization, revokes its site key and releases the domain so it can be registered again. Registration history is kept; a domain that already received a free trial never receives another.</CardDescription>
+        <Card className="overflow-hidden border-[color-mix(in_srgb,var(--danger)_30%,transparent)]">
+          <CardHeader className="border-[color-mix(in_srgb,var(--danger)_20%,transparent)] bg-[color-mix(in_srgb,var(--danger)_4%,transparent)]">
+            <CardTitle className="flex items-center gap-2 text-danger"><AlertTriangle className="h-4 w-4" aria-hidden />Danger zone</CardTitle>
           </CardHeader>
-          <CardContent><Button variant="danger" onClick={() => { setTyped(""); setConfirmDelete(true); }}>Delete website</Button></CardContent>
+          <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">Delete website</h3>
+              <p className="mt-0.5 text-sm text-muted-foreground">Removes the website from your organization, revokes its site key and releases the domain so it can be registered again. Registration history is kept; a domain that already received a free trial never receives another.</p>
+            </div>
+            <Button variant="danger" className="shrink-0" onClick={() => { setTyped(""); setConfirmDelete(true); }}><Trash2 /> Delete website</Button>
+          </CardContent>
         </Card>
       )}
       <ConfirmDialog

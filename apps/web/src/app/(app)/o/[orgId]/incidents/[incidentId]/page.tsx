@@ -1,5 +1,6 @@
 "use client";
-import { Alert, Badge, Button, PageHeader, toast } from "@wim/ui";
+import { Alert, Badge, Button, cn, PageHeader, toast } from "@wim/ui";
+import { ArrowLeft, Bell, ExternalLink, FileText, History, ListTree } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -40,16 +41,15 @@ export default function IncidentPage() {
 
   return (
     <>
-      <div className="mb-2 text-sm"><Link href={`/o/${orgId}/incidents`} className="text-muted-foreground hover:underline">← Incidents</Link></div>
+      <div className="mb-3 text-sm"><Link href={`/o/${orgId}/incidents`} className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden />Incidents</Link></div>
       <QueryState q={q} skeleton="h-96">
         {i && st && (
           <>
-            <PageHeader title={`INC-${i.number} · ${i.title}`} description={i.description}
-              actions={<div className="flex flex-wrap items-center gap-2">
-                <Badge tone={st.tone}>{st.label}</Badge><Badge tone={SEVERITY_TONE[i.severity]}>{i.severity}</Badge>
-                {can("incident:write") && (i.status === "OPEN" || i.status === "REOPENED") && <Button size="sm" onClick={acknowledge} disabled={busy}>{busy ? "Acknowledging…" : "Acknowledge"}</Button>}
-              </div>} />
-            <div className="grid gap-6">
+            <PageHeader
+              eyebrow={<span className="flex flex-wrap items-center gap-2"><Badge tone={st.tone}>{st.label}</Badge><Badge tone={SEVERITY_TONE[i.severity]}>{i.severity}</Badge><span>{i.websiteName ?? "Website"} · {SOURCE_LABEL[i.source ?? ""] ?? i.source}</span></span>}
+              title={`INC-${i.number} · ${i.title}`} description={i.description}
+              actions={can("incident:write") && (i.status === "OPEN" || i.status === "REOPENED") ? <Button onClick={acknowledge} loading={busy} disabled={busy}>{busy ? "Acknowledging…" : "Acknowledge"}</Button> : undefined} />
+            <div className="grid gap-5">
               {active ? (
                 <Alert tone="danger" title={i.status === "ACKNOWLEDGED" ? "Ongoing — acknowledged by your team" : "Ongoing problem"}>
                   Monitoring will mark this incident recovered automatically once checks pass again; acknowledging only tells your team someone is on it.
@@ -57,44 +57,53 @@ export default function IncidentPage() {
               ) : (
                 <Alert tone="success" title="Recovered">Resolved {fmtUtc(resolvedAt)}{i.autoResolved ? " automatically after checks passed again" : ""}.</Alert>
               )}
-              <Section title="Summary">
+              <Section title="Summary" icon={<FileText />}>
                 <KeyValue items={[
-                  ["Website", <Link key="w" className="hover:underline" href={`/o/${orgId}/websites/${i.websiteId}`}>{i.websiteName ?? "Website"}</Link>],
-                  ["Detected by", SOURCE_LABEL[i.source ?? ""] ?? i.source], ["Category", i.category.replaceAll("_", " ").toLowerCase()],
-                  ["First detected", fmtUtc(i.firstDetectedAt)], ["Latest occurrence", fmtUtc(i.lastDetectedAt)], ["Occurrences", i.occurrenceCount],
+                  ["Website", <Link key="w" className="font-medium text-primary hover:underline" href={`/o/${orgId}/websites/${i.websiteId}`}>{i.websiteName ?? "Website"}</Link>],
+                  ["Detected by", SOURCE_LABEL[i.source ?? ""] ?? i.source], ["Category", <span key="c" className="capitalize">{i.category.replaceAll("_", " ").toLowerCase()}</span>],
+                  ["First detected", fmtUtc(i.firstDetectedAt)], ["Latest occurrence", fmtUtc(i.lastDetectedAt)], ["Occurrences", <span key="o" className="tabular-nums">{i.occurrenceCount}</span>],
                   ["Duration", `${fmtDuration((i as { durationSec?: number }).durationSec)}${active ? " so far" : ""}`],
-                  ["Acknowledged", i.acknowledgedAt ? fmtUtc(i.acknowledgedAt) : "—"], ["Times reopened", i.reopenCount ?? 0],
+                  ["Acknowledged", i.acknowledgedAt ? fmtUtc(i.acknowledgedAt) : "—"], ["Times reopened", <span key="r" className="tabular-nums">{i.reopenCount ?? 0}</span>],
                 ]} />
               </Section>
-              <Section title="Timeline">
-                <ol className="relative grid gap-3 border-l border-border pl-4 text-sm">
-                  {i.events.map((e, n) => (
-                    <li key={n}>
-                      <span aria-hidden className={`absolute -left-[5px] mt-1.5 h-2.5 w-2.5 rounded-full ${e.type === "AUTO_RESOLVED" || e.type === "RESOLVED" ? "bg-success" : e.type === "CREATED" || e.type === "REOPENED" ? "bg-danger" : "bg-muted-foreground/50"}`} />
-                      <p className="font-medium">{EVENT_LABEL[e.type] ?? e.type}</p>
-                      <p className="text-xs text-muted-foreground">{fmtUtc(e.at)}{typeof e.data?.durationSec === "number" ? ` · lasted ${fmtDuration(e.data.durationSec)}` : ""}</p>
-                    </li>
-                  ))}
-                </ol>
-              </Section>
-              <Section title="Occurrences" description="Most recent first (up to 50). Each links to the monitoring result that detected it.">
-                {!i.occurrences.length ? <p className="text-sm text-muted-foreground">No occurrences recorded.</p> : (
-                  <ul className="grid gap-2 text-sm">
-                    {i.occurrences.map((o, n) => (
-                      <li key={n} className="flex flex-wrap items-baseline gap-2">
-                        <span className="text-xs text-muted-foreground">{fmtUtc(o.at)}</span>
-                        <span className="text-xs">{String(o.details.kind ?? o.details.failureKind ?? o.details.category ?? "")}</span>
-                        {o.url && <span className="break-all text-xs text-muted-foreground">{o.url}</span>}
-                        {o.link && <Link className="text-xs hover:underline" href={`/o/${orgId}${o.link}`}>View result</Link>}
+              <div className="grid gap-5 xl:grid-cols-2 xl:items-start">
+                <Section title="Timeline" icon={<History />}>
+                  <ol className="relative ml-1 grid gap-4 border-l border-border pl-5 text-sm">
+                    {i.events.map((e, n) => (
+                      <li key={n} className="relative">
+                        <span aria-hidden className={cn("absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full ring-4 ring-card", e.type === "AUTO_RESOLVED" || e.type === "RESOLVED" ? "bg-success" : e.type === "CREATED" || e.type === "REOPENED" ? "bg-danger" : e.type === "ACKNOWLEDGED" ? "bg-warning" : "bg-border-strong")} />
+                        <p className="font-medium">{EVENT_LABEL[e.type] ?? e.type}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">{fmtUtc(e.at)}{typeof e.data?.durationSec === "number" ? ` · lasted ${fmtDuration(e.data.durationSec)}` : ""}</p>
                       </li>
                     ))}
-                  </ul>
-                )}
-              </Section>
-              <Section title="Notifications" description="Delivery summary for this incident (no recipient details).">
+                  </ol>
+                </Section>
+                <Section title="Occurrences" icon={<ListTree />} description="Most recent first (up to 50). Each links to the monitoring result that detected it." flush>
+                  {!i.occurrences.length ? <p className="px-4 py-6 text-sm text-muted-foreground sm:px-5">No occurrences recorded.</p> : (
+                    <ul className="max-h-[28rem] divide-y divide-border overflow-y-auto text-sm">
+                      {i.occurrences.map((o, n) => (
+                        <li key={n} className="flex items-start justify-between gap-3 px-4 py-2.5 sm:px-5">
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium">{String(o.details.kind ?? o.details.failureKind ?? o.details.category ?? "")}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">{fmtUtc(o.at)}</p>
+                            {o.url && <p className="break-all text-xs text-muted-foreground">{o.url}</p>}
+                          </div>
+                          {o.link && <Link className="inline-flex shrink-0 items-center gap-1 text-xs text-primary hover:underline" href={`/o/${orgId}${o.link}`}>View result<ExternalLink className="h-3 w-3" aria-hidden /></Link>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Section>
+              </div>
+              <Section title="Notifications" icon={<Bell />} description="Delivery summary for this incident (no recipient details).">
                 {!i.notifications?.length ? <p className="text-sm text-muted-foreground">No notifications were sent for this incident.</p> : (
-                  <ul className="grid gap-1 text-sm">
-                    {i.notifications.map((n, k) => <li key={k}>{n.event} · {n.channel.toLowerCase()} · {n.status.toLowerCase()} ×{n.count} <span className="text-xs text-muted-foreground">{fmtUtc(n.lastAt)}</span></li>)}
+                  <ul className="divide-y divide-border rounded-lg border border-border text-sm">
+                    {i.notifications.map((n, k) => (
+                      <li key={k} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                        <span>{n.event} · {n.channel.toLowerCase()} · {n.status.toLowerCase()} <span className="tabular-nums">×{n.count}</span></span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{fmtUtc(n.lastAt)}</span>
+                      </li>
+                    ))}
                   </ul>
                 )}
                 {i.notifiedMe && <p className="mt-2 text-xs text-muted-foreground">You received an in-app notification about this incident.</p>}

@@ -35,7 +35,7 @@ export const SETTINGS = {
   "branding.productName": def({ schema: z.string().trim().min(1).max(60), default: "SiteSentinel", group: "branding", public: true, description: "Product name used in the UI, emails and the authenticator app issuer" }),
   "branding.logoUrl": def({ schema: optionalUrl, default: null, group: "branding", public: true, description: "Logo image URL" }),
   "branding.faviconUrl": def({ schema: optionalUrl, default: null, group: "branding", public: true, description: "Favicon URL" }),
-  "branding.primaryColor": def({ schema: hexColor, default: "#2563eb", group: "branding", public: true, description: "Primary brand colour" }),
+  "branding.primaryColor": def({ schema: hexColor, default: "#4f46e5", group: "branding", public: true, description: "Primary brand colour" }),
   "branding.supportEmail": def({ schema: z.email().nullable(), default: null, group: "branding", public: true, description: "Support contact shown to customers" }),
 
   // ---- legal
