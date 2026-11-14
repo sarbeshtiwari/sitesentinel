@@ -1,6 +1,7 @@
 "use client";
 import { X } from "lucide-react";
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { Button, cn } from "./primitives";
 
 // ---------------------------------------------------------------- Dialog (native <dialog>: focus trap, Esc, inert background)
@@ -81,40 +82,87 @@ export function ConfirmDialog({
 }
 
 // ---------------------------------------------------------------- DropdownMenu
+/**
+ * Menu button. The menu is portalled to <body> with fixed positioning so cards with overflow-hidden and
+ * scrolling tables can't clip it; it opens upwards when there isn't room below and stays inside the viewport.
+ */
 export function DropdownMenu({ trigger, children, align = "end", label, triggerClassName }: { trigger: React.ReactNode; children: React.ReactNode; align?: "start" | "end"; label: string; triggerClassName?: string }) {
   const [open, setOpen] = React.useState(false);
-  const root = React.useRef<HTMLDivElement>(null);
+  const [pos, setPos] = React.useState<React.CSSProperties | null>(null);
+  const button = React.useRef<HTMLButtonElement>(null);
+  const menu = React.useRef<HTMLDivElement>(null);
   const menuId = React.useId();
+
+  const place = React.useCallback(() => {
+    const t = button.current?.getBoundingClientRect();
+    const m = menu.current;
+    if (!t || !m) return;
+    const gap = 6, pad = 8, w = m.offsetWidth, h = m.offsetHeight;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let left = align === "end" ? t.right - w : t.left;
+    left = Math.min(Math.max(pad, left), vw - w - pad);
+    const below = vh - t.bottom - gap - pad, above = t.top - gap - pad;
+    const up = h > below && above > below;
+    const top = up ? Math.max(pad, t.top - gap - h) : t.bottom + gap;
+    setPos({ position: "fixed", top, left, maxHeight: Math.max(120, up ? above : below) });
+  }, [align]);
+
+  React.useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    place();
+  }, [open, place]);
+
   React.useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onDoc = (e: MouseEvent) => {
+      const n = e.target as Node;
+      if (!menu.current?.contains(n) && !button.current?.contains(n)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); button.current?.focus(); } };
+    // A fixed menu would drift from its trigger: close on outside scroll, re-place on resize.
+    const onScroll = (e: Event) => { if (!menu.current?.contains(e.target as Node)) setOpen(false); };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
-    root.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
-    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
-  }, [open]);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, place]);
+
+  React.useEffect(() => {
+    if (open && pos) menu.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus({ preventScroll: true });
+  }, [open, pos]);
+
   const onMenuKey = (e: React.KeyboardEvent) => {
-    const items = [...(root.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+    const items = [...(menu.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
     const i = items.indexOf(document.activeElement as HTMLElement);
     if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
     if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+    if (e.key === "Tab") setOpen(false);
   };
   return (
-    <div ref={root} className="relative">
-      <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((o) => !o)} className={cn("rounded-md", triggerClassName)}>
+    <div className="relative">
+      <button ref={button} type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} onClick={() => setOpen((o) => !o)} className={cn("rounded-md", triggerClassName)}>
         {trigger}
       </button>
-      {open && (
+      {open && createPortal(
         <div
+          ref={menu}
           id={menuId}
           role="menu"
+          aria-label={label}
           onKeyDown={onMenuKey}
           onClick={() => setOpen(false)}
-          className={cn("absolute z-50 mt-1.5 min-w-56 rounded-lg border border-border bg-card p-1 shadow-lg", align === "end" ? "right-0" : "left-0")}
+          style={pos ?? { position: "fixed", top: 0, left: 0, visibility: "hidden" }}
+          className="z-[60] min-w-56 overflow-y-auto rounded-lg border border-border bg-card p-1 text-foreground shadow-lg"
         >
           {children}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
