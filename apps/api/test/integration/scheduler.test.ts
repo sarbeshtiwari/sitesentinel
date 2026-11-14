@@ -216,8 +216,12 @@ describe("idempotency and concurrency", () => {
     await makeDue(c, ids, 1);
     await Promise.all(instances.flatMap((s) => [s.runCycle(), s.runCycle()]));
     const ex2 = await executions(c, ids);
-    expect(ex2.length).toBe(ex.length + 30); // exactly one more per website
+    // Every website got its new window, nothing was duplicated. As above, a boundary crossing can add a website's
+    // following window too (CI saw +31 once) — a distinct window, so the count is bounded, not exact.
     expect(new Set(ex2.map((e) => `${e.schedule_id}|${e.queued_at.toISOString()}`)).size).toBe(ex2.length);
+    const before = new Set(ex.map((e) => e.id));
+    expect(new Set(ex2.filter((e) => !before.has(e.id)).map((e) => e.schedule_id)).size).toBe(30);
+    expect(ex2.length - ex.length).toBeLessThanOrEqual(60);
     for (const db of dbs) await db.$disconnect();
   });
 
