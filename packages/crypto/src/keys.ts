@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 
 /**
  * A KeyProvider holds key-encryption keys (KEKs) OUTSIDE the database and only
@@ -49,7 +50,7 @@ export class LocalKeyProvider implements KeyProvider {
   /** Load from KEK_RING_FILE (path) or KEK_RING_JSON (base64-encoded JSON). */
   static fromEnv(env: NodeJS.ProcessEnv = process.env): LocalKeyProvider {
     if (env.KEK_RING_FILE) {
-      return new LocalKeyProvider(JSON.parse(readFileSync(env.KEK_RING_FILE, "utf8")) as KeyRingFile);
+      return new LocalKeyProvider(JSON.parse(readFileSync(resolveRingPath(env.KEK_RING_FILE), "utf8")) as KeyRingFile);
     }
     if (env.KEK_RING_JSON) {
       return new LocalKeyProvider(JSON.parse(Buffer.from(env.KEK_RING_JSON, "base64").toString("utf8")) as KeyRingFile);
@@ -113,5 +114,19 @@ export async function rewrapDek(
     return await provider.wrapKey(dek, context);
   } finally {
     dek.fill(0);
+  }
+}
+
+/**
+ * A relative KEK_RING_FILE (e.g. ".keys/kek.json" in the repository .env) is resolved against the working directory and
+ * then its parents, so services and CLIs started from apps/<name> find the repository's key ring. Absolute paths are
+ * used as given.
+ */
+function resolveRingPath(p: string): string {
+  if (isAbsolute(p)) return p;
+  for (let dir = process.cwd(); ; dir = dirname(dir)) {
+    const candidate = join(dir, p);
+    if (existsSync(candidate)) return candidate;
+    if (dirname(dir) === dir) return p; // not found anywhere: let readFileSync report the original path
   }
 }

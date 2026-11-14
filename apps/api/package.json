@@ -10,7 +10,7 @@
     "start": "node --enable-source-maps dist/main.js",
     "test:integration": "vitest run --config vitest.config.ts",
     "test": "vitest run --config vitest.config.ts",
-    "admin:create": "node --enable-source-maps dist/cli/create-admin.js"
+    "admin:create": "node --env-file-if-exists=../../.env --enable-source-maps dist/cli/create-admin.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.5",
