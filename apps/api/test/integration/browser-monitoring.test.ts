@@ -122,9 +122,11 @@ describe("scheduling and entitlement", () => {
     await env.scheduler().runCycle();
     expect((await reason(s1.id)).status).toBe("ACTIVE");
     expect(await reason(s2.id)).toEqual({ status: "PAUSED", paused_reason: "WEBSITE_LIMIT" });
-    const deep = await c.query(`SELECT count(*)::int AS n FROM monitoring_executions WHERE tier = 'T3_DEEP'`);
+    // scoped to this test's organisations: other test files may legitimately have run deep scans before this one
+    const mine = [org, other, org3];
+    const deep = await c.query(`SELECT count(*)::int AS n FROM monitoring_executions WHERE tier = 'T3_DEEP' AND org_id = ANY($1::uuid[])`, [mine]);
     expect(deep.rows[0].n).toBe(0);
-    const deepSched = await c.query(`SELECT count(*)::int AS n FROM monitoring_schedules WHERE tier = 'T3_DEEP' AND status = 'ACTIVE'`);
+    const deepSched = await c.query(`SELECT count(*)::int AS n FROM monitoring_schedules WHERE tier = 'T3_DEEP' AND status = 'ACTIVE' AND org_id = ANY($1::uuid[])`, [mine]);
     expect(deepSched.rows[0].n).toBe(0);
   }, 60_000);
 });
