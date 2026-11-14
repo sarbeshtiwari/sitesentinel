@@ -1,0 +1,91 @@
+# Phase 4E operational verification: the deep-scan topology in Docker, attached to the dev stack
+# (infra/compose/docker-compose.dev.yml provides Postgres, Redis and S3 on its default network = "data").
+#   docker compose --env-file <ops.env> -f infra/compose/docker-compose.deepscan-ops.yml up -d
+# worker-deepscan runs the PRODUCTION image (infra/docker/worker-deepscan.Dockerfile → wim-worker-deepscan:dev),
+# two replicas, as the narrow wim_scanner database role, on data + http-egress only.
+# Development/verification only: the fixture "internet" and the gateway's test allowance never exist in production.
+name: wim-deepscan-ops
+
+x-repo-node: &repo-node
+  image: node:24-alpine
+  working_dir: /repo
+  volumes: ["../..:/repo:ro"]
+  read_only: true
+  tmpfs: ["/tmp"]
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+
+x-deepscan: &deepscan
+  image: wim-worker-deepscan:dev
+  environment: &deepscan-env
+    SCANNER_DATABASE_URL: ${OPS_SCANNER_DATABASE_URL:?}
+    REDIS_URL: ${OPS_REDIS_URL:?}
+    EGRESS_GATEWAY_URL: http://10.252.20.2:8080
+    EGRESS_TOKEN_SECRET: ${OPS_EGRESS_SECRET:?}
+    LOG_LEVEL: info
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: 512m
+  pids_limit: 256
+  restart: "no"
+
+services:
+  # The controlled fault website (ds-* deep-scan sites) + fixture DNS (stands in for the internet).
+  fixture:
+    <<: *repo-node
+    image: mcr.microsoft.com/playwright:v1.65.0-noble # has openssl for the fixture's test CA
+    working_dir: /repo/apps/scheduler
+    command: ["node", "scripts/fault-env.mjs"]
+    environment:
+      NODE_ENV: test
+      FAULT_BIND: 0.0.0.0
+      FAULT_ANSWER: 10.252.77.10
+      FAULT_DNS_PORT: "53"
+      FAULT_HTTP_PORT: "80"
+      FAULT_HTTPS_PORT: "443"
+      FAULT_CONTROL_PORT: "9999"
+      FAULT_HOSTS: ${OPS_FAULT_HOSTS:?}
+    cap_add: ["NET_BIND_SERVICE"]
+    user: "0"
+    networks: { fakenet: { ipv4_address: 10.252.77.10 } }
+
+  egress-gateway:
+    <<: *repo-node
+    command: ["node", "apps/egress-gateway/dist/main.js"]
+    environment:
+      NODE_ENV: test
+      LOG_LEVEL: info
+      EGRESS_PORT: "8080"
+      EGRESS_TOKEN_SECRET: ${OPS_EGRESS_SECRET:?}
+      DNS_RESOLVERS: 10.252.77.10
+      EGRESS_TEST_ALLOW_CIDRS: 10.252.77.0/24
+    networks:
+      fakenet: { ipv4_address: 10.252.77.2 }
+      http-egress: { ipv4_address: 10.252.20.2 }
+
+  worker-deepscan-1:
+    <<: *deepscan
+    environment: { <<: *deepscan-env, WORKER_ID: ops-deepscan-1 }
+    networks: { data: {}, http-egress: { ipv4_address: 10.252.20.21 } }
+  worker-deepscan-2:
+    <<: *deepscan
+    environment: { <<: *deepscan-env, WORKER_ID: ops-deepscan-2 }
+    networks: { data: {}, http-egress: { ipv4_address: 10.252.20.22 } }
+
+  scheduler:
+    <<: *repo-node
+    working_dir: /repo/apps/scheduler
+    command: ["node", "dist/main.js"]
+    environment:
+      WORKER_DATABASE_URL: ${OPS_WORKER_DATABASE_URL:?}
+      REDIS_URL: ${OPS_REDIS_URL:?}
+      SCHEDULER_TICK_MS: "2000"
+      SCHEDULER_INSTANCE_ID: ops-scheduler
+      LOG_LEVEL: info
+    networks: { data: {} }
+
+networks:
+  data: { external: true, name: wim-dev_default }
+  fakenet: { internal: true, ipam: { config: [{ subnet: 10.252.77.0/24 }] } }
+  http-egress: { internal: true, ipam: { config: [{ subnet: 10.252.20.0/24 }] } }
