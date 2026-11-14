@@ -1,0 +1,21 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+.next/
+.turbo/
+packages/db/src/generated/
+coverage/
+*.log
+.keys/
+*.tsbuildinfo
+# local test output and tooling state (release readiness: repository hygiene)
+test-results/
+playwright-report/
+blob-report/
+.playwright-mcp/
+.claude/
+*.dump
+*.sql.gz
+staging-isolation*/
