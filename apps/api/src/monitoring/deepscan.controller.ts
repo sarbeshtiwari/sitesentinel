@@ -58,12 +58,25 @@ export class DeepScanService {
       const latest = await tx.deepScan.findFirst({ where: { websiteId }, orderBy: { startedAt: "desc" } });
       const open = await tx.$queryRaw<Array<{ group_key: string; severity: string; n: bigint }>>`
         SELECT group_key, severity, count(*) AS n FROM scan_findings WHERE website_id = ${websiteId}::uuid AND status = 'OPEN' GROUP BY 1, 2`;
+      // A requested/scheduled scan exists only as an execution until the scanner picks it up (then it gets a scan row).
+      const [pending] = await tx.$queryRaw<Array<{ id: string; status: string; queued_at: Date }>>`
+        SELECT e.id, e.status::text AS status, e.queued_at FROM monitoring_executions e
+         WHERE e.website_id = ${websiteId}::uuid AND e.tier = 'T3_DEEP' AND e.status IN ('SCHEDULED', 'QUEUED', 'RETRYING', 'RUNNING')
+           AND e.queued_at > now() - interval '8 days'
+           AND NOT EXISTS (SELECT 1 FROM deep_scans d WHERE d.execution_id = e.id)
+         ORDER BY e.queued_at DESC LIMIT 1`;
+      // The customer's pause/resume takes effect at once here; the scheduler syncs the schedule on its next cycle.
+      const customerPaused = cfg.paused;
+      const scheduleActive = sched?.status === "ACTIVE";
+      const resuming = !customerPaused && !scheduleActive && sched?.pausedReason === "DISABLED_BY_CUSTOMER";
       return {
         entitled: limits.tiers.DEEPSCAN.enabled,
-        enabled: sched?.status === "ACTIVE", // scheduled scans are running (the scheduler activates new websites on its next cycle)
-        pausedReason: sched && sched.status !== "ACTIVE" ? sched.pausedReason : null,
+        enabled: !customerPaused && scheduleActive,
+        pausedReason: customerPaused ? "DISABLED_BY_CUSTOMER" : sched && !scheduleActive && !resuming ? sched.pausedReason : null,
+        resuming,
+        pending: pending ? { executionId: pending.id, status: pending.status, queuedAt: pending.queued_at.toISOString() } : null,
         intervalSec: sched?.intervalSec ?? null,
-        nextRunAt: sched?.status === "ACTIVE" ? iso(sched.nextRunAt) : null,
+        nextRunAt: !customerPaused && scheduleActive ? iso(sched!.nextRunAt) : null,
         config: cfg,
         effectiveLimits: effectiveScanLimits(limits.deepscan, cfg, { maxPages: cfgRow?.maxPages, maxDepth: cfgRow?.maxDepth }),
         latestScan: latest ? this.scanDto(latest) : null,
