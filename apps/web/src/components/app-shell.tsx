@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   AppShell, Avatar, Badge, Breadcrumbs, Button, DropdownItem, DropdownLabel, DropdownMenu, DropdownSeparator, Logo, LogoSymbol,
-  SidebarBrand, SidebarItem, SidebarSection, Skeleton, ThemeToggle, Tooltip, toast,
+  SidebarAccount, SidebarBrand, SidebarItem, SidebarSection, Skeleton, ThemeToggle, Tooltip, toast,
 } from "@wim/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -124,7 +124,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
         <SidebarItem LinkComponent={Link} href={at("usage")} icon={<Gauge />} active={on("usage")}>Usage & limits</SidebarItem>
       </SidebarSection>
       {orgId && (
-        <SidebarSection title="Organization">
+        <SidebarSection title="Settings" id="org-settings" collapsible defaultOpen={false} containsActive={is(`${base}/settings`)}>
           {can("org:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/general`} icon={<Settings />} active={is(`${base}/settings/general`)}>General</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/team`} icon={<Users />} active={is(`${base}/settings/team`)}>Team</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/roles`} icon={<KeyRound />} active={is(`${base}/settings/roles`)}>Roles</SidebarItem>}
@@ -193,20 +193,6 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
           </Tooltip>
         )}
         <ThemeToggle className="text-muted-foreground" />
-        <DropdownMenu label="Account menu" triggerClassName="ml-1" trigger={<Avatar name={me.data?.name ?? me.data?.email} />}>
-          {me.data && (
-            <DropdownLabel>
-              <span className="block truncate text-sm font-medium text-foreground">{me.data.name}</span>
-              <span className="block truncate">{me.data.email}</span>
-            </DropdownLabel>
-          )}
-          <DropdownSeparator />
-          <DropdownItem onClick={() => router.push("/account/profile")}><User /> Profile</DropdownItem>
-          <DropdownItem onClick={() => router.push("/account/security")}><ShieldCheck /> Security</DropdownItem>
-          <DropdownItem onClick={() => router.push("/account/security#activity")}><Activity /> Sign-in activity</DropdownItem>
-          <DropdownSeparator />
-          <DropdownItem danger onClick={signOut}><LogOut /> Sign out</DropdownItem>
-        </DropdownMenu>
       </div>
     </>
   );
@@ -217,21 +203,27 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
       topbar={topbar}
       surface="customer"
       banner={me.data && !me.data.emailVerified ? <VerifyBanner /> : undefined}
-      sidebarFooter={current ? <OrgFooter name={current.name} role={current.role.name} /> : undefined}
+      sidebarFooter={me.data ? (
+        <SidebarAccount
+          avatar={<Avatar name={me.data.name ?? me.data.email} className="h-8 w-8" />}
+          name={me.data.name ?? me.data.email}
+          detail={current ? `${current.role.name} · ${current.name}` : me.data.email}
+          menu={<>
+            <DropdownLabel>
+              <span className="block truncate text-sm font-medium text-foreground">{me.data.name}</span>
+              <span className="block truncate">{me.data.email}</span>
+            </DropdownLabel>
+            <DropdownSeparator />
+            <DropdownItem onClick={() => router.push("/account/profile")}><User /> Profile</DropdownItem>
+            <DropdownItem onClick={() => router.push("/account/security")}><ShieldCheck /> Security</DropdownItem>
+            <DropdownItem onClick={() => router.push("/account/security#activity")}><Activity /> Sign-in activity</DropdownItem>
+            <DropdownSeparator />
+            <DropdownItem danger onClick={signOut}><LogOut /> Sign out</DropdownItem>
+          </>}
+        />
+      ) : undefined}
     >
       {children}
     </AppShell>
-  );
-}
-
-function OrgFooter({ name, role }: { name: string; role: string }) {
-  return (
-    <div className="flex items-center gap-2.5 rounded-md px-1">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-soft text-xs font-semibold text-primary" aria-hidden>{name.slice(0, 1).toUpperCase()}</span>
-      <div className="min-w-0 text-xs">
-        <p className="truncate font-medium text-foreground">{name}</p>
-        <p className="truncate text-muted-foreground">Your role: {role}</p>
-      </div>
-    </div>
   );
 }

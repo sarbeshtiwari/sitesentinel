@@ -1,7 +1,7 @@
 "use client";
 import { ArrowLeftRight } from "lucide-react";
 import {
-  AppShell, Avatar, Badge, Breadcrumbs, DropdownItem, DropdownLabel, DropdownMenu, DropdownSeparator, Logo, LogoSymbol, SidebarBrand,
+  AppShell, Avatar, Badge, Breadcrumbs, DropdownItem, DropdownLabel, DropdownSeparator, Logo, LogoSymbol, SidebarAccount, SidebarBrand,
   SidebarItem, SidebarSection, Skeleton, ThemeToggle, useBrandColor,
 } from "@wim/ui";
 import { useQueryClient } from "@tanstack/react-query";
@@ -39,26 +39,30 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <SidebarBrand href="/overview" LinkComponent={Link} collapsedChildren={<LogoSymbol variant="admin" title="Admin console" />}>
         <span className="text-white"><Logo variant="admin" name={brand.name ?? "SiteSentinel"} suffix={<Badge className="bg-white/10 text-[10px] uppercase tracking-wider text-cyan-200 ring-white/15">Admin</Badge>} /></span>
       </SidebarBrand>
-      <SidebarSection title="Platform">
+      <SidebarSection>
         {me.can("admin:overview:read") && <SidebarItem LinkComponent={Link} href="/overview" icon={<LayoutDashboard />} active={is("/overview")}>Overview</SidebarItem>}
+      </SidebarSection>
+      <SidebarSection title="Customers">
         {me.can("admin:customers:read") && <SidebarItem LinkComponent={Link} href="/customers" icon={<Building2 />} active={is("/customers")}>Customers</SidebarItem>}
         {me.can("admin:overview:read") && <SidebarItem LinkComponent={Link} href="/websites" icon={<Globe />} active={is("/websites")}>Websites & domains</SidebarItem>}
         {me.can("admin:customers:read") && <SidebarItem LinkComponent={Link} href="/transfers" icon={<ArrowLeftRight />} active={is("/transfers")}>Domain transfers</SidebarItem>}
-        {me.can("admin:audit:read") && <SidebarItem LinkComponent={Link} href="/audit" icon={<ScrollText />} active={is("/audit")}>Audit log</SidebarItem>}
-        {me.can("admin:settings:read") && <SidebarItem LinkComponent={Link} href="/settings" icon={<Settings />} active={is("/settings")}>Settings</SidebarItem>}
+      </SidebarSection>
+      <SidebarSection title="Operations">
+        {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/platform" icon={<Gauge />} active={is("/platform")}>Platform health</SidebarItem>}
+        {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/alerts" icon={<Bell />} active={is("/alerts")}>Alerts</SidebarItem>}
+        {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/monitoring" icon={<Server />} active={is("/monitoring")}>Queues & executions</SidebarItem>}
+        {me.can("admin:usage:read") && <SidebarItem LinkComponent={Link} href="/usage" icon={<BarChart3 />} active={is("/usage")}>Usage accounting</SidebarItem>}
       </SidebarSection>
       {me.can("admin:billing:read") && (
-        <SidebarSection title="Billing">
+        <SidebarSection title="Billing" id="admin-billing" collapsible defaultOpen={false} containsActive={is("/plans") || is("/gateways")}>
           <SidebarItem LinkComponent={Link} href="/plans" icon={<Layers />} active={is("/plans")}>Plans</SidebarItem>
           <SidebarItem LinkComponent={Link} href="/gateways" icon={<CreditCard />} active={is("/gateways")}>Payment gateways</SidebarItem>
         </SidebarSection>
       )}
-      <SidebarSection title="Operations">
-        {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/platform" icon={<Gauge />} active={is("/platform")}>Platform health</SidebarItem>}
-        {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/alerts" icon={<Bell />} active={is("/alerts")}>Platform alerts</SidebarItem>}
-        {me.can("admin:monitoring:read") && <SidebarItem LinkComponent={Link} href="/monitoring" icon={<Server />} active={is("/monitoring")}>Queues & executions</SidebarItem>}
-        {me.can("admin:usage:read") && <SidebarItem LinkComponent={Link} href="/usage" icon={<BarChart3 />} active={is("/usage")}>Usage accounting</SidebarItem>}
+      <SidebarSection title="Configuration" id="admin-config" collapsible defaultOpen={false} containsActive={is("/settings") || is("/operations") || is("/audit")}>
+        {me.can("admin:settings:read") && <SidebarItem LinkComponent={Link} href="/settings" icon={<Settings />} active={is("/settings")}>Platform settings</SidebarItem>}
         {me.can("admin:settings:read") && <SidebarItem LinkComponent={Link} href="/operations" icon={<SlidersHorizontal />} active={is("/operations")}>Operations config</SidebarItem>}
+        {me.can("admin:audit:read") && <SidebarItem LinkComponent={Link} href="/audit" icon={<ScrollText />} active={is("/audit")}>Audit log</SidebarItem>}
       </SidebarSection>
     </nav>
   );
@@ -70,16 +74,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </div>
       <div className="flex items-center gap-1">
         <ThemeToggle className="text-muted-foreground" />
-        {me.isLoading ? <Skeleton className="h-8 w-8 rounded-full" /> : (
-          <DropdownMenu label="Admin account menu" triggerClassName="ml-1" trigger={<Avatar name={me.data?.name ?? "Admin"} />}>
-            {me.data && <DropdownLabel><span className="block text-sm font-medium text-foreground">{me.data.name}</span><span className="block truncate">{me.data.email}</span><Badge tone="info" className="mt-1.5">{me.data.role}</Badge></DropdownLabel>}
-            <DropdownSeparator />
-            <DropdownItem onClick={() => router.push("/account")}><User /> My account</DropdownItem>
-            <DropdownItem danger onClick={signOut}><LogOut /> Sign out</DropdownItem>
-          </DropdownMenu>
-        )}
       </div>
     </>
   );
-  return <AppShell sidebar={sidebar} topbar={topbar} surface="admin" wide>{children}</AppShell>;
+  const footer = me.isLoading ? <Skeleton className="h-11 w-full rounded-lg bg-white/5" /> : me.data ? (
+    <SidebarAccount
+      menuLabel="Admin account menu"
+      avatar={<Avatar name={me.data.name ?? "Admin"} className="h-8 w-8" />}
+      name={me.data.name ?? me.data.email}
+      detail={me.data.role.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase())}
+      menu={<>
+        <DropdownLabel><span className="block text-sm font-medium text-foreground">{me.data.name}</span><span className="block truncate">{me.data.email}</span><Badge tone="info" className="mt-1.5">{me.data.role}</Badge></DropdownLabel>
+        <DropdownSeparator />
+        <DropdownItem onClick={() => router.push("/account")}><User /> My account</DropdownItem>
+        <DropdownItem danger onClick={signOut}><LogOut /> Sign out</DropdownItem>
+      </>}
+    />
+  ) : undefined;
+  return <AppShell sidebar={sidebar} topbar={topbar} surface="admin" wide sidebarFooter={footer}>{children}</AppShell>;
 }
