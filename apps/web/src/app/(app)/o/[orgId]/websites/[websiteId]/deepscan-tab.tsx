@@ -3,7 +3,7 @@ import { Alert, Badge, Button, ConfirmDialog, EmptyState, Input, MetricCard, Tab
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, CheckCircle2, FileSearch, History, ListTree, Loader2, Pause, Play, ScanSearch, ShieldAlert, Square, Timer, Unlink } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DataEnvelope } from "@wim/contracts";
 import { FilterSelect, Hint, QueryState, Section } from "@/components/monitoring";
 import { errorMessage, get, post } from "@/lib/api";
@@ -26,7 +26,7 @@ export const GROUP_LABEL: Record<string, string> = { broken_pages: "Broken pages
 const STOP_LABEL: Record<string, string> = {
   FRONTIER_EXHAUSTED: "Every discovered page was checked", PAGE_LIMIT: "Stopped at the page limit", DURATION: "Stopped at the time limit", REQUEST_BUDGET: "Request budget used up",
   DAILY_QUOTA: "Daily page quota reached", INFRASTRUCTURE: "Our infrastructure failed (not your website)", NO_PAGE_REACHABLE: "No page could be reached safely",
-  CANCELLED: "Cancelled", ABANDONED: "Abandoned", INCOMPLETE: "Not every page was checked",
+  CANCELLED: "Cancelled", ABANDONED: "Stopped without finishing (scanner interrupted)", INCOMPLETE: "Not every page was checked",
 };
 export const stopLabel = (s: string | null) => (s ? STOP_LABEL[s] ?? s : "—");
 
@@ -38,7 +38,12 @@ export function ScanStatusBadge({ s }: { s: Pick<ScanDto, "status" | "complete" 
 export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { orgId: string; websiteId: string; canWrite: boolean; entitledReason: string | null }) {
   const qc = useQueryClient();
   const base = `/orgs/${orgId}/websites/${websiteId}/deep-scan`;
-  const sum = useQuery({ queryKey: mk.deep(orgId, websiteId), queryFn: ({ signal }) => get<DataEnvelope<SummaryDto>>(base, { signal }).then((r) => r.data), refetchInterval: (q) => (q.state.data?.latestScan?.status === "RUNNING" ? 5000 : false) });
+  // A requested scan exists only as a queued job until the scanner picks it up: poll quickly until it shows up.
+  const [pending, setPending] = useState<{ executionId: string; since: number } | null>(null);
+  const sum = useQuery({
+    queryKey: mk.deep(orgId, websiteId), queryFn: ({ signal }) => get<DataEnvelope<SummaryDto>>(base, { signal }).then((r) => r.data),
+    refetchInterval: (q) => (pending ? 2000 : q.state.data?.latestScan?.status === "RUNNING" ? 3000 : false),
+  });
   const scans = useQuery({ queryKey: [...mk.deep(orgId, websiteId), "scans"], queryFn: ({ signal }) => get<DataEnvelope<ScanDto[]>>(`${base}/scans?limit=20`, { signal }).then((r) => r.data) });
   const [f, setF] = useState({ status: "OPEN", group: "", severity: "", url: "" });
   const url = useDebounced(f.url);
@@ -47,12 +52,25 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
     queryFn: ({ signal }) => get<DataEnvelope<FindingDto[]>>(`${base}/findings?${new URLSearchParams({ status: f.status, limit: "200", ...(f.group ? { group: f.group } : {}), ...(f.severity ? { severity: f.severity } : {}), ...(url ? { url } : {}) })}`, { signal }).then((r) => r.data),
   });
   const [confirm, setConfirm] = useState<null | "cancel">(null);
-  const act = async (fn: () => Promise<unknown>, ok: string) => {
-    try { await fn(); toast.success(ok); await qc.invalidateQueries({ queryKey: mk.deep(orgId, websiteId) }); } catch (e) { toast.error(errorMessage(e)); }
+  const [busy, setBusy] = useState<null | "start" | "schedule" | "cancel">(null);
+  const act = async <T,>(kind: NonNullable<typeof busy>, fn: () => Promise<T>, ok: string): Promise<T | undefined> => {
+    setBusy(kind);
+    try { const r = await fn(); toast.success(ok); await qc.invalidateQueries({ queryKey: mk.deep(orgId, websiteId) }); return r; }
+    catch (e) { toast.error(errorMessage(e)); return undefined; }
+    finally { setBusy(null); }
+  };
+  const startScan = async () => {
+    const r = await act("start", () => post<DataEnvelope<{ executionId: string }>>(`${base}/start`), "Scan requested");
+    if (r) setPending({ executionId: r.data.executionId, since: Date.now() });
   };
   const s = sum.data;
   const latest = s?.latestScan;
   const running = latest?.status === "RUNNING";
+  // the requested scan is visible (running or already finished): stop the fast polling
+  useEffect(() => { if (pending && latest?.executionId === pending.executionId) setPending(null); }, [pending, latest?.executionId]);
+  const waiting = Boolean(pending && latest?.executionId !== pending.executionId);
+  const slow = waiting && Date.now() - pending!.since > 60_000;
+  const schedulePaused = s?.pausedReason === "DISABLED_BY_CUSTOMER";
   const completed = scans.data?.find((x) => x.status === "COMPLETED");
   const count = (g: string) => s?.openFindings.filter((x) => x.group === g).reduce((a, b) => a + b.count, 0) ?? 0;
   const pagePath = `/o/${orgId}/websites/${websiteId}/deep-scan`;
@@ -73,14 +91,24 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
             )}
             <Section title="Deep scans" icon={<ScanSearch />} description={s.enabled ? (s.nextRunAt ? `Next scheduled scan ${fmtTime(s.nextRunAt)}` : "Scheduled") : s.pausedReason === "DISABLED_BY_CUSTOMER" ? "Paused by your organisation" : "Not scheduled yet"}
               actions={canWrite && s.entitled && (
-                <div className="flex flex-wrap gap-2">
-                  {!running && s.enabled && <Button size="sm" onClick={() => act(() => post(`${base}/start`), "Scan requested")}><Play /> Start scan</Button>}
-                  {running && <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")}><Square /> Cancel scan</Button>}
-                  <Button size="sm" variant="outline" onClick={() => act(() => post(`${base}/pause`, { paused: s.pausedReason !== "DISABLED_BY_CUSTOMER" }), s.pausedReason === "DISABLED_BY_CUSTOMER" ? "Deep scans resumed" : "Deep scans paused")}>
-                    {s.pausedReason === "DISABLED_BY_CUSTOMER" ? <><Play /> Resume</> : <><Pause /> Pause</>}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* one primary action for the scan itself… */}
+                  {running ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setConfirm("cancel")}><Square /> Cancel scan</Button>
+                    : waiting ? <Button size="sm" disabled loading>Starting…</Button>
+                    : s.enabled && <Button size="sm" loading={busy === "start"} disabled={busy !== null} onClick={startScan}><Play /> Start scan</Button>}
+                  {/* …and the automatic schedule, labelled as such (it doesn't stop a scan that is running) */}
+                  <Button size="sm" variant="ghost" loading={busy === "schedule"} disabled={busy !== null || waiting}
+                    title={schedulePaused ? "Turn the automatic deep scans back on" : "Stop automatic deep scans; you can still start one manually"}
+                    onClick={() => act("schedule", () => post(`${base}/pause`, { paused: !schedulePaused }), schedulePaused ? "Automatic scans resumed" : "Automatic scans paused")}>
+                    {schedulePaused ? <><Play /> Resume schedule</> : <><Pause /> Pause schedule</>}
                   </Button>
                 </div>
               )}>
+              {waiting && (
+                <Alert tone={slow ? "warning" : "info"} className="mb-4" title={slow ? "The scan is still queued" : "Scan requested — waiting for the scanner to start it"}>
+                  {slow ? "The scanner hasn't picked it up yet. If this persists, the deep-scan worker may not be running." : "This usually takes a few seconds; the page updates on its own."}
+                </Alert>
+              )}
               {!latest ? <EmptyState icon={<ScanSearch />} title="No scan has run yet." description={canWrite && s.enabled ? "Start a scan now, or wait for the next scheduled one." : undefined} /> : (
                 <div className="grid gap-4">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-sunken/50 px-3.5 py-2.5 text-sm">
@@ -93,7 +121,7 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
                     <MetricCard label="Pages discovered" icon={<FileSearch />} tone="brand" value={latest.coverage.pagesDiscovered} hint={`${latest.coverage.pagesChecked} checked · ${latest.coverage.pagesSkippedByPolicy} skipped by policy · ${latest.coverage.pagesNotCrawledLimits} over limits`} />
                     <MetricCard label="Broken pages" icon={<Unlink />} tone={count("broken_pages") ? "danger" : "neutral"} value={count("broken_pages")} hint={`${count("broken_resources")} broken resources`} />
                     <MetricCard label="SEO / structure" icon={<ListTree />} tone={count("seo") + count("structure") + count("sitemap") ? "warning" : "neutral"} value={count("seo") + count("structure") + count("sitemap")} hint={`${count("accessibility")} accessibility (automated)`} />
-                    <MetricCard label="Duration" icon={<Timer />} tone="info" value={latest.finishedAt ? fmtDuration(Math.round((new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) / 1000)) : "—"} hint={`${latest.requests} requests · ${latest.coverage.resourcesChecked} resources`} />
+                    <MetricCard label="Duration" icon={<Timer />} tone="info" value={latest.finishedAt && latest.stopReason !== "ABANDONED" ? fmtDuration(Math.round((new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) / 1000)) : "—"} hint={latest.stopReason === "ABANDONED" ? "The scan stopped without finishing" : `${latest.requests} requests · ${latest.coverage.resourcesChecked} resources`} />
                   </div>
                   {completed && <Hint>Last completed scan: <Link className="text-foreground hover:text-primary" href={`${pagePath}/scans/${completed.executionId}`}>{fmtTime(completed.startedAt)}</Link>. Limits: up to {s.effectiveLimits.maxPages} pages, depth {s.effectiveLimits.maxDepth}{s.effectiveLimits.browserPages ? ", browser-assisted discovery" : ""}{s.effectiveLimits.externalLinks ? ", external links" : ""}. <Link className="text-primary hover:underline" href={`/o/${orgId}/usage`}>Usage against quota</Link></Hint>}
                 </div>
@@ -154,7 +182,7 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
       </QueryState>
       <ConfirmDialog open={confirm === "cancel"} onOpenChange={(o) => !o && setConfirm(null)} title="Cancel the running scan?"
         description="Pages already checked are kept. A cancelled scan never resolves findings." confirmLabel="Cancel scan" destructive
-        onConfirm={() => latest && act(() => post(`${base}/scans/${latest.executionId}/cancel`), "Scan cancelled").then(() => setConfirm(null))} />
+        loading={busy === "cancel"} onConfirm={() => latest && act("cancel", () => post(`${base}/scans/${latest.executionId}/cancel`), "Scan cancelled").then(() => setConfirm(null))} />
     </div>
   );
 }
