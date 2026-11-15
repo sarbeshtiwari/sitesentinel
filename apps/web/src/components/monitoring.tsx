@@ -1,9 +1,9 @@
 "use client";
 import { Alert, Badge, Button, Card, cn, ErrorState, Select, Skeleton } from "@wim/ui";
 import { Info } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { errorMessage, ApiError } from "@/lib/api";
-import { health, presetRange, type Range, type RangeKey, type Tone } from "@/lib/monitoring";
+import { health, localZone, presetRange, toLocalInput, type Range, type RangeKey, type Tone } from "@/lib/monitoring";
 
 /** Monitoring state badge with an explanation for assistive tech and on hover. */
 export function HealthBadge({ state, className }: { state: string | null | undefined; className?: string }) {
@@ -28,12 +28,14 @@ export function QueryState({ q, skeleton = "h-40", children }: { q: { isLoading:
   return <>{children}</>;
 }
 
-/** Time-range picker: presets plus a custom UTC range (max 90 days, validated by the API too). */
+/** Time-range picker: presets plus a custom range entered in the viewer's time zone (max 90 days, validated by the API too). */
 export function RangePicker({ value, onChange }: { value: Range; onChange: (r: Range) => void }) {
-  const [custom, setCustom] = useState({ from: value.from.slice(0, 16), to: value.to.slice(0, 16) });
+  const [custom, setCustom] = useState({ from: toLocalInput(value.from), to: toLocalInput(value.to) });
   const [err, setErr] = useState<string | null>(null);
+  const [zone, setZone] = useState(""); // filled after mount: the server doesn't know the viewer's zone
+  useEffect(() => setZone(localZone()), []);
   const apply = () => {
-    const from = new Date(`${custom.from}:00Z`), to = new Date(`${custom.to}:00Z`);
+    const from = new Date(custom.from), to = new Date(custom.to); // datetime-local values are local time
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) return setErr("Choose a start before the end.");
     if (to.getTime() - from.getTime() > 90 * 86_400_000) return setErr("At most 90 days.");
     setErr(null);
@@ -48,7 +50,7 @@ export function RangePicker({ value, onChange }: { value: Range; onChange: (r: R
             onClick={() => {
               if (k !== "custom") return onChange(presetRange(k));
               // Start the custom fields from the range currently shown, not the one the page opened with.
-              setCustom({ from: value.from.slice(0, 16), to: value.to.slice(0, 16) });
+              setCustom({ from: toLocalInput(value.from), to: toLocalInput(value.to) });
               setErr(null);
               onChange({ ...value, key: "custom" });
             }}>
@@ -64,7 +66,7 @@ export function RangePicker({ value, onChange }: { value: Range; onChange: (r: R
           {err && <span role="alert" className="text-danger">{err}</span>}
         </div>
       )}
-      <span className="text-xs text-subtle-foreground">UTC</span>
+      <span className="text-xs text-subtle-foreground">{zone}</span>
     </div>
   );
 }

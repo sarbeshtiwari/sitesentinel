@@ -7,7 +7,7 @@ import { useState } from "react";
 import type { DataEnvelope } from "@wim/contracts";
 import { FilterSelect, Hint, LoadMore, QueryState, RangePicker, Section, StackedBars } from "@/components/monitoring";
 import { get } from "@/lib/api";
-import { fmtMs, fmtUtc, mk, presetRange, rangeQs, SCAN_STATUS, useDebounced, type Range } from "@/lib/monitoring";
+import { fmtMs, fmtTime, mk, presetRange, rangeQs, SCAN_STATUS, useDebounced, type Range } from "@/lib/monitoring";
 import { PerfBadge } from "./performance-tab";
 
 const TYPE: Record<string, string> = {
@@ -53,7 +53,7 @@ export function PagesTab({ orgId, websiteId }: { orgId: string; websiteId: strin
                 <TR key={p.id}>
                   <TD className="max-w-72"><span className="break-all font-mono text-xs font-medium">{p.path}</span>{p.title && <div className="truncate text-xs text-muted-foreground">{p.title}</div>}{p.openFindings > 0 && <div className="text-xs text-warning">{p.openFindings} open finding(s)</div>}</TD>
                   <TD className="text-xs">{p.monitoring.browser ? <Badge tone="brand">Browser</Badge> : null} {p.monitoring.deepScan ? <Badge>Deep scan</Badge> : null}{!p.monitoring.browser && !p.monitoring.deepScan ? <span className="text-muted-foreground">Discovered only</span> : null}</TD>
-                  <TD className="hidden text-xs md:table-cell">{p.deepScan ? <>{p.deepScan.state === "FAILED" ? <Badge tone="danger">{p.deepScan.httpStatus ?? "failed"}</Badge> : p.deepScan.state === "DONE" ? <Badge tone="success">{p.deepScan.httpStatus ?? "OK"}</Badge> : <Badge>{p.deepScan.state.toLowerCase()}</Badge>} <span className="text-muted-foreground">{fmtUtc(p.deepScan.checkedAt)}</span></> : "—"}</TD>
+                  <TD className="hidden text-xs md:table-cell">{p.deepScan ? <>{p.deepScan.state === "FAILED" ? <Badge tone="danger">{p.deepScan.httpStatus ?? "failed"}</Badge> : p.deepScan.state === "DONE" ? <Badge tone="success">{p.deepScan.httpStatus ?? "OK"}</Badge> : <Badge>{p.deepScan.state.toLowerCase()}</Badge>} <span className="text-muted-foreground">{fmtTime(p.deepScan.checkedAt)}</span></> : "—"}</TD>
                   <TD className="hidden text-xs lg:table-cell">{p.browser ? <>{fmtMs(p.browser.lcpP75_24h)} <PerfBadge s={p.browser.lcpStatus} /> <span className="text-muted-foreground">({p.browser.lcpSamples_24h})</span></> : "—"}</TD>
                   <TD className="hidden text-xs lg:table-cell">{p.components ? `${p.components.present}${p.components.changes7d ? ` · ${p.components.changes7d} change(s) in 7 d` : ""}` : "—"}</TD>
                   <TD className="hidden text-xs xl:table-cell">{p.responsive ? (p.responsive.failedViewports ? <Badge tone="danger">{p.responsive.failedViewports}/{p.responsive.viewports} viewports fail</Badge> : <Badge tone="success">{p.responsive.viewports} viewports OK</Badge>) : "—"}</TD>
@@ -87,7 +87,7 @@ export function ComponentsTab({ orgId, websiteId }: { orgId: string; websiteId: 
         <QueryState q={changes}>
           {c && (
             <div className="grid gap-3 text-sm">
-              {!c.complete && <Hint>Component history starts {fmtUtc(c.inventoryStartedAt)}; changes before that are unknown.</Hint>}
+              {!c.complete && <Hint>Component history starts {fmtTime(c.inventoryStartedAt)}; changes before that are unknown.</Hint>}
               <ul className="grid gap-2.5 sm:grid-cols-2">
                 {([["Added", c.added, "success"], ["Removed", c.removed, "danger"], ["Changed", c.changed, "warning"], ["Responsive visibility changed", c.visibility, "warning"]] as const).map(([k, items, tone]) => (
                   <li key={k} className="grid content-start gap-2 rounded-lg border border-border px-3.5 py-3">
@@ -113,7 +113,7 @@ export function ComponentsTab({ orgId, websiteId }: { orgId: string; websiteId: 
                   <TD><button type="button" aria-pressed={sel === x.id} className={cn("cursor-pointer text-left text-sm font-medium hover:text-primary", sel === x.id && "text-primary")} onClick={() => setSel(x.id)}>{TYPE[x.type] ?? x.type}{x.label ? <span className="text-muted-foreground"> · {x.label}</span> : null}</button>{x.status === "REMOVED" && <Badge tone="danger" className="ml-2">Removed</Badge>}</TD>
                   <TD className="hidden font-mono text-xs md:table-cell">{x.pagePath}</TD>
                   <TD className="hidden text-xs md:table-cell">{x.viewports.join(", ") || "—"}</TD>
-                  <TD className="hidden text-xs text-muted-foreground lg:table-cell">{fmtUtc(x.firstSeenAt)} / {fmtUtc(x.lastSeenAt)}</TD>
+                  <TD className="hidden text-xs text-muted-foreground lg:table-cell">{fmtTime(x.firstSeenAt)} / {fmtTime(x.lastSeenAt)}</TD>
                 </TR>
               ))}</TBody>
             </Table>
@@ -128,7 +128,7 @@ export function ComponentsTab({ orgId, websiteId }: { orgId: string; websiteId: 
                 <p className="font-medium">{TYPE[detail.data.type] ?? detail.data.type}{detail.data.label ? ` · ${detail.data.label}` : ""} <span className="text-xs text-muted-foreground">on {detail.data.pagePath}</span></p>
                 <p className="rounded-md bg-sunken px-3 py-2 text-xs">Visibility by viewport (last observed): {Object.entries(detail.data.visibility).map(([v, on]) => `${v}: ${on ? "visible" : "hidden"}`).join(" · ") || "—"}</p>
                 <ol className="grid gap-1.5">{detail.data.history.map((e) => (
-                  <li key={e.id} className="flex flex-wrap items-start gap-2 text-xs"><span className="text-muted-foreground">{fmtUtc(e.at)}</span><Badge tone={EVENT[e.type]?.tone}>{EVENT[e.type]?.label ?? e.type}</Badge>
+                  <li key={e.id} className="flex flex-wrap items-start gap-2 text-xs"><span className="text-muted-foreground">{fmtTime(e.at)}</span><Badge tone={EVENT[e.type]?.tone}>{EVENT[e.type]?.label ?? e.type}</Badge>
                     {(e.before || e.after) && <span className="break-all text-muted-foreground">{e.before ? JSON.stringify(e.before).slice(0, 160) : "—"} → {e.after ? JSON.stringify(e.after).slice(0, 160) : "—"}</span>}</li>
                 ))}{!detail.data.history.length && <li className="text-xs text-muted-foreground">No changes since it was first detected.</li>}</ol>
               </div>
@@ -151,7 +151,7 @@ export function ResponsiveTab({ orgId, websiteId }: { orgId: string; websiteId: 
   const c = useQuery({ queryKey: [...mk.site(orgId, websiteId), "responsive-compare", cmp], enabled: Boolean(cmp.a && cmp.b && cmp.a !== cmp.b), queryFn: ({ signal }) => get<DataEnvelope<{ viewports: Array<{ viewport: string; comparable: boolean; newProblems: string[]; fixedProblems: string[]; a: Resp | null; b: Resp | null }> }>>(`${base}/compare?a=${cmp.a}&b=${cmp.b}`, { signal }).then((r) => r.data) });
   const d = q.data;
   const days = [...new Set((d?.daily ?? []).map((x) => x.day))];
-  const runOpts: Array<[string, string]> = [["", "Choose a check"], ...(d?.runs ?? []).map((r) => [r.executionId, `${fmtUtc(r.at)} · ${r.viewports.length} vp${r.failedViewports ? ` · ${r.failedViewports} failing` : ""}`] as [string, string])];
+  const runOpts: Array<[string, string]> = [["", "Choose a check"], ...(d?.runs ?? []).map((r) => [r.executionId, `${fmtTime(r.at)} · ${r.viewports.length} vp${r.failedViewports ? ` · ${r.failedViewports} failing` : ""}`] as [string, string])];
   return (
     <div className="grid gap-5">
       <Card className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -166,7 +166,7 @@ export function ResponsiveTab({ orgId, websiteId }: { orgId: string; websiteId: 
                 <THead><TR><TH>Viewport</TH><TH>Result</TH><TH>Navigation</TH><TH className="hidden md:table-cell">Overflow</TH><TH className="hidden md:table-cell">Covered / off-screen controls</TH><TH className="hidden lg:table-cell">Problems</TH><TH className="hidden xl:table-cell">Heuristics</TH></TR></THead>
                 <TBody>{d.latest.map((r) => (
                   <TR key={r.viewport}>
-                    <TD className="text-xs"><span className="font-medium">{r.viewport}</span> <span className="text-muted-foreground tabular-nums">{r.width}×{r.height}</span><div className="text-muted-foreground">{fmtUtc(r.at)}</div></TD>
+                    <TD className="text-xs"><span className="font-medium">{r.viewport}</span> <span className="text-muted-foreground tabular-nums">{r.width}×{r.height}</span><div className="text-muted-foreground">{fmtTime(r.at)}</div></TD>
                     <TD><Badge tone={r.status === "FAILED" ? "danger" : "success"}>{r.status === "FAILED" ? "Problems" : "OK"}</Badge></TD>
                     <TD className="text-xs">{NAV[r.navState ?? "NONE"] ?? r.navState}</TD>
                     <TD className="hidden tabular-nums md:table-cell">{r.overflowPx ? `${r.overflowPx}px` : "—"}</TD>

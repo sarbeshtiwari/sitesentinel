@@ -9,7 +9,7 @@ import type { DataEnvelope } from "@wim/contracts";
 import { FilterSelect, Hint, KeyValue, LoadMore, QueryState, Section } from "@/components/monitoring";
 import { get } from "@/lib/api";
 import { useOrgId } from "@/lib/hooks";
-import { fmtDuration, fmtUtc, mk } from "@/lib/monitoring";
+import { fmtDuration, fmtTime, mk } from "@/lib/monitoring";
 import { ScanStatusBadge, stopLabel, type ScanDto } from "../../../deepscan-tab";
 
 type Change = { count: number; items: string[] };
@@ -51,7 +51,7 @@ export default function ScanPage() {
       <QueryState q={q} skeleton="h-96">
         {s && (
           <>
-            <PageHeader eyebrow={s.trigger === "MANUAL" ? "Manual scan" : "Scheduled scan"} title={`Deep scan · ${fmtUtc(s.startedAt)}`} description={stopLabel(s.stopReason)} actions={<ScanStatusBadge s={s} />} />
+            <PageHeader eyebrow={s.trigger === "MANUAL" ? "Manual scan" : "Scheduled scan"} title={`Deep scan · ${fmtTime(s.startedAt)}`} description={stopLabel(s.stopReason)} actions={<ScanStatusBadge s={s} />} />
             <div className="grid gap-5">
               {s.status !== "COMPLETED" && s.status !== "RUNNING" && <Alert tone="warning" title="This scan did not check the whole site">Findings were not resolved by it and no page is reported as removed.</Alert>}
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -71,7 +71,7 @@ export default function ScanPage() {
                 ]} />
               </Section>
               <Section title="Comparison" icon={<GitCompare />} description={compareWith ? "Page-by-page comparison with the scan you chose." : "Against the previous completed scan, as recorded when this scan finished."}
-                actions={<FilterSelect label="Compare with" value={compareWith} onChange={setCompareWith} options={[["", "Previous completed (default)"], ...(scans.data ?? []).filter((x) => x.executionId !== executionId && x.status !== "RUNNING").map((x) => [x.executionId, `${fmtUtc(x.startedAt)} · ${x.status.toLowerCase()}`] as [string, string])]} />}>
+                actions={<FilterSelect label="Compare with" value={compareWith} onChange={setCompareWith} options={[["", "Previous completed (default)"], ...(scans.data ?? []).filter((x) => x.executionId !== executionId && x.status !== "RUNNING").map((x) => [x.executionId, `${fmtTime(x.startedAt)} · ${x.status.toLowerCase()}`] as [string, string])]} />}>
                 {compareWith && cmp.isLoading ? <p className="text-sm text-muted-foreground">Comparing…</p> : !comparison ? <p className="text-sm text-muted-foreground">No earlier completed scan to compare with.</p> : (
                   <div className="grid gap-3">
                     {compareWith && cmp.data && !cmp.data.reliable && <Hint>One of these scans is not COMPLETED: pages it didn't reach are "not observed", never "removed".</Hint>}
@@ -103,7 +103,7 @@ export default function ScanPage() {
                               <TD className="hidden max-w-56 truncate text-xs lg:table-cell">{p.title ?? "—"}</TD>
                               <TD className="hidden text-xs md:table-cell">{SOURCE[p.source] ?? p.source}</TD>
                               <TD className="hidden tabular-nums md:table-cell">{p.depth}</TD>
-                              <TD className="hidden text-xs text-muted-foreground xl:table-cell">{fmtUtc(p.checkedAt)}</TD>
+                              <TD className="hidden text-xs text-muted-foreground xl:table-cell">{fmtTime(p.checkedAt)}</TD>
                             </TR>
                           ))}
                         </TBody>

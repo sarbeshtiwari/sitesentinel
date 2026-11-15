@@ -8,7 +8,7 @@ import type { DataEnvelope } from "@wim/contracts";
 import { Hint, KeyValue, QueryState, Section } from "@/components/monitoring";
 import { get } from "@/lib/api";
 import { useOrgId } from "@/lib/hooks";
-import { fmtUtc, mk, SEVERITY_TONE } from "@/lib/monitoring";
+import { fmtTime, mk, SEVERITY_TONE } from "@/lib/monitoring";
 import { GROUP_LABEL, type FindingDto } from "../../../deepscan-tab";
 
 const METHOD: Record<string, string> = { HTTP: "HTTP request", HTML_ANALYSIS: "Static HTML analysis", SITEMAP: "Sitemap analysis", ROBOTS: "robots.txt", BROWSER: "Rendered in a browser", SEARCH_PROBE: "Test query through the site's search form" };
@@ -36,8 +36,8 @@ export default function FindingPage() {
               <Section title="What was detected" icon={<Search />}>
                 <KeyValue items={[
                   ["Where", <span key="w" className="break-all">{f.subject}</span>], ["Detection", METHOD[f.detectionMethod] ?? f.detectionMethod],
-                  ["First detected", fmtUtc(f.firstDetectedAt)], ["Last detected", fmtUtc(f.lastDetectedAt)], ["Times seen", f.occurrenceCount],
-                  ["Resolved", f.resolvedAt ? fmtUtc(f.resolvedAt) : "—"],
+                  ["First detected", fmtTime(f.firstDetectedAt)], ["Last detected", fmtTime(f.lastDetectedAt)], ["Times seen", f.occurrenceCount],
+                  ["Resolved", f.resolvedAt ? fmtTime(f.resolvedAt) : "—"],
                 ]} />
                 {f.group === "accessibility" && <div className="mt-3"><Hint>Automated accessibility check — useful signal, not a WCAG conformance assessment.</Hint></div>}
               </Section>
@@ -62,7 +62,7 @@ export default function FindingPage() {
                     <li key={i} className="relative">
                       <span aria-hidden className={`absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full ring-4 ring-card ${h.type === "RESOLVED" ? "bg-success" : h.type === "REOPENED" ? "bg-danger" : "bg-warning"}`} />
                       <p className="font-medium">{EVENT[h.type] ?? h.type}</p>
-                      <p className="text-xs text-muted-foreground">{fmtUtc(h.at)} · <Link className="text-primary hover:underline" href={`/o/${orgId}/websites/${websiteId}/deep-scan/scans/${h.executionId}`}>scan</Link></p>
+                      <p className="text-xs text-muted-foreground">{fmtTime(h.at)} · <Link className="text-primary hover:underline" href={`/o/${orgId}/websites/${websiteId}/deep-scan/scans/${h.executionId}`}>scan</Link></p>
                     </li>
                   ))}
                 </ol>

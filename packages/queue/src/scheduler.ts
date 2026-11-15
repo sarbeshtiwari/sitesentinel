@@ -250,6 +250,9 @@ export function createScheduler(deps: SchedulerDeps) {
       if (r.lease_expired) report.reconciled.recovered++;
       else report.reconciled.reenqueued++;
     }
+    // Deep scans left RUNNING by an execution that already ended (dead-lettered, killed worker) are closed, so the
+    // dashboard stops showing "Running" and the website can be scanned again.
+    await withSystem(db, (tx) => tx.$queryRaw`SELECT public.close_abandoned_deep_scans(NULL)`).catch(() => undefined);
   }
 
   // ------------------------------------------------------------------ replay

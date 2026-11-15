@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DataEnvelope } from "@wim/contracts";
 import { FilterSelect, Hint, LineChart, QueryState, RangePicker, Section } from "@/components/monitoring";
 import { api, errorMessage, get } from "@/lib/api";
-import { fmtMs, fmtUtc, mk, presetRange, rangeQs, type Range, type Tone } from "@/lib/monitoring";
+import { fmtMs, fmtTime, mk, presetRange, rangeQs, type Range, type Tone } from "@/lib/monitoring";
 
 type PerfStatus = "GOOD" | "NEEDS_IMPROVEMENT" | "POOR" | "INSUFFICIENT_DATA";
 const STATUS: Record<PerfStatus, { label: string; tone: Tone }> = {
@@ -74,7 +74,7 @@ export function PerformanceTab({ orgId, websiteId, canWrite }: { orgId: string; 
                 </button>
               ))}
             </div>
-            <Hint>· = can open a performance incident. Data quality: {s.quality.recordedChecks} checks recorded of {s.quality.scheduledChecks} scheduled, {s.quality.failedChecks} failed. Latest measurement {fmtUtc(s.latestAt)}. {s.notes.join(" ")}</Hint>
+            <Hint>· = can open a performance incident. Data quality: {s.quality.recordedChecks} checks recorded of {s.quality.scheduledChecks} scheduled, {s.quality.failedChecks} failed. Latest measurement {fmtTime(s.latestAt)}. {s.notes.join(" ")}</Hint>
           </div>
         )}
       </QueryState>
@@ -158,7 +158,7 @@ function ThresholdSettings({ orgId, websiteId, canWrite }: { orgId: string; webs
               <label className="grid gap-1.5 text-sm font-medium">Good checks before recovery<Input className="h-9 sm:max-w-40" type="number" min={1} max={20} disabled={ro} value={noise.r} onChange={(e) => setNoise({ ...noise, r: e.target.value })} /></label>
             </div>
             {!ro && <div className="flex justify-end border-t border-border pt-4"><Button onClick={save}>Save thresholds</Button></div>}
-            {d.history.length > 0 && <p className="text-xs text-muted-foreground">Last changed {fmtUtc(d.history[0]!.at)}{d.history[0]!.by ? ` by ${d.history[0]!.by}` : ""} · {d.history.length} change(s) in the audit log.</p>}
+            {d.history.length > 0 && <p className="text-xs text-muted-foreground">Last changed {fmtTime(d.history[0]!.at)}{d.history[0]!.by ? ` by ${d.history[0]!.by}` : ""} · {d.history.length} change(s) in the audit log.</p>}
             <Hint>Synthetic lab measurements (one Chromium in our infrastructure); real-user metrics such as INP are not measured here. Inconclusive checks never count towards an incident.</Hint>
           </div>
         )}

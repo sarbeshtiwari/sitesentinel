@@ -30,7 +30,7 @@ export const mk = {
   prefs: (o: string) => ["org", o, "notification-prefs"] as const,
 };
 
-// ------------------------------------------------------------------ time ranges (UTC, as the API reports)
+// ------------------------------------------------------------------ time ranges (sent to the API as UTC instants)
 export type RangeKey = "24h" | "7d" | "30d" | "custom";
 export interface Range { key: RangeKey; from: string; to: string }
 const HOURS: Record<Exclude<RangeKey, "custom">, number> = { "24h": 24, "7d": 168, "30d": 720 };
@@ -41,8 +41,28 @@ export function presetRange(key: Exclude<RangeKey, "custom">): Range {
 }
 export const rangeQs = (r: Range) => `from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}`;
 
-// ------------------------------------------------------------------ formatting (always UTC, labelled)
-export const fmtUtc = (iso: string | null | undefined) => (iso ? `${iso.slice(0, 16).replace("T", " ")} UTC` : "—");
+// ------------------------------------------------------------------ formatting (viewer's time zone, labelled)
+// The API stores and reports UTC; every timestamp is shown in the viewer's browser time zone with its short name
+// (e.g. "2026-11-15 20:22 IST"). Monitoring data loads client-side, so server and browser never disagree.
+const two = (n: number) => String(n).padStart(2, "0");
+function zoneName(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(d).find((p) => p.type === "timeZoneName")?.value ?? "";
+  } catch { return ""; }
+}
+/** "YYYY-MM-DD HH:mm <zone>" in the viewer's time zone. */
+export const fmtTime = (iso: string | null | undefined) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())} ${zoneName(d)}`.trim();
+};
+/** Calendar day (YYYY-MM-DD) in the viewer's time zone. */
+export const localDay = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`; };
+/** Value for <input type="datetime-local"> in the viewer's time zone. */
+export const toLocalInput = (iso: string) => { const d = new Date(iso); return `${localDay(iso)}T${two(d.getHours())}:${two(d.getMinutes())}`; };
+/** Short name of the viewer's time zone (client only; empty during server render). */
+export const localZone = () => (typeof window === "undefined" ? "" : zoneName(new Date()));
 export const fmtMs = (v: number | null | undefined) => (v == null ? "—" : v >= 10_000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
 export const fmtPct = (v: number | null | undefined, digits = 2) => (v == null ? "—" : `${v.toFixed(digits).replace(/\.?0+$/, "")}%`);
 export function fmtDuration(sec: number | null | undefined) {

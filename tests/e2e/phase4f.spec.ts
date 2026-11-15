@@ -147,7 +147,7 @@ test("customer: empty states → add + verify website → live dashboard from re
     await expect(page.getByRole("cell", { name: "Passed" }).first()).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 120_000 });
   await expect(page.getByText("Uptime", { exact: true })).toBeVisible();
-  await expect(page.getByText("Times in UTC").first()).toBeVisible();
+  await expect(page.getByText("Times in your time zone").first()).toBeVisible();
   // open one check's safe details
   await page.getByRole("button", { name: "Details" }).first().click();
   await expect(page.getByRole("dialog")).toContainText("HTTP status");
@@ -227,7 +227,7 @@ test("deep scan from the dashboard; usage, settings (audited) and entitlement ex
     await expect(page.getByText(/Every discovered page was checked|Stopped at/)).toBeVisible({ timeout: 2000 });
   }).toPass({ timeout: 180_000 });
   await expect(page.getByText("Completed").first()).toBeVisible();
-  await page.getByRole("link", { name: /UTC$/ }).first().click();
+  await page.getByRole("link", { name: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/ }).first().click(); // scan start time, viewer time zone
   await expect(page.getByRole("heading", { name: /Deep scan · / })).toBeVisible();
   await expect(page.getByText("Discovered pages")).toBeVisible();
   await expect(page.getByRole("cell", { name: new RegExp(domain) }).first()).toBeVisible();

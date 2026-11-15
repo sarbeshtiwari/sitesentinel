@@ -10,7 +10,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@wim/ui";
 import { Hint, KeyValue, QueryState, Section } from "@/components/monitoring";
 import { ApiError, get } from "@/lib/api";
 import { useOrgId } from "@/lib/hooks";
-import { fmtBytes, fmtMs, fmtUtc, outcome, useBrowserResult } from "@/lib/monitoring";
+import { fmtBytes, fmtMs, fmtTime, outcome, useBrowserResult } from "@/lib/monitoring";
 
 type Issue = { message?: string; source?: string | null; count?: number; signature?: string };
 type NetIssue = { host?: string; type?: string; error?: string; status?: number; count?: number; firstParty?: boolean };
@@ -27,13 +27,13 @@ export default function BrowserExecutionPage() {
       <QueryState q={q} skeleton="h-96">
         {r && (
           <>
-            <PageHeader eyebrow={<span className="inline-flex items-center gap-1.5"><FlaskConical className="h-3.5 w-3.5" aria-hidden />Synthetic browser check</span>} title={`Browser check · ${fmtUtc(r.windowStart)}`}
+            <PageHeader eyebrow={<span className="inline-flex items-center gap-1.5"><FlaskConical className="h-3.5 w-3.5" aria-hidden />Synthetic browser check</span>} title={`Browser check · ${fmtTime(r.windowStart)}`}
               description="Synthetic measurement: one Chromium through our egress gateway, without a real visitor's cache, device or network."
               actions={<Badge tone={outcome(r.outcome).tone}>{outcome(r.outcome).label}</Badge>} />
             <div className="grid gap-5">
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <MetricCard label="Started window" value={<span className="text-base">{fmtUtc(r.windowStart)}</span>} icon={<Clock />} />
-                <MetricCard label="Recorded" value={<span className="text-base">{fmtUtc(r.recordedAt)}</span>} icon={<CalendarCheck />} />
+                <MetricCard label="Started window" value={<span className="text-base">{fmtTime(r.windowStart)}</span>} icon={<Clock />} />
+                <MetricCard label="Recorded" value={<span className="text-base">{fmtTime(r.recordedAt)}</span>} icon={<CalendarCheck />} />
                 <MetricCard label="Attempt" value={r.attempt} icon={<RotateCw />} />
                 <MetricCard label="Viewports" value={r.viewports.length} icon={<MonitorSmartphone />} tone="brand" />
               </div>
@@ -135,7 +135,7 @@ function Screenshot({ orgId, artifact }: { orgId: string; artifact: { id: string
   return (
     <div className="grid gap-2 border-t border-border pt-4">
       <SubHeading>Screenshot <span className="font-normal text-muted-foreground">({(artifact.purpose ?? "capture").toLowerCase()}, {fmtBytes(artifact.bytes)})</span></SubHeading>
-      {expired ? <Alert title="Screenshot expired">Screenshots are kept until {fmtUtc(artifact.expiresAt)} under your retention policy.</Alert>
+      {expired ? <Alert title="Screenshot expired">Screenshots are kept until {fmtTime(artifact.expiresAt)} under your retention policy.</Alert>
         : state.error ? <Alert tone="warning" title={state.error}><Button size="sm" variant="outline" className="mt-1 justify-self-start" onClick={load}>Try again</Button></Alert>
         : state.url ? <img src={state.url} alt={`Screenshot of the page (${(artifact.purpose ?? "capture").toLowerCase()})`} className="max-h-[32rem] w-auto max-w-full rounded-md border border-border shadow-xs" referrerPolicy="no-referrer" onError={() => setState({ error: "The screenshot couldn't be loaded — the link may have expired or storage is temporarily unavailable." })} />
         : <div><Button size="sm" variant="outline" onClick={load} disabled={state.loading}><ImageIcon />{state.loading ? "Loading…" : "Show screenshot"}</Button></div>}

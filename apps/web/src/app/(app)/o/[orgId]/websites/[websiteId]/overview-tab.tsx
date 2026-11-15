@@ -5,7 +5,7 @@ import type { WebsiteDetailDto } from "@wim/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { HealthBadge, KeyValue, QueryState, Section } from "@/components/monitoring";
-import { fmtPct, fmtUtc, presetRange, SCAN_STATUS, useOverview } from "@/lib/monitoring";
+import { fmtPct, fmtTime, presetRange, SCAN_STATUS, useOverview } from "@/lib/monitoring";
 import { errorMessage, post } from "@/lib/api";
 import { categoryLabel, fmt, fmtDate, INSTALL_STATE, TRIAL_OUTCOME, VERIFICATION_STATE, wk } from "@/lib/websites";
 
@@ -106,11 +106,11 @@ function MonitoringHealthCard({ orgId, websiteId, onNavigate }: { orgId: string;
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5"><HealthBadge state={m.health} />{m.reasons.map((r) => <span key={r} className="text-xs text-muted-foreground">{r}</span>)}</div>
             <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
               <li><Tile label="HTTP availability" icon={Globe} onClick={() => onNavigate("availability")}
-                sub={<>Last success {fmtUtc(m.http.lastSuccessAt)}<br />Last failure {fmtUtc(m.http.lastFailureAt)}</>}><HealthBadge state={m.http.state} /></Tile></li>
+                sub={<>Last success {fmtTime(m.http.lastSuccessAt)}<br />Last failure {fmtTime(m.http.lastFailureAt)}</>}><HealthBadge state={m.http.state} /></Tile></li>
               <li><Tile label="Uptime" icon={Gauge} onClick={() => onNavigate("availability")} sub={`Coverage ${fmtPct(m.http.uptime.coveragePercent, 1)}`}>
                 <span className="text-xl font-semibold tracking-tight tabular-nums">{fmtPct(m.http.uptime.uptimePercent)}</span></Tile></li>
               <li><Tile label="Browser monitoring" icon={MonitorSmartphone} onClick={() => onNavigate("browser")} sub="Synthetic checks from our Chromium runners"><HealthBadge state={m.browser.state} /></Tile></li>
-              <li><Tile label="Deep scan" icon={ScanSearch} onClick={() => onNavigate("deep-scan")} sub={`Last completed ${fmtUtc(m.deepScan.lastCompletedAt)}`}>
+              <li><Tile label="Deep scan" icon={ScanSearch} onClick={() => onNavigate("deep-scan")} sub={`Last completed ${fmtTime(m.deepScan.lastCompletedAt)}`}>
                 {m.deepScan.lastStatus ? `${SCAN_STATUS[m.deepScan.lastStatus]?.label ?? m.deepScan.lastStatus} · ${m.deepScan.openFindings} open findings` : <HealthBadge state={m.deepScan.state} />}</Tile></li>
             </ul>
             <p className="flex items-center gap-1.5 text-sm"><Siren className={cn("h-4 w-4", m.activeIncidents ? "text-danger" : "text-muted-foreground")} aria-hidden />

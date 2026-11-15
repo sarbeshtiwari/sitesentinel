@@ -161,6 +161,19 @@ describe("customer deep-scan API", () => {
       const c = await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/scans/${st.body.data.executionId}/cancel`, {});
       expect(c.body.data.status).toBe("CANCELLED");
       expect((await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/scans/${st.body.data.executionId}/cancel`, {})).status).toBe(409);
+      // A scan left RUNNING by an execution that already ended (dead-lettered, killed worker) doesn't stay "Running":
+      // the scheduler closes it, and Cancel closes it instead of answering "already finished".
+      const exec = st.body.data.executionId as string;
+      const orphan = () => env.owner.query(`INSERT INTO deep_scans (execution_id, org_id, website_id, trigger, config) VALUES ($1, $2, $3, 'MANUAL', '{}'::jsonb)`, [exec, u.orgId, s.id]);
+      const scanRow = async () => (await env.owner.query(`SELECT status, stop_reason FROM deep_scans WHERE execution_id = $1`, [exec])).rows[0];
+      await orphan();
+      await env.scheduler().runCycle();
+      expect(await scanRow()).toEqual({ status: "CANCELLED", stop_reason: "ABANDONED" });
+      await env.owner.query(`DELETE FROM deep_scans WHERE execution_id = $1`, [exec]);
+      await orphan();
+      const closed = await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/scans/${exec}/cancel`, {});
+      expect(closed.body.data.status).toBe("CANCELLED");
+      expect(await scanRow()).toEqual({ status: "CANCELLED", stop_reason: "ABANDONED" });
     } finally {
       await env.startDeepWorker();
       await env.startDeepWorker({ prefix: process.env.QUEUE_PREFIX });

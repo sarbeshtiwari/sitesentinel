@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 import { Dot, FilterSelect, LoadMore, QueryState } from "@/components/monitoring";
 import { useOrg } from "@/lib/hooks";
-import { fmtDuration, fmtUtc, INCIDENT_STATUS, presetRange, SEVERITY_TONE, SOURCE_LABEL, useIncidents } from "@/lib/monitoring";
+import { fmtDuration, fmtTime, INCIDENT_STATUS, presetRange, SEVERITY_TONE, SOURCE_LABEL, useIncidents } from "@/lib/monitoring";
 import { useWebsites } from "@/lib/websites";
 
 const STATUSES: Array<[string, string]> = [["ACTIVE", "Active (open, acknowledged, reopened)"], ["OPEN", "Open"], ["ACKNOWLEDGED", "Acknowledged"], ["REOPENED", "Reopened"], ["RESOLVED", "Resolved"], ["ALL", "All"]];
@@ -32,7 +32,7 @@ export default function IncidentsPage() {
 
   return (
     <>
-      <PageHeader title="Incidents" description="Problems detected by HTTP, browser and deep-scan monitoring, grouped into incidents. Times in UTC." />
+      <PageHeader title="Incidents" description="Problems detected by HTTP, browser and deep-scan monitoring, grouped into incidents. Times in your time zone." />
       <FilterBar>
         <FilterSelect label="Status" value={f.status} onChange={(v) => set("status", v)} options={STATUSES} />
         <FilterSelect label="Severity" value={f.severity} onChange={(v) => set("severity", v)} options={[["", "All"], ["CRITICAL", "Critical"], ["HIGH", "High"], ["MEDIUM", "Medium"], ["LOW", "Low"], ["INFO", "Info"]]} />
@@ -63,7 +63,7 @@ export default function IncidentsPage() {
                         <span className="mt-2 flex flex-wrap items-center gap-1.5">
                           <Badge tone={st.tone}>{st.label}</Badge>
                           <Badge tone={active ? SEVERITY_TONE[i.severity] : "neutral"}>{i.severity}</Badge>
-                          <span className="text-xs text-muted-foreground">since {fmtUtc(i.firstDetectedAt)} · <span className="tabular-nums">{i.occurrenceCount}</span> occurrences</span>
+                          <span className="text-xs text-muted-foreground">since {fmtTime(i.firstDetectedAt)} · <span className="tabular-nums">{i.occurrenceCount}</span> occurrences</span>
                         </span>
                       </span>
                     </Link>
@@ -96,8 +96,8 @@ export default function IncidentsPage() {
                         <TD><Badge tone={st.tone}>{st.label}</Badge></TD>
                         <TD><Badge tone={active ? SEVERITY_TONE[i.severity] : "neutral"}>{i.severity}</Badge></TD>
                         <TD className="hidden whitespace-nowrap text-xs md:table-cell">{SOURCE_LABEL[i.source ?? ""] ?? i.source}</TD>
-                        <TD className="hidden whitespace-nowrap text-xs tabular-nums lg:table-cell">{fmtUtc(i.firstDetectedAt)}</TD>
-                        <TD className="hidden whitespace-nowrap text-xs tabular-nums lg:table-cell">{fmtUtc(i.lastDetectedAt)}</TD>
+                        <TD className="hidden whitespace-nowrap text-xs tabular-nums lg:table-cell">{fmtTime(i.firstDetectedAt)}</TD>
+                        <TD className="hidden whitespace-nowrap text-xs tabular-nums lg:table-cell">{fmtTime(i.lastDetectedAt)}</TD>
                         <TD className="hidden text-right tabular-nums md:table-cell">{i.occurrenceCount}</TD>
                         <TD className="hidden whitespace-nowrap text-xs xl:table-cell">{fmtDuration((i as { durationSec?: number }).durationSec)}{active ? " (ongoing)" : ""}</TD>
                       </TR>
