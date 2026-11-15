@@ -758,7 +758,7 @@ export interface ChangeFeedDto {
   /** opaque cursor for the next poll */
   cursor: string;
   /** what changed since the previous cursor (kinds only; payloads are fetched through the normal APIs) */
-  changes: Array<{ kind: "INCIDENT" | "CHECK" | "DEEP_SCAN" | "NOTIFICATION"; websiteId: string | null; at: string }>;
+  changes: Array<{ kind: "INCIDENT" | "CHECK" | "DEEP_SCAN" | "NOTIFICATION" | "EXECUTION" | "WEBSITE"; websiteId: string | null; at: string }>;
   unreadNotifications: number;
 }
 

@@ -29,6 +29,20 @@ const SECRET_OMIT = {
   paymentGatewayConfig: { secretsEnc: true },
 } as const;
 
+/**
+ * How long a transaction may wait for a pool connection (Prisma's default is 2 s). A worker far from its database
+ * (another region, TLS over the internet) can need several seconds to open a connection; 2 s made heartbeats and
+ * jobs fail with "Unable to start a transaction in the given time". Override with DB_TX_MAX_WAIT_MS.
+ */
+const TX_MAX_WAIT_MS = Math.max(2_000, Number(process.env.DB_TX_MAX_WAIT_MS ?? 15_000) || 15_000);
+/**
+ * Lower bound for transaction timeouts. Each statement pays the network round trip, so a worker far from its
+ * database (e.g. 250 ms per query) needs longer than the defaults for transactions that run many statements.
+ * Unset: the per-call defaults (15 s / 30 s) apply unchanged.
+ */
+const TX_MIN_TIMEOUT_MS = Number(process.env.DB_TX_TIMEOUT_MS ?? 0) || 0;
+const txTimeout = (ms: number) => Math.max(ms, TX_MIN_TIMEOUT_MS);
+
 export function createDb(opts: CreateDbOptions): PrismaClient {
   const adapter = new PrismaPg({ connectionString: opts.url, max: opts.max ?? 10 });
   return new PrismaClient(opts.omitSecrets ? { adapter, omit: SECRET_OMIT } : { adapter });
@@ -55,7 +69,7 @@ export async function withTenant<T>(
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT set_config('app.current_org_id', ${orgId}, true)`;
     return fn(tx);
-  }, { timeout: opts?.timeout ?? 15_000, isolationLevel: opts?.isolationLevel });
+  }, { maxWait: TX_MAX_WAIT_MS, timeout: txTimeout(opts?.timeout ?? 15_000), isolationLevel: opts?.isolationLevel });
 }
 
 export class MembershipError extends Error {
@@ -87,7 +101,7 @@ export async function withMember<T>(
       throw e;
     }
     return fn(tx);
-  }, { timeout: opts?.timeout ?? 15_000, isolationLevel: opts?.isolationLevel });
+  }, { maxWait: TX_MAX_WAIT_MS, timeout: txTimeout(opts?.timeout ?? 15_000), isolationLevel: opts?.isolationLevel });
 }
 
 /**
@@ -107,7 +121,7 @@ export async function withUser<T>(
     await tx.$queryRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
     if (opts?.orgId) await tx.$queryRaw`SELECT set_config('app.current_org_id', ${opts.orgId}, true)`;
     return fn(tx);
-  }, { timeout: 15_000 });
+  }, { maxWait: TX_MAX_WAIT_MS, timeout: txTimeout(15_000) });
 }
 
 /**
@@ -118,7 +132,7 @@ export async function withSystem<T>(db: PrismaClient, fn: (tx: Tx) => Promise<T>
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT set_config('app.system', 'on', true)`;
     return fn(tx);
-  }, { timeout: 30_000 });
+  }, { maxWait: TX_MAX_WAIT_MS, timeout: txTimeout(30_000) });
 }
 
 import { resolveSettings, type SettingsSnapshot } from "@wim/core";

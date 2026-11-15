@@ -1,6 +1,7 @@
 "use client";
-import { Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Menu, Moon, Sun, X } from "lucide-react";
 import * as React from "react";
+import { DropdownMenu } from "./overlays";
 import { Button, cn } from "./primitives";
 
 // ---------------------------------------------------------------- Shell
@@ -58,29 +59,28 @@ export function AppShell({
       <ShellContext.Provider value={{ collapsed }}>
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-30 hidden flex-col border-r bg-sidebar transition-[width] duration-200 ease-[var(--ease)] lg:flex",
-            admin ? "border-white/5" : "border-border",
-            collapsed ? "w-[68px]" : "w-64",
+            "group/aside fixed inset-y-0 left-0 z-30 hidden flex-col border-r bg-sidebar transition-[width] duration-200 ease-[var(--ease)] lg:flex",
+            admin ? "border-white/[0.06]" : "border-border",
+            collapsed ? "w-[72px]" : "w-[260px]",
           )}
         >
           <div className="min-h-0 flex-1">{sidebar}</div>
-          {sidebarFooter && !collapsed && <div className={cn("border-t px-3 py-3", admin ? "border-white/10" : "border-border")}>{sidebarFooter}</div>}
-          <div className={cn("border-t p-2", admin ? "border-white/10" : "border-border")}>
-            <button
-              type="button"
-              onClick={toggle}
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-pressed={collapsed}
-              className={cn(
-                "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-[13px] text-sidebar-foreground transition-colors",
-                admin ? "hover:bg-white/5 hover:text-white" : "hover:bg-muted hover:text-foreground",
-                collapsed && "justify-center px-0",
-              )}
-            >
-              {collapsed ? <PanelLeftOpen className="h-4 w-4" aria-hidden /> : <PanelLeftClose className="h-4 w-4" aria-hidden />}
-              {!collapsed && <span>Collapse</span>}
-            </button>
-          </div>
+          {sidebarFooter && <div className={cn("p-3", admin ? "border-t border-white/[0.06]" : "border-t border-border", collapsed && "px-2")}>{sidebarFooter}</div>}
+          {/* Edge toggle: always reachable by keyboard, visible on hover/focus of the sidebar */}
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={collapsed}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={cn(
+              "absolute -right-3 top-[22px] z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border shadow-sm transition-[opacity,background-color] duration-150",
+              "opacity-0 focus-visible:opacity-100 group-hover/aside:opacity-100",
+              admin ? "border-white/15 bg-[#1b2438] text-slate-300 hover:text-white" : "border-border-strong bg-card text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {collapsed ? <ChevronRight className="h-3.5 w-3.5" aria-hidden /> : <ChevronLeft className="h-3.5 w-3.5" aria-hidden />}
+          </button>
         </aside>
       </ShellContext.Provider>
 
@@ -89,19 +89,19 @@ export function AppShell({
           <div className="absolute inset-0 bg-navy/50 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
           <aside
             ref={drawer}
-            className={cn("absolute inset-y-0 left-0 flex w-[min(18rem,85vw)] flex-col border-r bg-sidebar shadow-lg", admin ? "border-white/5" : "border-border")}
+            className={cn("absolute inset-y-0 left-0 flex w-[min(18rem,85vw)] flex-col border-r bg-sidebar shadow-lg", admin ? "border-white/[0.06]" : "border-border")}
             onClick={(e) => { if ((e.target as HTMLElement).closest("a")) setOpen(false); }}
           >
             <div className="absolute right-2 top-3 z-10">
               <Button variant="ghost" size="icon" className={cn("h-8 w-8", admin && "text-white hover:bg-white/10")} aria-label="Close navigation" onClick={() => setOpen(false)}><X className="h-4 w-4" /></Button>
             </div>
             <div className="min-h-0 flex-1">{sidebar}</div>
-            {sidebarFooter && <div className={cn("border-t px-3 py-3", admin ? "border-white/10" : "border-border")}>{sidebarFooter}</div>}
+            {sidebarFooter && <div className={cn("border-t p-3", admin ? "border-white/[0.06]" : "border-border")}>{sidebarFooter}</div>}
           </aside>
         </div>
       )}
 
-      <div className={cn("transition-[padding] duration-200 ease-[var(--ease)]", collapsed ? "lg:pl-[68px]" : "lg:pl-64")}>
+      <div className={cn("transition-[padding] duration-200 ease-[var(--ease)]", collapsed ? "lg:pl-[72px]" : "lg:pl-[260px]")}>
         <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-border bg-[color-mix(in_srgb,var(--background)_85%,transparent)] px-3 backdrop-blur-md sm:px-5">
           <Button ref={opener} variant="ghost" size="icon" className="-ml-1 lg:hidden" aria-label="Open navigation" onClick={() => setOpen(true)}><Menu className="h-5 w-5" /></Button>
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2">{topbar}</div>
@@ -116,18 +116,40 @@ export function AppShell({
 export function SidebarBrand({ children, collapsedChildren, href, LinkComponent }: { children: React.ReactNode; collapsedChildren?: React.ReactNode; href?: string; LinkComponent?: React.ElementType }) {
   const collapsed = useSidebarCollapsed();
   const content = collapsed && collapsedChildren ? collapsedChildren : children;
-  const cls = cn("flex h-14 shrink-0 items-center gap-2 font-semibold", collapsed ? "justify-center px-0" : "px-4");
+  const cls = cn("flex h-16 shrink-0 items-center gap-2 font-semibold", collapsed ? "justify-center px-0" : "px-5");
   if (href && LinkComponent) return <LinkComponent href={href} className={cn(cls, "rounded-md")}>{content}</LinkComponent>;
   return <div className={cls}>{content}</div>;
 }
 
-export function SidebarSection({ title, children }: { title?: string; children: React.ReactNode }) {
+/**
+ * A group of navigation items. `collapsible` groups remember their open state per viewer and always open when they
+ * contain the current page; in the icon rail every group is shown flat.
+ */
+export function SidebarSection({ title, children, collapsible, id, containsActive, defaultOpen = true }: {
+  title?: string; children: React.ReactNode; collapsible?: boolean; id?: string; containsActive?: boolean; defaultOpen?: boolean;
+}) {
   const collapsed = useSidebarCollapsed();
+  const key = `wim-nav-${id ?? title ?? ""}`;
+  const [open, setOpen] = React.useState(defaultOpen);
+  const listId = React.useId();
+  React.useEffect(() => {
+    if (!collapsible) return;
+    try { const v = localStorage.getItem(key); if (v !== null) setOpen(v === "1"); } catch { /* storage unavailable */ }
+  }, [collapsible, key]);
+  const shown = !collapsible || collapsed || open || containsActive;
+  const toggle = () => setOpen((o) => { try { localStorage.setItem(key, o ? "0" : "1"); } catch { /* ignore */ } return !o; });
+  const label = "text-[11px] font-semibold uppercase tracking-[0.09em] text-sidebar-foreground/60 [[data-surface=admin]_&]:text-slate-400/80";
   return (
-    <div className={cn("py-2", collapsed ? "px-2" : "px-3")}>
-      {title && !collapsed && <p className="px-2.5 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-sidebar-foreground/70">{title}</p>}
-      {title && collapsed && <div className="mx-auto mb-2 mt-1 h-px w-6 bg-border [[data-surface=admin]_&]:bg-white/10" aria-hidden />}
-      <ul className="grid gap-0.5">{children}</ul>
+    <div className={cn("pt-3", collapsed ? "px-3" : "px-3")}>
+      {title && !collapsed && (collapsible ? (
+        <button type="button" onClick={toggle} aria-expanded={shown} aria-controls={listId} disabled={containsActive}
+          className={cn("group/sec mb-1 flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-1 disabled:cursor-default", label, "hover:text-sidebar-foreground [[data-surface=admin]_&]:hover:text-slate-200")}>
+          <span>{title}</span>
+          {!containsActive && <ChevronDown aria-hidden className={cn("h-3.5 w-3.5 transition-transform duration-150", !shown && "-rotate-90")} />}
+        </button>
+      ) : <p className={cn("mb-1 px-3 py-1", label)}>{title}</p>)}
+      {title && collapsed && <div className="mx-auto mb-2 h-px w-8 bg-border [[data-surface=admin]_&]:bg-white/10" aria-hidden />}
+      {shown && <ul id={listId} className="grid gap-px">{children}</ul>}
     </div>
   );
 }
@@ -145,21 +167,24 @@ export function SidebarItem({
 }) {
   const collapsed = useSidebarCollapsed();
   const cls = cn(
-    "group/si relative flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13.5px] transition-colors [&_svg]:h-[18px] [&_svg]:w-[18px] [&_svg]:shrink-0",
+    "group/si relative flex h-9 items-center gap-3 rounded-lg px-3 text-[13.5px] outline-none transition-colors duration-150",
+    "[&_svg]:h-[18px] [&_svg]:w-[18px] [&_svg]:shrink-0 [&_svg]:transition-colors",
     active
-      ? "bg-sidebar-active font-medium text-primary [[data-surface=admin]_&]:text-white"
-      : "text-sidebar-foreground hover:bg-muted hover:text-foreground [[data-surface=admin]_&]:hover:bg-white/5 [[data-surface=admin]_&]:hover:text-white",
-    disabled && "opacity-60",
-    collapsed && "justify-center px-0",
+      ? cn("bg-card font-semibold text-foreground shadow-xs ring-1 ring-border [&_svg]:text-primary",
+          "[[data-surface=admin]_&]:bg-white/[0.08] [[data-surface=admin]_&]:text-white [[data-surface=admin]_&]:ring-white/[0.06] [[data-surface=admin]_&]:shadow-none [[data-surface=admin]_&]:[&_svg]:text-cyan-300")
+      : cn("text-sidebar-foreground [&_svg]:text-subtle-foreground hover:bg-sidebar-active/60 hover:text-foreground hover:[&_svg]:text-foreground",
+          "[[data-surface=admin]_&]:[&_svg]:text-slate-400 [[data-surface=admin]_&]:hover:bg-white/[0.04] [[data-surface=admin]_&]:hover:text-white [[data-surface=admin]_&]:hover:[&_svg]:text-white"),
+    "focus-visible:ring-2 focus-visible:ring-ring",
+    disabled && "pointer-events-none opacity-50",
+    collapsed && "mx-auto w-10 justify-center px-0",
   );
   return (
     <li>
       <LinkComponent href={href} className={cls} aria-current={active ? "page" : undefined} aria-label={collapsed && typeof children === "string" ? children : undefined}>
-        {active && <span aria-hidden className="absolute -left-3 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-primary [[data-surface=admin]_&]:bg-accent" />}
         {icon}
         {collapsed ? (
           <>
-            {badge && <span aria-hidden className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-sidebar" />}
+            {badge && <span aria-hidden className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-sidebar" />}
             <span role="tooltip" className="pointer-events-none invisible absolute left-full top-1/2 z-50 ml-3 w-max -translate-y-1/2 rounded-md bg-navy px-2 py-1 text-xs font-medium text-white opacity-0 shadow-md transition-opacity group-hover/si:visible group-hover/si:opacity-100 group-focus-visible/si:visible group-focus-visible/si:opacity-100">
               {children}
             </span>
@@ -173,6 +198,37 @@ export function SidebarItem({
       </LinkComponent>
     </li>
   );
+}
+
+/** Signed-in person at the foot of the sidebar; `menu` is the account DropdownMenu content (opens upwards). */
+export function SidebarAccount({ name, detail, badge, menu, menuLabel = "Account menu", avatar }: {
+  name: React.ReactNode; detail?: React.ReactNode; badge?: React.ReactNode; menu: React.ReactNode; menuLabel?: string; avatar: React.ReactNode;
+}) {
+  const collapsed = useSidebarCollapsed();
+  return (
+    <DropdownMenu label={menuLabel} align="start" triggerClassName="block w-full"
+      trigger={
+        <span className={cn(
+          "flex w-full items-center gap-3 rounded-lg p-1.5 text-left transition-colors hover:bg-sidebar-active/60 [[data-surface=admin]_&]:hover:bg-white/[0.05]",
+          collapsed && "justify-center",
+        )}>
+          {avatar}
+          {!collapsed && (
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5"><span className="truncate text-[13px] font-semibold text-foreground [[data-surface=admin]_&]:text-white">{name}</span>{badge}</span>
+              {detail && <span className="block truncate text-xs text-muted-foreground [[data-surface=admin]_&]:text-slate-400">{detail}</span>}
+            </span>
+          )}
+          {!collapsed && <ChevronsUpDownIcon />}
+        </span>
+      }
+    >
+      {menu}
+    </DropdownMenu>
+  );
+}
+function ChevronsUpDownIcon() {
+  return <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-subtle-foreground [[data-surface=admin]_&]:text-slate-500" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="m7 15 5 5 5-5" /><path d="m7 9 5-5 5 5" /></svg>;
 }
 
 // ---------------------------------------------------------------- Theme

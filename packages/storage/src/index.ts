@@ -22,8 +22,10 @@ export function assertKey(key: string): string {
 }
 
 export function createS3(cfg: S3Config) {
-  const region = cfg.region ?? "us-east-1";
   const base = new URL(cfg.endpoint);
+  // SigV4 needs the bucket's region: explicit, else from an AWS endpoint (s3.<region>.amazonaws.com), else us-east-1
+  // (also what MinIO / SeaweedFS / R2-style endpoints accept).
+  const region = cfg.region ?? /^s3[.-]([a-z0-9-]+)\.amazonaws\.com$/.exec(base.hostname)?.[1] ?? "us-east-1";
 
   async function send(method: string, key: string | null, body?: Buffer, headers: Record<string, string> = {}): Promise<Response> {
     const path = `/${enc(cfg.bucket)}${key !== null ? `/${assertKey(key).split("/").map(enc).join("/")}` : ""}`;
