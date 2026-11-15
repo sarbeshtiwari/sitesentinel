@@ -97,12 +97,14 @@ describe("health evaluation: alive ≠ processing ≠ dependencies ≠ capacity;
   it("a healthy platform evaluates healthy and opens nothing", async () => {
     const r = await evaluate();
     expect(r.ran).toBe(true);
-    const bad = r.signals.filter((s) => s.state !== "HEALTHY" && s.state !== "UNKNOWN");
+    // CPU / disk of the real worker processes depend on the machine running the suite (a busy CI runner reached 146 %);
+    // those rules are covered with controlled values below ("resources" test), so they're excluded here.
+    const bad = r.signals.filter((s) => s.state !== "HEALTHY" && s.state !== "UNKNOWN" && !s.rule.startsWith("resources."));
     expect(bad, JSON.stringify(bad)).toEqual([]);
     const snap = (await c.query(`SELECT component, state FROM platform_health WHERE component <> '__evaluator'`)).rows;
     expect(snap.find((x) => x.component === "redis")?.state).toBe("HEALTHY");
     expect(snap.find((x) => x.component === "postgres")?.state).toBe("HEALTHY");
-    expect(await alerts()).toEqual([]);
+    expect((await alerts()).filter((x: { rule: string }) => !x.rule.startsWith("resources."))).toEqual([]);
   });
 
   it("an expired heartbeat is UNHEALTHY and opens ONE alert after the noise threshold; recovery after K good evaluations", async () => {
