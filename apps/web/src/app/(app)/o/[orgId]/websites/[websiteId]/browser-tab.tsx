@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { SyntheticNote } from "./performance-tab";
 import { FilterSelect, HealthBadge, KeyValue, LoadMore, QueryState, Section } from "@/components/monitoring";
-import { fmtMs, fmtUtc, mk, outcome, presetRange, useBrowserResults, useBrowserSummary } from "@/lib/monitoring";
+import { fmtMs, fmtTime, mk, outcome, presetRange, useBrowserResults, useBrowserSummary } from "@/lib/monitoring";
 
 export const VIEWPORTS: Array<[string, string]> = [["", "All viewports"], ["desktop", "Desktop"], ["desktop-large", "Desktop large"], ["tablet", "Tablet"], ["mobile-landscape", "Mobile landscape"], ["mobile-large", "Mobile large"], ["mobile-small", "Mobile small"]];
 const PROBLEMS: Array<[string, string]> = [["", "All problems"], ["NAVIGATION", "Navigation"], ["RENDERING", "Rendering"], ["JAVASCRIPT", "JavaScript"], ["NETWORK", "Failed resources"], ["LAYOUT", "Layout"], ["PERFORMANCE", "Performance"]];
@@ -38,9 +38,9 @@ export function BrowserTab({ orgId, websiteId, entitledReason }: { orgId: string
             <div className="grid gap-5">
               <KeyValue items={[
                 ["State", <HealthBadge key="s" state={s.state} />],
-                ["Last execution", latest ? <Link key="l" className="font-medium hover:text-primary" href={`${base}/${latest.executionId}`}>{fmtUtc(latest.windowStart)}</Link> : "—"],
+                ["Last execution", latest ? <Link key="l" className="font-medium hover:text-primary" href={`${base}/${latest.executionId}`}>{fmtTime(latest.windowStart)}</Link> : "—"],
                 ["Last result", latest ? <Badge key="o" tone={outcome(latest.outcome).tone}>{outcome(latest.outcome).label}</Badge> : "—"],
-                ["Last successful", fmtUtc(s.lastSuccessfulCheckAt)], ["Last failed", fmtUtc(s.lastFailedCheckAt)],
+                ["Last successful", fmtTime(s.lastSuccessfulCheckAt)], ["Last failed", fmtTime(s.lastFailedCheckAt)],
                 ["Viewports (latest)", latest ? latest.viewports.map((v) => v.viewport).join(", ") || "—" : "—"],
                 ["Open incidents", s.openIncidents.length],
               ]} />
@@ -61,7 +61,7 @@ export function BrowserTab({ orgId, websiteId, entitledReason }: { orgId: string
         )}
       </QueryState>
       <ComponentsSection orgId={orgId} websiteId={websiteId} />
-      <Section title="Browser check history" icon={<History />} flush description="Synthetic checks, newest first. Times in UTC.">
+      <Section title="Browser check history" icon={<History />} flush description="Synthetic checks, newest first. Times in your time zone.">
         <div className="border-b border-border px-4 py-3 sm:px-5">
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap [&_select]:min-w-0 sm:[&_select]:min-w-36">
             <FilterSelect label="Date" value={f.since} onChange={(v) => setF({ ...f, since: v })} options={SINCE} />
@@ -74,13 +74,13 @@ export function BrowserTab({ orgId, websiteId, entitledReason }: { orgId: string
           {!res.data?.pages[0]?.data.length ? <p className="px-4 py-6 text-sm text-muted-foreground sm:px-5">No browser checks match.</p> : (
             <>
               <Table>
-                <THead><TR><TH>Time (UTC)</TH><TH>Result</TH><TH>Viewports</TH><TH className="hidden md:table-cell">Problem</TH><TH className="hidden text-right lg:table-cell">LCP (synthetic)</TH></TR></THead>
+                <THead><TR><TH>Time</TH><TH>Result</TH><TH>Viewports</TH><TH className="hidden md:table-cell">Problem</TH><TH className="hidden text-right lg:table-cell">LCP (synthetic)</TH></TR></THead>
                 <TBody>
                   {res.data.pages.flatMap((p) => p.data).map((r) => {
                     const failing = r.viewports.find((v) => v.outcome !== "PASSED");
                     return (
                       <TR key={r.executionId}>
-                        <TD className="whitespace-nowrap text-xs"><Link className="font-medium hover:text-primary" href={`${base}/${r.executionId}`}>{fmtUtc(r.windowStart)}</Link></TD>
+                        <TD className="whitespace-nowrap text-xs"><Link className="font-medium hover:text-primary" href={`${base}/${r.executionId}`}>{fmtTime(r.windowStart)}</Link></TD>
                         <TD><Badge tone={outcome(r.outcome).tone}>{outcome(r.outcome).label}</Badge></TD>
                         <TD className="text-xs text-muted-foreground">{r.viewports.map((v) => v.viewport).join(", ")}</TD>
                         <TD className="hidden max-w-72 truncate text-xs text-muted-foreground md:table-cell">{failing?.failureDescription ?? "—"}</TD>
@@ -129,7 +129,7 @@ function ComponentsSection({ orgId, websiteId }: { orgId: string; websiteId: str
                   <TR key={c.id}>
                     <TD className="text-sm">{TYPE[c.type] ?? c.type}{c.label ? <span className="text-muted-foreground"> · {c.label}</span> : null}</TD>
                     <TD className="hidden text-xs md:table-cell">{c.viewports.join(", ") || "—"}</TD>
-                    <TD className="hidden text-xs text-muted-foreground lg:table-cell">{fmtUtc(c.firstSeenAt)}</TD>
+                    <TD className="hidden text-xs text-muted-foreground lg:table-cell">{fmtTime(c.firstSeenAt)}</TD>
                   </TR>
                 ))}
               </TBody>
@@ -142,7 +142,7 @@ function ComponentsSection({ orgId, websiteId }: { orgId: string; websiteId: str
         <h3 className="mb-2 text-sm font-semibold">Recent changes</h3>
         {!hist.data?.length ? <p className="text-sm text-muted-foreground">No component changes recorded.</p> : (
           <ul className="grid gap-1.5 text-sm">{hist.data.map((e) => (
-            <li key={e.id} className="flex flex-wrap items-center gap-2"><Badge tone={EVENT[e.type]?.tone}>{EVENT[e.type]?.label ?? e.type}</Badge><span>{TYPE[e.componentType] ?? e.componentType}{e.label ? <span className="text-muted-foreground"> · {e.label}</span> : ""}</span><span className="text-xs text-muted-foreground sm:ml-auto">{fmtUtc(e.at)}</span></li>
+            <li key={e.id} className="flex flex-wrap items-center gap-2"><Badge tone={EVENT[e.type]?.tone}>{EVENT[e.type]?.label ?? e.type}</Badge><span>{TYPE[e.componentType] ?? e.componentType}{e.label ? <span className="text-muted-foreground"> · {e.label}</span> : ""}</span><span className="text-xs text-muted-foreground sm:ml-auto">{fmtTime(e.at)}</span></li>
           ))}</ul>
         )}
       </div>

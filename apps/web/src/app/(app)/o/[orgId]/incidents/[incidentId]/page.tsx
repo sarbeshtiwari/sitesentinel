@@ -9,7 +9,7 @@ import { useRef, useState } from "react";
 import { Hint, KeyValue, QueryState, Section } from "@/components/monitoring";
 import { errorMessage, post } from "@/lib/api";
 import { useOrg } from "@/lib/hooks";
-import { fmtDuration, fmtUtc, INCIDENT_STATUS, mk, SEVERITY_TONE, SOURCE_LABEL, useIncident } from "@/lib/monitoring";
+import { fmtDuration, fmtTime, INCIDENT_STATUS, mk, SEVERITY_TONE, SOURCE_LABEL, useIncident } from "@/lib/monitoring";
 
 const EVENT_LABEL: Record<string, string> = {
   CREATED: "Incident opened", OCCURRED: "Detected again", ACKNOWLEDGED: "Acknowledged", INVESTIGATING: "Investigating", ESCALATED: "Escalated",
@@ -65,15 +65,15 @@ export default function IncidentPage() {
                   Monitoring will mark this incident recovered automatically once checks pass again; acknowledging only tells your team someone is on it.
                 </Alert>
               ) : (
-                <Alert tone="success" title="Recovered">Resolved {fmtUtc(resolvedAt)}{i.autoResolved ? " automatically after checks passed again" : ""}.</Alert>
+                <Alert tone="success" title="Recovered">Resolved {fmtTime(resolvedAt)}{i.autoResolved ? " automatically after checks passed again" : ""}.</Alert>
               )}
               <Section title="Summary" icon={<FileText />}>
                 <KeyValue items={[
                   ["Website", <Link key="w" className="font-medium text-primary hover:underline" href={`/o/${orgId}/websites/${i.websiteId}`}>{i.websiteName ?? "Website"}</Link>],
                   ["Detected by", SOURCE_LABEL[i.source ?? ""] ?? i.source], ["Category", <span key="c" className="capitalize">{i.category.replaceAll("_", " ").toLowerCase()}</span>],
-                  ["First detected", fmtUtc(i.firstDetectedAt)], ["Latest occurrence", fmtUtc(i.lastDetectedAt)], ["Occurrences", <span key="o" className="tabular-nums">{i.occurrenceCount}</span>],
+                  ["First detected", fmtTime(i.firstDetectedAt)], ["Latest occurrence", fmtTime(i.lastDetectedAt)], ["Occurrences", <span key="o" className="tabular-nums">{i.occurrenceCount}</span>],
                   ["Duration", `${fmtDuration((i as { durationSec?: number }).durationSec)}${active ? " so far" : ""}`],
-                  ["Acknowledged", i.acknowledgedAt ? fmtUtc(i.acknowledgedAt) : "—"], ["Times reopened", <span key="r" className="tabular-nums">{i.reopenCount ?? 0}</span>],
+                  ["Acknowledged", i.acknowledgedAt ? fmtTime(i.acknowledgedAt) : "—"], ["Times reopened", <span key="r" className="tabular-nums">{i.reopenCount ?? 0}</span>],
                 ]} />
               </Section>
               <div className="grid gap-5 xl:grid-cols-2 xl:items-start">
@@ -83,7 +83,7 @@ export default function IncidentPage() {
                       <li key={n} className="relative">
                         <span aria-hidden className={cn("absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full ring-4 ring-card", e.type === "AUTO_RESOLVED" || e.type === "RESOLVED" ? "bg-success" : e.type === "CREATED" || e.type === "REOPENED" ? "bg-danger" : e.type === "ACKNOWLEDGED" ? "bg-warning" : "bg-border-strong")} />
                         <p className="font-medium">{EVENT_LABEL[e.type] ?? e.type}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">{fmtUtc(e.at)}{typeof e.data?.durationSec === "number" ? ` · lasted ${fmtDuration(e.data.durationSec)}` : ""}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">{fmtTime(e.at)}{typeof e.data?.durationSec === "number" ? ` · lasted ${fmtDuration(e.data.durationSec)}` : ""}</p>
                       </li>
                     ))}
                   </ol>
@@ -95,7 +95,7 @@ export default function IncidentPage() {
                         <li key={n} className="flex items-start justify-between gap-3 px-4 py-2.5 sm:px-5">
                           <div className="min-w-0">
                             <p className="text-xs font-medium">{describeOccurrence(i.source, o.details)}</p>
-                            <p className="text-xs text-muted-foreground tabular-nums">{fmtUtc(o.at)}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">{fmtTime(o.at)}</p>
                             {o.url && <p className="break-all text-xs text-muted-foreground">{o.url}</p>}
                           </div>
                           {o.link && <Link className="inline-flex shrink-0 items-center gap-1 text-xs text-primary hover:underline" href={`/o/${orgId}${o.link}`}>View result<ExternalLink className="h-3 w-3" aria-hidden /></Link>}
@@ -111,7 +111,7 @@ export default function IncidentPage() {
                     {i.notifications.map((n, k) => (
                       <li key={k} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                         <span>{n.event} · {n.channel.toLowerCase()} · {n.status.toLowerCase()} <span className="tabular-nums">×{n.count}</span></span>
-                        <span className="text-xs text-muted-foreground tabular-nums">{fmtUtc(n.lastAt)}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">{fmtTime(n.lastAt)}</span>
                       </li>
                     ))}
                   </ul>

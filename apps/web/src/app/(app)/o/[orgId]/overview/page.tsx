@@ -12,7 +12,7 @@ import { PerfBadge } from "../websites/[websiteId]/performance-tab";
 import { Dot, HealthBadge, Hint, QueryState, RangePicker, Section } from "@/components/monitoring";
 import { useOrg } from "@/lib/hooks";
 import {
-  fmtPct, fmtUtc, INCIDENT_STATUS, presetRange, SCAN_STATUS, SEVERITY_TONE, SOURCE_LABEL, useIncidents, useOverview, useUsage,
+  fmtPct, fmtTime, INCIDENT_STATUS, presetRange, SCAN_STATUS, SEVERITY_TONE, SOURCE_LABEL, useIncidents, useOverview, useUsage,
 } from "@/lib/monitoring";
 
 // Order in which health states are summarised (worst first). Everything shown is counted from the API response.
@@ -112,7 +112,7 @@ function ActiveIncidents({ orgId, base }: { orgId: string; base: string }) {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{i.title}</span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        #{i.number} · {i.websiteName ?? "Website"}{i.source ? ` · ${SOURCE_LABEL[i.source] ?? i.source}` : ""} · since {fmtUtc(i.firstDetectedAt)}
+                        #{i.number} · {i.websiteName ?? "Website"}{i.source ? ` · ${SOURCE_LABEL[i.source] ?? i.source}` : ""} · since {fmtTime(i.firstDetectedAt)}
                       </span>
                     </span>
                     <Badge tone={st.tone}>{st.label}</Badge>
@@ -165,7 +165,7 @@ function WebsitesHealth({ d, base }: { d: MonitoringOverviewDto; base: string })
               <TR key={w.id}>
                 <TD className="max-w-72">
                   <Link href={`${base}/websites/${w.id}`} className="font-medium hover:text-primary">{w.name}</Link>
-                  <div className="truncate text-xs text-muted-foreground">{w.displayHost}{w.http.lastCheckAt ? ` · checked ${fmtUtc(w.http.lastCheckAt)}` : ""}</div>
+                  <div className="truncate text-xs text-muted-foreground">{w.displayHost}{w.http.lastCheckAt ? ` · checked ${fmtTime(w.http.lastCheckAt)}` : ""}</div>
                   <WebsiteRowMeta w={w} />
                 </TD>
                 <TD><HealthBadge state={w.health} /></TD>
@@ -203,7 +203,7 @@ function RecentChanges({ d, base }: { d: MonitoringOverviewDto; base: string }) 
               <span aria-hidden className={cn("absolute -left-[25px] top-1 h-2.5 w-2.5 rounded-full ring-4 ring-card", c.kind === "PERFORMANCE_REGRESSION" ? "bg-danger" : "bg-warning")} />
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={c.kind === "PERFORMANCE_REGRESSION" ? "danger" : "warning"}>{c.kind === "PERFORMANCE_REGRESSION" ? "Regression" : "Component"}</Badge>
-                <span className="text-xs text-muted-foreground">{fmtUtc(c.at)}</span>
+                <span className="text-xs text-muted-foreground">{fmtTime(c.at)}</span>
               </div>
               <Link className="mt-1 block text-sm hover:text-primary" href={`${base}${c.link}`}><span className="font-medium">{c.websiteName}</span>: {c.title}</Link>
             </li>
@@ -277,7 +277,7 @@ export default function OverviewPage() {
               <RecentChanges d={d} base={base} />
             </div>
             <PlanCoverage d={d} />
-            <Hint>Statuses distinguish outages (your website), inconclusive checks (our monitoring infrastructure), disabled monitoring and insufficient coverage. Uptime is computed from measured checks only; coverage shows how many scheduled checks produced a result. Range: {fmtUtc(d.range.from)} – {fmtUtc(d.range.to)}.</Hint>
+            <Hint>Statuses distinguish outages (your website), inconclusive checks (our monitoring infrastructure), disabled monitoring and insufficient coverage. Uptime is computed from measured checks only; coverage shows how many scheduled checks produced a result. Range: {fmtTime(d.range.from)} – {fmtTime(d.range.to)}.</Hint>
           </div>
         )}
       </QueryState>

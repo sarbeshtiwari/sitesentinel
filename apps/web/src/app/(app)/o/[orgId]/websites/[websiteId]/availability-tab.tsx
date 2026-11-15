@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { HttpCheckResultDto } from "@wim/contracts";
 import { Distribution, FilterSelect, HealthBadge, Hint, KeyValue, LineChart, LoadMore, QueryState, RangePicker, Section, StackedBars } from "@/components/monitoring";
-import { fmtDuration, fmtMs, fmtPct, fmtUtc, outcome, presetRange, SEVERITY_TONE, useAnalytics, useHttpResults, useHttpSummary } from "@/lib/monitoring";
+import { fmtDuration, fmtMs, fmtPct, fmtTime, outcome, presetRange, SEVERITY_TONE, useAnalytics, useHttpResults, useHttpSummary } from "@/lib/monitoring";
 
 const CATEGORY_LABEL: Record<string, string> = {
   TARGET_PERMANENT: "Website error", TARGET_TEMPORARY: "Website unreachable / timeout", INVALID_CONFIGURATION: "Configuration",
@@ -20,7 +20,7 @@ export function AvailabilityTab({ orgId, websiteId }: { orgId: string; websiteId
   const a = useAnalytics(orgId, websiteId, range);
   const res = useHttpResults(orgId, websiteId, { outcome: filter || undefined, from: range.from });
   const d = a.data;
-  const bucketLabel = (t: string) => (d && d.bucketSec >= 86_400 ? t.slice(0, 10) : `${t.slice(0, 13).replace("T", " ")}:00`);
+  const bucketLabel = (t: string) => (d && d.bucketSec >= 86_400 ? `${t.slice(0, 10)} (UTC day)` : fmtTime(t));
 
   return (
     <div className="grid gap-5">
@@ -54,10 +54,10 @@ export function AvailabilityTab({ orgId, websiteId }: { orgId: string; websiteId
             </Card>
             <Section title="Availability over time" icon={<BarChart3 />} description={`Checks per ${d.bucketSec >= 86_400 ? "day" : d.bucketSec >= 21_600 ? "6 hours" : "hour"}; green up, red down, grey inconclusive; hatched = no data (a gap, not uptime).`}>
               <StackedBars ariaLabel="Up, down and inconclusive checks over time" bars={d.series.map((s) => ({
-                t: s.t, label: `${bucketLabel(s.t)} UTC: ${s.up} up, ${s.down} down, ${s.inconclusive} inconclusive of ${s.scheduled} scheduled`,
+                t: s.t, label: `${bucketLabel(s.t)}: ${s.up} up, ${s.down} down, ${s.inconclusive} inconclusive of ${s.scheduled} scheduled`,
                 values: [{ v: s.up, tone: "success" }, { v: s.down, tone: "danger" }, { v: s.inconclusive, tone: "neutral" }],
               }))} />
-              <div className="mt-1 flex justify-between text-xs text-muted-foreground"><span>{fmtUtc(d.range.from)}</span><span>{fmtUtc(d.range.to)}</span></div>
+              <div className="mt-1 flex justify-between text-xs text-muted-foreground"><span>{fmtTime(d.range.from)}</span><span>{fmtTime(d.range.to)}</span></div>
             </Section>
             <div className="grid gap-5 lg:grid-cols-2">
               <Section title="Response time" icon={<Timer />} description="Successful checks only, through our egress gateway (synthetic).">
@@ -82,7 +82,7 @@ export function AvailabilityTab({ orgId, websiteId }: { orgId: string; websiteId
                       <Link className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-sunken/70 sm:px-5" href={`/o/${orgId}/incidents/${i.id}`}>
                         <Badge tone={SEVERITY_TONE[i.severity]}>{i.severity}</Badge>
                         <span className="min-w-0 flex-1 text-sm font-medium">INC-{i.number} {i.title}</span>
-                        <span className="text-xs text-muted-foreground">{fmtUtc(i.from)} – {i.to ? fmtUtc(i.to) : "ongoing"}</span>
+                        <span className="text-xs text-muted-foreground">{fmtTime(i.from)} – {i.to ? fmtTime(i.to) : "ongoing"}</span>
                       </Link>
                     </li>
                   ))}
@@ -92,18 +92,18 @@ export function AvailabilityTab({ orgId, websiteId }: { orgId: string; websiteId
           </div>
         )}
       </QueryState>
-      <Section title="Check history" icon={<History />} flush description="Newest first, within the selected range. Times in UTC." actions={
+      <Section title="Check history" icon={<History />} flush description="Newest first, within the selected range. Times in your time zone." actions={
         <FilterSelect label="Result" value={filter} onChange={setFilter} options={[["", "All"], ["PASSED", "Passed"], ["FAILED", "Failed"], ["INCONCLUSIVE", "Inconclusive"]]} />
       }>
         <QueryState q={res} skeleton="h-40 m-4">
           {!res.data?.pages[0]?.data.length ? <p className="px-4 py-6 text-sm text-muted-foreground sm:px-5">No checks match.</p> : (
             <>
               <Table>
-                <THead><TR><TH>Time (UTC)</TH><TH>Result</TH><TH>Status</TH><TH>Duration</TH><TH className="hidden md:table-cell">TTFB</TH><TH className="hidden md:table-cell">TLS</TH><TH className="hidden lg:table-cell">Failure</TH><TH><span className="sr-only">Details</span></TH></TR></THead>
+                <THead><TR><TH>Time</TH><TH>Result</TH><TH>Status</TH><TH>Duration</TH><TH className="hidden md:table-cell">TTFB</TH><TH className="hidden md:table-cell">TLS</TH><TH className="hidden lg:table-cell">Failure</TH><TH><span className="sr-only">Details</span></TH></TR></THead>
                 <TBody>
                   {res.data.pages.flatMap((p) => p.data).map((r) => (
                     <TR key={r.id}>
-                      <TD className="whitespace-nowrap text-xs">{fmtUtc(r.windowStart)}</TD>
+                      <TD className="whitespace-nowrap text-xs">{fmtTime(r.windowStart)}</TD>
                       <TD><Badge tone={outcome(r.outcome).tone}>{outcome(r.outcome).label}</Badge></TD>
                       <TD className="tabular-nums">{r.httpStatus ?? "—"}</TD>
                       <TD className="tabular-nums">{fmtMs(r.timings.totalMs)}</TD>
@@ -121,7 +121,7 @@ export function AvailabilityTab({ orgId, websiteId }: { orgId: string; websiteId
         </QueryState>
       </Section>
       {open && (
-        <Dialog open onOpenChange={(o) => !o && setOpen(null)} title={`Check at ${fmtUtc(open.windowStart)}`}>
+        <Dialog open onOpenChange={(o) => !o && setOpen(null)} title={`Check at ${fmtTime(open.windowStart)}`}>
           <div className="grid gap-4 text-sm">
             <KeyValue items={[
               ["Result", outcome(open.outcome).label], ["HTTP status", open.httpStatus ?? "—"], ["Method", open.method ?? "—"],

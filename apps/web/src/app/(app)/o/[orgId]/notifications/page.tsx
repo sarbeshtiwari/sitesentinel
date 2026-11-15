@@ -7,7 +7,7 @@ import { useState } from "react";
 import { LoadMore, QueryState } from "@/components/monitoring";
 import { errorMessage, post } from "@/lib/api";
 import { useOrg } from "@/lib/hooks";
-import { fmtUtc, SEVERITY_TONE, useNotifications } from "@/lib/monitoring";
+import { fmtTime, SEVERITY_TONE, useNotifications } from "@/lib/monitoring";
 
 const TYPE: Record<string, string> = { INCIDENT_CREATED: "Incident opened", INCIDENT_RESOLVED: "Recovered", SSL_EXPIRING: "Certificate", MONITORING_INTERRUPTED: "Monitoring interrupted" };
 
@@ -46,7 +46,7 @@ export default function NotificationsPage() {
                   <p className="text-sm text-muted-foreground">{n.body}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                  <span className="tabular-nums">{fmtUtc(n.createdAt)}</span>
+                  <span className="tabular-nums">{fmtTime(n.createdAt)}</span>
                   {!n.read && <Button size="sm" variant="ghost" onClick={() => open(n.id, false)}>Mark read</Button>}
                 </div>
               </div>

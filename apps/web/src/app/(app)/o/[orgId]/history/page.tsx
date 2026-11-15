@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Dot, FilterSelect, Hint, LoadMore, QueryState, Section } from "@/components/monitoring";
 import { useOrg } from "@/lib/hooks";
-import { fmtUtc, outcome, presetRange, SOURCE_LABEL, useHistory } from "@/lib/monitoring";
+import { fmtTime, localDay, outcome, presetRange, SOURCE_LABEL, useHistory } from "@/lib/monitoring";
 import { useWebsites } from "@/lib/websites";
 
 const TYPE_LABEL: Record<string, string> = { CHECK: "Check", INCIDENT: "Incident", CONFIG: "Configuration", VERIFICATION: "Verification", INTERRUPTION: "Interruption", COMPONENT: "Component", FUNCTIONAL: "Functional test", RESPONSIVE: "Responsive" };
@@ -24,13 +24,13 @@ export default function HistoryPage() {
   const sites = useWebsites(orgId);
   const q = useHistory(orgId, { websiteId: f.websiteId || undefined, type: f.type || undefined, source: f.source || undefined, result: f.result || undefined, from: f.since ? presetRange(f.since as "24h").from : undefined });
   const rows = q.data?.pages.flatMap((p) => p.data) ?? [];
-  // group by UTC day for readability
+  // group by day (viewer's time zone) for readability
   const days = new Map<string, typeof rows>();
-  for (const r of rows) { const d = r.at.slice(0, 10); days.set(d, [...(days.get(d) ?? []), r]); }
+  for (const r of rows) { const d = localDay(r.at); days.set(d, [...(days.get(d) ?? []), r]); }
 
   return (
     <>
-      <PageHeader title="Monitoring history" description="Every recorded check, incident change, configuration change and interruption, newest first. Times in UTC." />
+      <PageHeader title="Monitoring history" description="Every recorded check, incident change, configuration change and interruption, newest first. Times in your time zone." />
       <FilterBar>
         <FilterSelect label="Website" value={f.websiteId} onChange={(v) => set("websiteId", v)} options={[["", "All websites"], ...(sites.data ?? []).map((w) => [w.id, w.name] as [string, string])]} />
         <FilterSelect label="Event" value={f.type} onChange={(v) => set("type", v)} options={[["", "All events"], ["CHECK", "Checks"], ["INCIDENT", "Incidents"], ["CONFIG", "Configuration"], ["VERIFICATION", "Verification"], ["INTERRUPTION", "Interruptions"], ["COMPONENT", "Component changes"], ["FUNCTIONAL", "Functional test failures"], ["RESPONSIVE", "Responsive problems"]]} />
@@ -63,7 +63,7 @@ export default function HistoryPage() {
               </Section>
             ))}
             <LoadMore q={q} />
-            <Hint>{fmtUtc(rows[rows.length - 1]?.at)} is the oldest event loaded.{q.data?.pages[0]?.retention ? ` Checks are kept ${q.data.pages[0].retention.checksDays} days and browser results ${q.data.pages[0].retention.browserDays} days; older events have expired, not disappeared.` : ""}</Hint>
+            <Hint>{fmtTime(rows[rows.length - 1]?.at)} is the oldest event loaded.{q.data?.pages[0]?.retention ? ` Checks are kept ${q.data.pages[0].retention.checksDays} days and browser results ${q.data.pages[0].retention.browserDays} days; older events have expired, not disappeared.` : ""}</Hint>
           </div>
         )}
       </QueryState>
