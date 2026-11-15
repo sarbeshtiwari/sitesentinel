@@ -269,7 +269,8 @@ export async function finalizeScan(tx: Tx, i: {
   }
 
   // ---------------------------------------------------------------- inventory (discovered_pages), final status, usage
-  for (const p of checkedPages.filter((x) => x.state === "DONE")) {
+  // Only HTML documents are pages: an <a href> to an image or file (e.g. /brand/logo.svg) is a link, not a page.
+  for (const p of checkedPages.filter((x) => x.state === "DONE" && /html/i.test(x.content_type ?? ""))) {
     const s = disp(p.url);
     await tx.$executeRaw`
       INSERT INTO discovered_pages (org_id, website_id, url, url_hash, path_template, source, depth, title, content_hash, last_seen_at)
