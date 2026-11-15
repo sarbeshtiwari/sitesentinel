@@ -31,8 +31,18 @@ start worker-http
 start worker-deepscan
 start worker-notify
 start scheduler
+SERVICES="egress-gateway worker-http worker-deepscan worker-notify scheduler"
+if [ -n "${BROWSER_DATABASE_URL:-}" ]; then
+  # Browser monitoring: sandboxed Chromium (browser-runner, loopback only) + worker-browser
+  export RUNNER_PORT="${RUNNER_PORT:-3301}" RUNNER_BIND_HOST=127.0.0.1 RUNNER_ADVERTISE_HOST=127.0.0.1 RUNNER_GATEWAY_URL="$EGRESS_GATEWAY_URL"
+  export BROWSER_RUNNER_URL="http://127.0.0.1:${RUNNER_PORT}"
+  start browser-runner
+  sleep 2
+  start worker-browser
+  SERVICES="$SERVICES browser-runner worker-browser"
+fi
 sleep 5
-for s in egress-gateway worker-http worker-deepscan worker-notify scheduler; do
+for s in $SERVICES; do
   pgrep -f "apps/$s/dist/main.js" >/dev/null && echo "  ✓ $s running" || { echo "  ✗ $s stopped — last log lines:"; tail -5 "$LOGS/$s.log"; }
 done
 echo "Keep this Mac awake (e.g. caffeinate -s) — monitoring stops when it sleeps."
