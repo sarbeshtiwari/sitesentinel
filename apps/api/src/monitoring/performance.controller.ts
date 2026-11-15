@@ -295,7 +295,8 @@ export class PerformanceService {
       const rows = await tx.$queryRaw<Array<Record<string, any>>>`
         SELECT d.id, d.url, d.url_hash, d.status::text AS status, d.title, d.source, d.depth, d.first_seen_at, d.last_seen_at, m.id AS monitored_id, m.last_result_at
           FROM discovered_pages d LEFT JOIN monitored_pages m ON m.discovered_page_id = d.id
-         WHERE d.website_id = ${websiteId}::uuid AND (${q.search ?? null}::text IS NULL OR d.url ILIKE '%' || ${q.search ?? null} || '%')
+         WHERE d.website_id = ${websiteId}::uuid AND d.status <> 'REMOVED' -- pages no longer found by complete scans
+           AND (${q.search ?? null}::text IS NULL OR d.url ILIKE '%' || ${q.search ?? null} || '%')
            AND (${q.cursor ?? null}::text IS NULL OR d.url > ${q.cursor ?? null})
          ORDER BY d.url LIMIT ${q.limit + 1}`;
       const page = rows.slice(0, q.limit);
