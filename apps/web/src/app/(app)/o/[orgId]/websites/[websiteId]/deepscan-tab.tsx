@@ -19,7 +19,9 @@ export interface FindingDto {
   impact: string | null; recommendation: string; detectionMethod: string; automated: boolean; occurrenceCount: number; firstDetectedAt: string; lastDetectedAt: string; resolvedAt: string | null;
 }
 interface SummaryDto {
-  entitled: boolean; enabled: boolean; pausedReason: string | null; nextRunAt: string | null; latestScan: ScanDto | null;
+  entitled: boolean; enabled: boolean; pausedReason: string | null; resuming?: boolean; nextRunAt: string | null; latestScan: ScanDto | null;
+  /** a scan waiting for the scanner (no scan record yet) */
+  pending?: { executionId: string; status: string; queuedAt: string } | null;
   openFindings: Array<{ group: string; severity: string; count: number }>; effectiveLimits: { maxPages: number; maxDepth: number; browserPages: number; externalLinks: boolean };
 }
 export const GROUP_LABEL: Record<string, string> = { broken_pages: "Broken pages", broken_resources: "Broken resources", forms: "Forms & search", sitemap: "Sitemap", seo: "SEO", accessibility: "Accessibility (automated checks)", structure: "Structure" };
@@ -42,7 +44,7 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
   const [pending, setPending] = useState<{ executionId: string; since: number } | null>(null);
   const sum = useQuery({
     queryKey: mk.deep(orgId, websiteId), queryFn: ({ signal }) => get<DataEnvelope<SummaryDto>>(base, { signal }).then((r) => r.data),
-    refetchInterval: (q) => (pending ? 2000 : q.state.data?.latestScan?.status === "RUNNING" ? 3000 : false),
+    refetchInterval: (q) => (pending || q.state.data?.pending || q.state.data?.resuming ? 2000 : q.state.data?.latestScan?.status === "RUNNING" ? 3000 : false),
   });
   const scans = useQuery({ queryKey: [...mk.deep(orgId, websiteId), "scans"], queryFn: ({ signal }) => get<DataEnvelope<ScanDto[]>>(`${base}/scans?limit=20`, { signal }).then((r) => r.data) });
   const [f, setF] = useState({ status: "OPEN", group: "", severity: "", url: "" });
@@ -68,8 +70,11 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
   const running = latest?.status === "RUNNING";
   // the requested scan is visible (running or already finished): stop the fast polling
   useEffect(() => { if (pending && latest?.executionId === pending.executionId) setPending(null); }, [pending, latest?.executionId]);
-  const waiting = Boolean(pending && latest?.executionId !== pending.executionId);
-  const slow = waiting && Date.now() - pending!.since > 60_000;
+  // queued = requested here and not visible yet, or reported by the API (e.g. a scheduled scan, or one from another tab)
+  const queued = s?.pending ?? null;
+  const waiting = Boolean((pending && latest?.executionId !== pending.executionId) || queued);
+  const queuedSince = queued ? new Date(queued.queuedAt).getTime() : pending?.since ?? Date.now();
+  const slow = waiting && Date.now() - queuedSince > 60_000;
   const schedulePaused = s?.pausedReason === "DISABLED_BY_CUSTOMER";
   const completed = scans.data?.find((x) => x.status === "COMPLETED");
   const count = (g: string) => s?.openFindings.filter((x) => x.group === g).reduce((a, b) => a + b.count, 0) ?? 0;
@@ -94,19 +99,20 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
                 <div className="flex flex-wrap items-center gap-2">
                   {/* one primary action for the scan itself… */}
                   {running ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setConfirm("cancel")}><Square /> Cancel scan</Button>
-                    : waiting ? <Button size="sm" disabled loading>Starting…</Button>
+                    : waiting ? (queued ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setConfirm("cancel")}><Square /> Cancel queued scan</Button> : <Button size="sm" disabled loading>Starting…</Button>)
+                    : s.resuming ? <Button size="sm" disabled loading>Resuming…</Button>
                     : s.enabled && <Button size="sm" loading={busy === "start"} disabled={busy !== null} onClick={startScan}><Play /> Start scan</Button>}
                   {/* …and the automatic schedule, labelled as such (it doesn't stop a scan that is running) */}
-                  <Button size="sm" variant="ghost" loading={busy === "schedule"} disabled={busy !== null || waiting}
-                    title={schedulePaused ? "Turn the automatic deep scans back on" : "Stop automatic deep scans; you can still start one manually"}
-                    onClick={() => act("schedule", () => post(`${base}/pause`, { paused: !schedulePaused }), schedulePaused ? "Automatic scans resumed" : "Automatic scans paused")}>
-                    {schedulePaused ? <><Play /> Resume schedule</> : <><Pause /> Pause schedule</>}
+                  <Button size="sm" variant="ghost" loading={busy === "schedule"} disabled={busy !== null || Boolean(s.resuming)}
+                    title={schedulePaused ? "Turn deep scans back on (scheduled and manual)" : "Stop all deep scans for this website — scheduled and manual — and cancel one in progress"}
+                    onClick={() => act("schedule", () => post(`${base}/pause`, { paused: !schedulePaused }), schedulePaused ? "Deep scans resumed" : "Deep scans paused")}>
+                    {schedulePaused ? <><Play /> Resume deep scans</> : <><Pause /> Pause deep scans</>}
                   </Button>
                 </div>
               )}>
               {waiting && (
-                <Alert tone={slow ? "warning" : "info"} className="mb-4" title={slow ? "The scan is still queued" : "Scan requested — waiting for the scanner to start it"}>
-                  {slow ? "The scanner hasn't picked it up yet. If this persists, the deep-scan worker may not be running." : "This usually takes a few seconds; the page updates on its own."}
+                <Alert tone={slow ? "warning" : "info"} className="mb-4" title={slow ? `A scan has been queued since ${fmtTime(new Date(queuedSince).toISOString())}` : "Scan queued — waiting for the scanner to start it"}>
+                  {slow ? "The scanner hasn't picked it up. The deep-scan worker may not be running; you can cancel the queued scan and start a new one once it is." : "This usually takes a few seconds; the page updates on its own."}
                 </Alert>
               )}
               {!latest ? <EmptyState icon={<ScanSearch />} title="No scan has run yet." description={canWrite && s.enabled ? "Start a scan now, or wait for the next scheduled one." : undefined} /> : (
@@ -180,9 +186,9 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
           </>
         )}
       </QueryState>
-      <ConfirmDialog open={confirm === "cancel"} onOpenChange={(o) => !o && setConfirm(null)} title="Cancel the running scan?"
+      <ConfirmDialog open={confirm === "cancel"} onOpenChange={(o) => !o && setConfirm(null)} title={running ? "Cancel the running scan?" : "Cancel the queued scan?"}
         description="Pages already checked are kept. A cancelled scan never resolves findings." confirmLabel="Cancel scan" destructive
-        loading={busy === "cancel"} onConfirm={() => latest && act("cancel", () => post(`${base}/scans/${latest.executionId}/cancel`), "Scan cancelled").then(() => setConfirm(null))} />
+        loading={busy === "cancel"} onConfirm={() => { const id = running ? latest?.executionId : queued?.executionId ?? latest?.executionId; if (id) void act("cancel", () => post(`${base}/scans/${id}/cancel`), "Scan cancelled").then(() => setConfirm(null)); }} />
     </div>
   );
 }
