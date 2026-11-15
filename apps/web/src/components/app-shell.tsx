@@ -124,7 +124,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
         <SidebarItem LinkComponent={Link} href={at("usage")} icon={<Gauge />} active={on("usage")}>Usage & limits</SidebarItem>
       </SidebarSection>
       {orgId && (
-        <SidebarSection title="Settings" id="org-settings" collapsible defaultOpen={false} containsActive={is(`${base}/settings`)}>
+        <SidebarSection title="Settings" id="org-settings" collapsible containsActive={is(`${base}/settings`)}>
           {can("org:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/general`} icon={<Settings />} active={is(`${base}/settings/general`)}>General</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/team`} icon={<Users />} active={is(`${base}/settings/team`)}>Team</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/roles`} icon={<KeyRound />} active={is(`${base}/settings/roles`)}>Roles</SidebarItem>}
