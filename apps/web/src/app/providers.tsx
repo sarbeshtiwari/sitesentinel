@@ -26,7 +26,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         defaultOptions: {
           queries: {
             retry: (count, e) => !(e instanceof ApiError && e.status >= 400 && e.status < 500) && count < 2,
-            refetchOnWindowFocus: false,
+            refetchOnWindowFocus: true, // returning to the tab shows current data
           },
         },
       }),

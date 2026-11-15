@@ -497,6 +497,17 @@ export class DashboardService {
         SELECT website_id, max(recorded_at) AS at FROM execution_results WHERE org_id = ${o.orgId}::uuid AND recorded_at > ${after} GROUP BY 1`;
       const deep = await tx.$queryRaw<Array<{ website_id: string; at: Date }>>`
         SELECT website_id, max(updated_at) AS at FROM deep_scans WHERE org_id = ${o.orgId}::uuid AND updated_at > ${after} GROUP BY 1`;
+      // execution state changes (queued → running → finished: checks, scans, verification-triggered work)
+      const exec = await tx.$queryRaw<Array<{ website_id: string; at: Date }>>`
+        SELECT website_id, max(greatest(queued_at, coalesce(started_at, queued_at), coalesce(finished_at, queued_at))) AS at
+          FROM monitoring_executions
+         WHERE org_id = ${o.orgId}::uuid AND queued_at > now() - interval '8 days'
+           AND (queued_at > ${after} OR started_at > ${after} OR finished_at > ${after}) GROUP BY 1`;
+      // website, ownership-verification and installation state
+      const site = await tx.$queryRaw<Array<{ website_id: string; at: Date }>>`
+        SELECT w.id AS website_id, greatest(w.updated_at, coalesce(c.updated_at, w.updated_at), coalesce(i.updated_at, w.updated_at)) AS at
+          FROM websites w LEFT JOIN domain_claims c ON c.id = w.domain_claim_id LEFT JOIN site_installations i ON i.website_id = w.id
+         WHERE w.org_id = ${o.orgId}::uuid AND (w.updated_at > ${after} OR c.updated_at > ${after} OR i.updated_at > ${after})`;
       const notes = await tx.$queryRaw<Array<{ at: Date | null; unread: bigint }>>`
         SELECT max(created_at) FILTER (WHERE created_at > ${after}) AS at, count(*) FILTER (WHERE read_at IS NULL) AS unread
           FROM notifications WHERE org_id = ${o.orgId}::uuid AND user_id = ${s.userId}::uuid`;
@@ -504,6 +515,8 @@ export class DashboardService {
         ...inc.map((x) => ({ kind: "INCIDENT" as const, websiteId: x.website_id, at: x.at.toISOString() })),
         ...chk.map((x) => ({ kind: "CHECK" as const, websiteId: x.website_id, at: x.at.toISOString() })),
         ...deep.map((x) => ({ kind: "DEEP_SCAN" as const, websiteId: x.website_id, at: x.at.toISOString() })),
+        ...exec.map((x) => ({ kind: "EXECUTION" as const, websiteId: x.website_id, at: x.at.toISOString() })),
+        ...site.map((x) => ({ kind: "WEBSITE" as const, websiteId: x.website_id, at: x.at.toISOString() })),
         ...(notes[0]?.at ? [{ kind: "NOTIFICATION" as const, websiteId: null, at: notes[0].at.toISOString() }] : []),
       ];
       return { cursor: String(now.getTime()), changes, unreadNotifications: n(notes[0]?.unread) };

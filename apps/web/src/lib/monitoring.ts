@@ -227,6 +227,8 @@ export function useDebounced<T>(value: T, ms = 300): T {
  * authorised endpoints. 15 s when the tab is visible, paused when hidden, exponential backoff (max 2 min) on errors;
  * the cursor carries over, so nothing is missed across a reconnect. Returns the unread notification count.
  */
+/** How often an open (visible) tab asks the API what changed; hidden tabs pause and catch up when shown again. */
+const LIVE_POLL_MS = 5_000;
 export function useLiveUpdates(orgId: string | undefined) {
   const qc = useQueryClient();
   const [unread, setUnread] = useState(0);
@@ -247,22 +249,16 @@ export function useLiveUpdates(orgId: string | undefined) {
         setUnread(r.data.unreadNotifications);
         failures = 0;
         if (!first && r.data.changes.length) {
-          const sites = new Set(r.data.changes.map((c) => c.websiteId).filter(Boolean) as string[]);
-          const kinds = new Set(r.data.changes.map((c) => c.kind));
-          void qc.invalidateQueries({ queryKey: ["org", orgId, "mon", "overview"] });
-          void qc.invalidateQueries({ queryKey: ["org", orgId, "mon", "history"] });
-          if (kinds.has("INCIDENT")) {
-            void qc.invalidateQueries({ queryKey: ["org", orgId, "mon", "incidents"] });
-            void qc.invalidateQueries({ queryKey: ["org", orgId, "mon", "incident"] });
-          }
-          for (const w of sites) void qc.invalidateQueries({ queryKey: mk.site(orgId, w) });
-          if (kinds.has("NOTIFICATION")) void qc.invalidateQueries({ queryKey: ["org", orgId, "notifications"] });
+          // Anything changed in this organisation: refresh every query of it that is on screen (inactive queries
+          // are only marked stale and refetch when shown). Covers dashboards, website pages and tabs, incidents,
+          // history, verification, installation, deep scans, notifications and usage alike.
+          void qc.invalidateQueries({ queryKey: ["org", orgId] });
         }
       } catch {
         if (stopped) return;
         failures++;
       }
-      timer = setTimeout(tick, failures ? Math.min(120_000, 15_000 * 2 ** failures) : 15_000);
+      timer = setTimeout(tick, failures ? Math.min(120_000, LIVE_POLL_MS * 2 ** failures) : LIVE_POLL_MS);
     };
     const onVisible = () => { if (document.visibilityState === "visible") { clearTimeout(timer); void tick(); } };
     document.addEventListener("visibilitychange", onVisible);
