@@ -4,8 +4,14 @@ import "./globals.css";
 import { display, mono } from "./fonts";
 import { Providers } from "./providers";
 
+// Absolute URLs for og:image / twitter:image. Without it Next falls back to http://localhost:<port> in production.
+function siteUrl(): URL | undefined {
+  try { return process.env.ADMIN_URL ? new URL(process.env.ADMIN_URL) : undefined; } catch { return undefined; }
+}
+
 // The visible product name is applied at runtime from platform settings (branding.productName).
 export const metadata: Metadata = {
+  metadataBase: siteUrl(),
   title: "SiteSentinel Admin",
   description: "Super Admin control plane.",
   robots: { index: false },

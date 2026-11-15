@@ -190,6 +190,9 @@ export async function finalizeScan(tx: Tx, i: {
     SELECT group_key, count(*)::int AS n, (array_agg(severity ORDER BY array_position(ARRAY['CRITICAL','HIGH','MEDIUM','LOW','INFO'], severity)))[1] AS worst
       FROM scan_findings WHERE website_id = ${i.websiteId}::uuid AND status = 'OPEN' GROUP BY group_key`;
   const incidentActions: string[] = [];
+  // Only groups this scan actually re-detected count as an occurrence: a scan that observed nothing in a group (e.g.
+  // reached no page, or stopped on our infrastructure) must not extend, open or reopen that group's incident.
+  const observedGroups = new Set<string>(found.map((f) => FINDINGS[f.category].group));
   for (const g of i.snap.incidentGroups as FindingGroup[]) {
     const spec = FINDING_GROUP_INCIDENTS[g];
     const cnt = groupCounts.find((x) => x.group_key === g);
@@ -198,6 +201,7 @@ export async function finalizeScan(tx: Tx, i: {
       SELECT id FROM incidents WHERE org_id = ${i.orgId}::uuid AND fingerprint = ${fingerprint} AND status IN ('OPEN', 'ACKNOWLEDGED', 'INVESTIGATING', 'REOPENED')`;
     const occurrence = { executionId: i.executionId, pageUrl: null, details: { openFindings: cnt?.n ?? 0, worst: cnt?.worst ?? null } };
     if (cnt && cnt.n > 0) {
+      if (!observedGroups.has(g)) continue;
       const sev = (["CRITICAL", "HIGH", "MEDIUM", "LOW"].includes(cnt.worst) ? cnt.worst : spec.severity) as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
       if (active) {
         await recordOccurrence(tx, active.id, i.orgId, now, occurrence, { openFindings: cnt.n });

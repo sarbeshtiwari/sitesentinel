@@ -15,11 +15,11 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-primary text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary)_88%,black)] active:bg-[color-mix(in_srgb,var(--primary)_80%,black)]",
+        primary: "bg-primary-solid text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary-solid)_88%,black)] active:bg-[color-mix(in_srgb,var(--primary-solid)_80%,black)]",
         secondary: "bg-muted text-foreground hover:bg-[color-mix(in_srgb,var(--muted)_70%,var(--border-strong))]",
         outline: "border border-border-strong bg-card text-foreground shadow-xs hover:bg-sunken",
         ghost: "text-foreground hover:bg-muted",
-        danger: "bg-danger text-danger-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--danger)_88%,black)]",
+        danger: "bg-danger-solid text-danger-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--danger-solid)_88%,black)]",
         link: "text-primary underline-offset-4 hover:underline px-0 h-auto",
       },
       size: { sm: "h-8 px-3 text-[13px] [&_svg]:h-3.5 [&_svg]:w-3.5", md: "h-9 px-4 [&_svg]:h-4 [&_svg]:w-4", lg: "h-10 px-5 [&_svg]:h-4 [&_svg]:w-4", icon: "h-9 w-9 [&_svg]:h-4 [&_svg]:w-4" },
@@ -124,10 +124,10 @@ const badgeVariants = cva("inline-flex items-center gap-1 whitespace-nowrap roun
     tone: {
       neutral: "bg-muted text-muted-foreground ring-border",
       brand: "bg-primary-soft text-primary ring-[color-mix(in_srgb,var(--primary)_22%,transparent)]",
-      success: "bg-[color-mix(in_srgb,var(--success)_11%,transparent)] text-success ring-[color-mix(in_srgb,var(--success)_24%,transparent)]",
-      warning: "bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-warning ring-[color-mix(in_srgb,var(--warning)_26%,transparent)]",
-      danger: "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] text-danger ring-[color-mix(in_srgb,var(--danger)_24%,transparent)]",
-      info: "bg-[color-mix(in_srgb,var(--info)_11%,transparent)] text-info ring-[color-mix(in_srgb,var(--info)_24%,transparent)]",
+      success: "bg-[color-mix(in_srgb,var(--success)_11%,transparent)] text-success-text ring-[color-mix(in_srgb,var(--success)_24%,transparent)]",
+      warning: "bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-warning-text ring-[color-mix(in_srgb,var(--warning)_26%,transparent)]",
+      danger: "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] text-danger-text ring-[color-mix(in_srgb,var(--danger)_24%,transparent)]",
+      info: "bg-[color-mix(in_srgb,var(--info)_11%,transparent)] text-info-text ring-[color-mix(in_srgb,var(--info)_24%,transparent)]",
     },
   },
   defaultVariants: { tone: "neutral" },

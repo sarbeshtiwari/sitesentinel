@@ -1,6 +1,6 @@
 "use client";
 import {
-  Alert, Badge, Button, Card, Checkbox, Dialog, EmptyState, FormField, Input, Label, PageHeader, Select, Skeleton, Table, TBody, TD, TH, THead, TR, Textarea, toast,
+  Alert, Badge, Button, Card, Checkbox, cn, Dialog, EmptyState, FormField, Input, Label, PageHeader, Select, Skeleton, Table, TBody, TD, TH, THead, TR, Textarea, toast,
 } from "@wim/ui";
 import type { DataEnvelope, PlanDto, PlanPriceDto } from "@wim/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -178,10 +178,9 @@ export default function PlansPage() {
                             <TD className="tabular-nums">{money(pr.amountMinor, pr.currency)}</TD>
                             <TD className="tabular-nums">v{pr.version}</TD>
                             <TD>{pr.active ? <Badge tone="success">active</Badge> : <Badge>inactive</Badge>}</TD>
-                            <TD className="text-xs">
-                              <span className={pr.stripeLinked ? "" : "text-muted-foreground"}>Stripe {pr.stripeLinked ? "linked" : "—"}</span>
-                              {" · "}
-                              <span className={pr.razorpayLinked ? "" : "text-muted-foreground"}>Razorpay {pr.razorpayLinked ? "linked" : "—"}</span>
+                            <TD className="whitespace-nowrap text-xs">
+                              <span className={cn("block", !pr.stripeLinked && "text-muted-foreground")}>Stripe {pr.stripeLinked ? "linked" : "—"}</span>
+                              <span className={cn("block", !pr.razorpayLinked && "text-muted-foreground")}>Razorpay {pr.razorpayLinked ? "linked" : "—"}</span>
                             </TD>
                             <TD className="text-right">
                               {canWrite && (

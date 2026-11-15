@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { DataEnvelope, WebsiteDetailDto, WebsiteSummaryDto } from "@wim/contracts";
 import type { InstallationState } from "@wim/core";
 import { get } from "./api";
+import { fmtTime, localDay } from "./monitoring";
 
 export const wk = {
   list: (orgId: string) => ["org", orgId, "websites"] as const,
@@ -105,8 +106,9 @@ export const METHOD_LABEL: Record<string, string> = {
   DNS_TXT: "DNS TXT record", WELL_KNOWN_FILE: "HTML file", HTML_META: "Meta tag", SDK_BEACON: "SDK", ANY: "Any method",
 };
 
-export const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : "—");
-export const fmtDate = (d: string | null | undefined) => (d ? new Date(d).toLocaleDateString() : "—");
+// Same labelled format as monitoring data ("YYYY-MM-DD HH:mm <zone>") so every screen shows times alike.
+export const fmt = fmtTime;
+export const fmtDate = (d: string | null | undefined) => (d ? localDay(d) : "—");
 
 export function relative(d: string | null | undefined): string {
   if (!d) return "—";

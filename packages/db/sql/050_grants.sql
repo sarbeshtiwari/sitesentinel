@@ -49,6 +49,20 @@ REVOKE ALL ON public.admin_users, public.admin_sessions FROM wim_worker;
 REVOKE UPDATE, DELETE ON public.audit_logs FROM wim_worker;
 GRANT EXECUTE ON FUNCTION partitions.ensure_all(), partitions.apply_retention() TO wim_worker;
 
+-- "ALL TABLES" includes views. On a fresh database no view exists yet at this point, but this file re-runs on
+-- every deploy, when the admin_v_* views (and extension views such as pg_stat_statements) already exist. Views
+-- run with the owner's privileges and therefore bypass RLS, so the tenant roles must never hold them: without
+-- this, every redeploy gave wim_app / wim_worker cross-tenant SELECT (and, through the auto-updatable
+-- admin_v_usage_daily, UPDATE/DELETE of every tenant's usage counters). Admin views are granted explicitly below.
+DO $$
+DECLARE v record;
+BEGIN
+  FOR v IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind IN ('v', 'm') LOOP
+    EXECUTE format('REVOKE ALL ON public.%I FROM wim_app, wim_worker', v.relname);
+  END LOOP;
+END $$;
+
 -- ---------------------------------------------------------------- wim_browser
 GRANT SELECT ON public.websites, public.monitoring_configurations, public.monitored_pages,
                 public.discovered_pages, public.page_components, public.test_cases,

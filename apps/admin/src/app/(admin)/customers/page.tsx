@@ -43,10 +43,10 @@ export default function CustomersPage() {
               <TBody>
                 {rows.map((r) => (
                   <TR key={r.id}>
-                    <TD><div className="font-medium">{r.name}</div><div className="font-mono text-[11px] text-muted-foreground">{r.slug}</div></TD>
+                    <TD className="min-w-[11rem]"><div className="font-medium">{r.name}</div><div className="font-mono text-[11px] text-muted-foreground">{r.slug}</div></TD>
                     <TD><Badge tone={tone(r.status)}>{r.status.toLowerCase().replace(/_/g, " ")}</Badge></TD>
                     <TD>{r.planKey ? <span className="font-mono text-xs">{r.planKey}</span> : <span className="text-muted-foreground">—</span>}{r.subscriptionStatus && <div className="text-xs text-muted-foreground">{r.subscriptionStatus}</div>}</TD>
-                    <TD>{r.trialStatus ? <>{r.trialStatus}{r.trialEndsAt && <div className="text-xs tabular-nums text-muted-foreground">ends {new Date(r.trialEndsAt).toLocaleDateString()}</div>}</> : <span className="text-muted-foreground">—</span>}</TD>
+                    <TD className="whitespace-nowrap">{r.trialStatus ? <>{r.trialStatus}{r.trialEndsAt && <div className="text-xs tabular-nums text-muted-foreground">ends {new Date(r.trialEndsAt).toLocaleDateString()}</div>}</> : <span className="text-muted-foreground">—</span>}</TD>
                     <TD className="text-right tabular-nums">{r.memberCount}</TD>
                     <TD className="text-right tabular-nums">{r.websiteCount}</TD>
                     <TD className="font-mono text-xs">{r.ownerEmailMasked ?? "—"}</TD>

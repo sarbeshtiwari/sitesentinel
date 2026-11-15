@@ -1,5 +1,5 @@
 "use client";
-import { Alert, Badge, buttonVariants, cn, Skeleton } from "@wim/ui";
+import { Alert, Badge, buttonVariants, cn, ErrorState, Skeleton } from "@wim/ui";
 import { ChevronLeft, Code2, ExternalLink, Globe, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -87,7 +87,7 @@ export default function WebsiteDetailPage() {
         <div>{back}</div>
         {notFound
           ? <Alert tone="warning" title="Website not found">It may have been removed, or it belongs to another organisation.</Alert>
-          : <Alert tone="danger" title={errorMessage(site.error)} />}
+          : <ErrorState title="Couldn't load this website" description={errorMessage(site.error)} onRetry={() => void site.refetch()} />}
       </div>
     );
   }
