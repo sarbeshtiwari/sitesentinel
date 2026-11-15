@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
-const api = process.env.API_INTERNAL_URL ?? "http://127.0.0.1:4000";
+// Tolerate a trailing "/" or "/api" in the configured base URL (rewrites add "/api/…" themselves).
+const api = (process.env.API_INTERNAL_URL ?? "http://127.0.0.1:4000").trim().replace(/\/+$/, "").replace(/\/api$/, "");
 
 // Content-Security-Policy is set per request with a nonce in src/proxy.ts.
 
