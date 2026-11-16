@@ -1,4 +1,29 @@
-# Website Monitoring & Incident Management Platform
+# SiteSentinel: Website Monitoring & Incident Management Platform
+
+**Multi-tenant SaaS for website uptime monitoring, synthetic browser testing, API monitoring, performance tracking, real-user monitoring (RUM) and incident management.**
+
+SiteSentinel watches your websites the way your users see them: it checks that pages are up, that key flows and components still work in a real browser, that pages stay fast and render correctly on every screen size, and that your APIs answer. When something breaks, related failures are grouped into one incident and your team is alerted in real time.
+
+## Features
+
+- **Uptime monitoring**: HTTP/HTTPS availability checks on a schedule, with SSRF-safe egress isolation
+- **Synthetic browser monitoring**: page and component tests in a sandboxed headless browser
+- **Deep website scanning**: crawls a site to find broken pages, components and functional issues
+- **Responsive testing**: checks layouts across a matrix of devices and screen sizes
+- **Performance monitoring**: performance thresholds, trends and rollups
+- **API monitoring**: availability and response checks for REST endpoints
+- **Real-user monitoring (RUM)**: a lightweight JavaScript SDK for live telemetry
+- **Incident management**: smart grouping of related failures, timelines and real-time alerts (email, WebSocket)
+- **Multi-tenant SaaS**: organisations, teams, role-based access control (RBAC), 2FA, tenant isolation with Postgres row-level security
+- **Domain verification** and ownership revalidation before any monitoring starts
+- **Subscriptions and billing**: plans, entitlements, trials and payment-gateway webhooks
+- **Privacy-preserving Super Admin panel**, encryption at rest and an audit chain
+
+## Tech stack
+
+TypeScript monorepo (pnpm + Turborepo) · Node.js 22 · Next.js (customer app and admin) · PostgreSQL 16 (RLS, partitioning) · Redis queues · Playwright browser runner · S3-compatible storage (SeaweedFS) · Docker Compose · Nginx
+
+## Overview
 
 A multi-tenant SaaS for centralized website monitoring: uptime, browser-based page and component testing, responsive and performance checks, API monitoring, a real-user JavaScript SDK, incident management with smart grouping, real-time alerts, subscriptions, and a privacy-preserving Super Admin panel.
 
