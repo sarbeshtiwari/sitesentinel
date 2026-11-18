@@ -8,6 +8,9 @@ import type {
 } from "@wim/contracts";
 import { get } from "./api";
 
+/** Same value as realtime-notifications (kept here to avoid an import cycle). */
+const NOTIFICATIONS_CHANGED_EVENT = "wim:notifications-changed";
+
 /** Query keys. Everything monitoring-related for an org sits under ["org", orgId, "mon"] so the change feed can
  *  invalidate precisely (per website where possible). */
 export const mk = {
@@ -233,6 +236,7 @@ export function useLiveUpdates(orgId: string | undefined) {
   const qc = useQueryClient();
   const [unread, setUnread] = useState(0);
   const cursor = useRef<string | null>(null);
+  const lastUnread = useRef(0);
   useEffect(() => {
     if (!orgId) return;
     cursor.current = null;
@@ -246,6 +250,11 @@ export function useLiveUpdates(orgId: string | undefined) {
         const r = await get<DataEnvelope<ChangeFeedDto>>(`/orgs/${orgId}/changes${qs}`, { signal: ctl.signal, noAuthRedirect: true });
         const first = cursor.current === null;
         cursor.current = r.data.cursor;
+        // New notifications: the real-time notifier (leader tab) fetches them right away.
+        if (!first && (r.data.unreadNotifications > lastUnread.current || r.data.changes.some((c) => c.kind === "NOTIFICATION"))) {
+          window.dispatchEvent(new CustomEvent(NOTIFICATIONS_CHANGED_EVENT, { detail: { orgId } }));
+        }
+        lastUnread.current = r.data.unreadNotifications;
         setUnread(r.data.unreadNotifications);
         failures = 0;
         if (!first && r.data.changes.length) {

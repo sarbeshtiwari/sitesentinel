@@ -1048,7 +1048,8 @@ ranges `from`/`to` ISO-8601, `to − from ≤ 90 days` (400 otherwise); `viewpor
 | GET | `performance/pages` | p75 + samples + status per monitored page and metric |
 | GET | `performance/thresholds` | Effective, platform, `customAllowed`, `alertOn`, noise settings, audit history |
 | PUT | `performance/thresholds` | `monitoring:write`; `thresholds` / `alertOn` → 403 `ENTITLEMENT_REQUIRED` without `monitoring.performance.customThresholds`; validated (good < poor, bounded); audited `website.performance_thresholds_updated` (before/after) |
-| GET | `pages?search=&cursor=&limit=` | Discovered pages with `monitoring {browser, deepScan}`, deep-scan state, open findings, LCP p75 24 h, components, responsive; `scope.note` |
+| GET | `pages?page=&pageSize=&search=&sort=&filter=` | `website:read`. **Every page of the website**: discovered pages (not `REMOVED`) ∪ page URLs of the latest deep scan(s) that no scan has fetched yet (queued when the scan stopped), that failed or were skipped — deduplicated by `url_hash`; the scanner's own search probes and non-HTML links are excluded. Offset pagination: `page` (1-based, default 1), `pageSize` 10 / 25 / 50 / 100 (default 25, other values → 400); `search` (URL or title, case-insensitive); `sort` `path` \| `score` \| `findings` with optional `:asc` / `:desc` (default `path:asc`; unscored pages sort last); `filter` `all` \| `with_findings` \| `not_checked` \| `failed` \| `skipped`. Each row: `id` (discovered page uuid, or `url-<sha256>` for a URL not yet fetched), `url`, `path`, `title`, `state` (`CHECKED` / `NOT_CHECKED` / `FAILED` / `SKIPPED`), `scanState`, `httpStatus`, `skipReason`, `source`, `inSitemap`, `firstReferrer`, `depth`, `firstSeenAt`, `lastSeenAt`, `lastCheckedAt`, `score`, `scoreBand`, `scoreBasis`, `openFindings`, `bySeverity`, `byGroup`, `monitoring {browser, deepScan}`, LCP p75 24 h, components, responsive. Envelope: `total`, `page`, `pageSize`, `pages`, `summary {total, checked, notChecked, failed, skipped, withFindings}`, `latestScan {status, stopReason, partial, notChecked}`, `runningScan`, `scoreFormula`, `scope`. (Replaces the earlier cursor API; `cursor` / `limit` → 400.) |
+| GET | `pages/:pageId` | `website:read`. `pageId` = discovered page uuid or `url-<64 hex>` (anything else → 400; a page of another website / organisation → 404). Page facts as above plus `websiteOrigin`; `score {value, band, basis, penalty, bySeverity, penalties, formula}`; `findings` — OPEN findings whose subject is this page, most severe first, each with `title`, `severity`, `group`, `description` (catalogue impact), `howToFix` (catalogue), `evidence` (sanitised: credential-like keys dropped, bearer / JWT / secret query values redacted, bounded size), `firstDetectedAt`, `lastDetectedAt`, `occurrenceCount`, `id` (→ `deep-scan/findings/:id`); `resolvedFindings` (resolved in the last 30 days); `siteWideFindings` (open site-level findings such as duplicate titles whose evidence names this page — not scored). |
 | GET | `components/changes?since=` | Added / removed / changed / visibility since a date; `complete` false when history starts later |
 | GET | `components/:componentId` | Detail, per-viewport visibility, event history |
 | GET | `responsive` | Latest per viewport, daily pass/fail, last 30 runs |
@@ -1057,6 +1058,13 @@ ranges `from`/`to` ISO-8601, `to − from ≤ 90 days` (400 otherwise); `viewpor
 Extended: `monitoring/overview` → `websites[].performance {status, samples, lcpP75, regressions}` (only when browser
 monitoring is active) and `recentChanges[]`; `monitoring/history` → types `COMPONENT`, `FUNCTIONAL`, `RESPONSIVE`, and
 `retention {checksDays, browserDays, incidentOccurrencesDays}`.
+
+**Page score (0–100)** — computed server-side (`packages/core/src/monitoring/page-score.ts`):
+
+- `null` — "Not checked yet": queued but not fetched by any scan, or skipped (robots, unsafe route, scope).
+- `0` — the page fails to load: its last check failed (HTTP ≥ 400, unreachable) or it has an open `BROKEN_PAGE` / `REDIRECT_LOOP` finding.
+- otherwise `max(0, 100 − Σ penalty)` over the page's OPEN findings: CRITICAL 25 · HIGH 15 · MEDIUM 8 · LOW 3 · INFO 0.
+- Bands: ≥ 90 `GOOD`, 50–89 `NEEDS_WORK`, < 50 `POOR`. Site-level (`subject = "site"`) and sitemap findings don't count against a single page.
 
 ## 7h. Phase 4H: Super Admin operations (`/api/admin/v1/ops`, admin session + CSRF)
 
@@ -1117,3 +1125,13 @@ Stored in `page_test_results.details` (jsonb) — no schema change.
 
 New roles/permissions: `admin:ops:alerts` (Super Admin, operator), `admin:usage:read` (Super Admin, operator, billing),
 `admin:usage:adjust` and `admin:settings:protected` (Super Admin).
+
+### Real-time notification delivery (web app, 2026-11-18)
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/orgs/:orgId/notifications?since=<ISO 8601>&unread=true&limit=20` | org:read | `since` (new, optional): only notifications created at or after the instant — polled by the web app's leader tab. Each item now also carries `websiteId` / `websiteName` (via its incident or `/websites/<id>` link, same organisation only; otherwise `null`). Invalid `since` → 400. |
+| GET / PUT | `/orgs/:orgId/notification-preferences` | org:read | New per-channel fields (used by the web app for IN_APP): `soundEnabled` (bool, default true), `soundMinSeverity` (default HIGH), `quietHours` (`{ start: "HH:MM", end: "HH:MM", tz: IANA zone, exceptCritical: bool }` or `null`). On PUT all three are optional: omitted = unchanged, `quietHours: null` = off. Malformed time / unknown zone / extra keys → 400. |
+
+Quiet hours are applied in the browser (sound and desktop popups); notifications are still stored and listed.
+

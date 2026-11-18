@@ -7,6 +7,7 @@ import { useState } from "react";
 import { LoadMore, QueryState } from "@/components/monitoring";
 import { errorMessage, post } from "@/lib/api";
 import { useOrg } from "@/lib/hooks";
+import { DesktopNotificationControl } from "@/components/notification-bell";
 import { fmtTime, SEVERITY_TONE, useNotifications } from "@/lib/monitoring";
 
 const TYPE: Record<string, string> = { INCIDENT_CREATED: "Incident opened", INCIDENT_RESOLVED: "Recovered", SSL_EXPIRING: "Certificate", MONITORING_INTERRUPTED: "Monitoring interrupted" };
@@ -30,6 +31,7 @@ export default function NotificationsPage() {
           <Button variant="outline" size="sm" onClick={() => setUnreadOnly(!unreadOnly)} aria-pressed={unreadOnly}><ListFilter />{unreadOnly ? "Show all" : "Unread only"}</Button>
           {unread > 0 && <Button size="sm" onClick={markAll}><CheckCheck />Mark all read</Button>}
         </>} />
+      <Card className="mb-4 px-4 py-3"><DesktopNotificationControl /></Card>
       <QueryState q={q}>
         {!rows.length ? <EmptyState icon={unreadOnly ? <BellOff /> : <Bell />} title={unreadOnly ? "No unread notifications" : "No notifications yet"} description="You'll be notified here about incidents and monitoring problems, according to your preferences." /> : (
           <Card className="divide-y divide-border overflow-hidden">

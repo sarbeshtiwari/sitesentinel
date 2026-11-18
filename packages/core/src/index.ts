@@ -12,6 +12,8 @@ export * from "./monitoring/components.js";
 export * from "./monitoring/overlay.js";
 export * from "./monitoring/performance.js";
 export * from "./monitoring/deepscan.js";
+export * from "./monitoring/page-score.js";
+export * from "./notifications/realtime.js";
 export * from "./ops/health.js";
 export * from "./ops/settings-meta.js";
 export * from "./ops/usage.js";

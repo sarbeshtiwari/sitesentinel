@@ -1,6 +1,6 @@
 "use client";
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Checkbox, FormField, PageHeader, Select, toast } from "@wim/ui";
-import { ArrowLeft, Mail, MonitorSmartphone } from "lucide-react";
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Checkbox, FormField, Input, PageHeader, Select, toast } from "@wim/ui";
+import { ArrowLeft, FlaskConical, Mail, MonitorSmartphone } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -10,6 +10,11 @@ import { api, errorMessage } from "@/lib/api";
 import { useOrg } from "@/lib/hooks";
 import { mk, useNotificationPrefs } from "@/lib/monitoring";
 import { useWebsites } from "@/lib/websites";
+import { DesktopNotificationControl } from "@/components/notification-bell";
+import { presentNotification, useOpenNotification, useOsWhenFocused, useSoundMuted } from "@/lib/realtime-notifications";
+
+const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as const;
+const localZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; } };
 
 const EVENTS: Array<[NotificationPreferenceDto["eventTypes"][number], string]> = [
   ["INCIDENT_OPENED", "Website outages and HTTP incidents"], ["INCIDENT_RESOLVED", "Recoveries"], ["SSL_EXPIRING", "Certificate expiry warnings"],
@@ -68,6 +73,29 @@ export default function PreferencesPage() {
                     }} />{l}</label>
                 ))}
               </fieldset>
+              {p.channel === "IN_APP" && <>
+                <fieldset className="grid gap-3 text-sm disabled:opacity-60" disabled={!p.enabled}>
+                  <legend className="mb-2 text-sm font-medium">Sound</legend>
+                  <label className="flex items-center gap-2"><Checkbox checked={p.soundEnabled} onChange={(e) => upd(i, { soundEnabled: e.currentTarget.checked })} />Play a sound for new notifications</label>
+                  <FormField label="Play the sound for" htmlFor="sound-sev">
+                    <Select id="sound-sev" value={p.soundMinSeverity} disabled={!p.enabled || !p.soundEnabled} onChange={(e) => upd(i, { soundMinSeverity: e.target.value as NotificationPreferenceDto["soundMinSeverity"] })}>
+                      {SEVERITIES.map((s) => <option key={s} value={s}>{s[0] + s.slice(1).toLowerCase()} and above</option>)}
+                    </Select>
+                  </FormField>
+                </fieldset>
+                <fieldset className="grid gap-3 text-sm disabled:opacity-60" disabled={!p.enabled}>
+                  <legend className="mb-2 text-sm font-medium">Quiet hours</legend>
+                  <label className="flex items-center gap-2"><Checkbox checked={Boolean(p.quietHours)} onChange={(e) => upd(i, { quietHours: e.currentTarget.checked ? { start: "22:00", end: "07:00", tz: localZone(), exceptCritical: true } : null })} />No sound or desktop popups during quiet hours (notifications still appear here)</label>
+                  {p.quietHours && <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <FormField label="From" htmlFor="qh-start"><Input id="qh-start" type="time" required value={p.quietHours.start} onChange={(e) => upd(i, { quietHours: { ...p.quietHours!, start: e.target.value } })} /></FormField>
+                      <FormField label="Until" htmlFor="qh-end"><Input id="qh-end" type="time" required value={p.quietHours.end} onChange={(e) => upd(i, { quietHours: { ...p.quietHours!, end: e.target.value } })} /></FormField>
+                    </div>
+                    <FormField label="Time zone" htmlFor="qh-tz"><Input id="qh-tz" value={p.quietHours.tz} maxLength={64} onChange={(e) => upd(i, { quietHours: { ...p.quietHours!, tz: e.target.value } })} /></FormField>
+                    <label className="flex items-center gap-2"><Checkbox checked={p.quietHours.exceptCritical} onChange={(e) => upd(i, { quietHours: { ...p.quietHours!, exceptCritical: e.currentTarget.checked } })} />Still alert me for critical notifications</label>
+                  </>}
+                </fieldset>
+              </>}
               <fieldset className="grid gap-2 text-sm disabled:opacity-60" disabled={!p.enabled}>
                 <legend className="mb-2 text-sm font-medium">Websites {p.websiteIds.length ? "" : "(all)"}</legend>
                 {(sites.data ?? []).map((w) => (
@@ -84,7 +112,43 @@ export default function PreferencesPage() {
           ))}
         </div>
         <div className="mt-5 flex justify-end"><Button onClick={save} loading={busy}>{busy ? "Saving…" : "Save preferences"}</Button></div>
+        <BrowserSettings orgId={orgId} inApp={prefs.find((p) => p.channel === "IN_APP")} />
       </QueryState>
     </>
+  );
+}
+
+/** Settings that live in this browser only (permission, mute, popups while focused) and a local test. */
+function BrowserSettings({ orgId, inApp }: { orgId: string; inApp: NotificationPreferenceDto | undefined }) {
+  const [muted, setMuted] = useSoundMuted();
+  const [osFocused, setOsFocused] = useOsWhenFocused();
+  const open = useOpenNotification(orgId);
+  const test = (severity: "HIGH" | "CRITICAL") => {
+    const id = `test-${Date.now().toString(36)}`;
+    presentNotification(orgId, {
+      id, type: "TEST", severity, title: severity === "CRITICAL" ? "Test: critical alert" : "Test notification",
+      body: "This is how new notifications will look. Nothing was sent or saved.", link: null, incidentId: null, read: false,
+      createdAt: new Date().toISOString(), websiteName: null,
+    }, { prefs: inApp, leader: true, open, test: true });
+  };
+  return (
+    <Card className="mt-5">
+      <CardHeader>
+        <CardTitle>This browser</CardTitle>
+        <CardDescription>Real-time alerts while the app is open in a tab. Saved in this browser only. Nothing arrives while every tab is closed.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-5">
+        <DesktopNotificationControl />
+        <div className="grid gap-2 text-sm">
+          <label className="flex items-center gap-2"><Checkbox checked={muted} onChange={(e) => setMuted(e.currentTarget.checked)} />Mute notification sounds in this browser</label>
+          <label className="flex items-center gap-2"><Checkbox checked={osFocused} onChange={(e) => setOsFocused(e.currentTarget.checked)} />Also show desktop notifications while the app is in front (otherwise the in-app toast is enough)</label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => test("HIGH")}><FlaskConical />Test notification</Button>
+          <Button variant="outline" size="sm" onClick={() => test("CRITICAL")}><FlaskConical />Test critical</Button>
+          <span className="text-xs text-muted-foreground">Shows a toast, a desktop notification (if enabled) and plays the sound ({muted ? "muted here" : inApp?.soundEnabled === false ? "sound is off in your in-app preference" : "on"}). Local only.</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -1384,3 +1384,11 @@ e-mail addresses, JWTs, long tokens and card-like numbers, ≤ 200 characters. D
 **Limitations.** Popups that appear later than the readiness wait, popups inside cross-origin iframes, and banners whose
 only exit is "Accept" stay open (reported honestly). Marker attributes (`data-wim-ov`, `data-wim-ctl`) are added to the
 page's DOM during the check; the page can tamper with detection, which only affects its own result.
+
+## 38. Real-time notifications in the browser (toasts, desktop notifications, sound)
+
+- **Link targets are validated:** a notification is only followed to a same-origin relative path inside the organisation being viewed (`/o/<currentOrgId>/…`, after URL normalisation; absolute / protocol-relative URLs, backslashes, control characters, `javascript:`, dot-segments escaping the prefix and other organisations' paths are rejected) — otherwise the click opens the Notifications page (`safeNotificationLink` in `@wim/core`). The API already returns stored links as paths only.
+- **No new network surface:** Web Notifications API from the open tab and a Web Audio tone generated in the page — no push service, VAPID, FCM, service worker or audio file; CSP unchanged. Nothing is delivered while every tab is closed.
+- **Tenant isolation:** polling uses the existing member-scoped `GET /orgs/:orgId/notifications` (RLS + user); `websiteName` is resolved inside the member's transaction for the same organisation only; toasts are cleared when switching organisation; BroadcastChannel / storage keys are per organisation and same-origin.
+- **Content:** notification text is the server-written title/body (no secrets); OS notifications are truncated; permission is requested only from a user click. Browser storage holds only a cursor (timestamp + ids), leader lease, focus marker and the mute / popup flags, all read defensively.
+
