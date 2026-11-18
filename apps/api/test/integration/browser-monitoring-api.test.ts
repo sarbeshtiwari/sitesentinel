@@ -117,14 +117,14 @@ describe("customer browser API", () => {
     expect(ok.body.data).toMatchObject({ readiness: { strategy: "selector", selector: "#app", quietMs: 500 }, viewports: ["desktop", "mobile-small"], screenshots: { onSuccess: true, onFailure: true, mask: [".price"] } });
     expect(ok.body.data.popups).toEqual({ dismiss: true, closeSelector: null }); // defaults for configurations saved before popups existed
     // popups: the close selector is a plausible CSS selector only (evaluated with document.querySelector in the page)
-    for (const bad of ["javascript:alert(1)", "<img src=x onerror=alert(1)>", ".a > .b", "a{}", "x".repeat(201)]) {
+    for (const bad of ["javascript:alert(1)", "<img src=x onerror=alert(1)>", "a{}", "x".repeat(201)]) {
       const r = await u.client.put(url, { popups: { closeSelector: bad } });
       expect(r.status, bad).toBe(400);
     }
     expect((await u.client.put(url, { popups: { dismiss: "yes" } })).status).toBe(400);
-    const pop = await u.client.put(url, { popups: { dismiss: false, closeSelector: "#newsletter .close" } });
+    const pop = await u.client.put(url, { popups: { dismiss: false, closeSelector: "#newsletter > .close" } });
     expect(pop.status).toBe(200);
-    expect(pop.body.data.popups).toEqual({ dismiss: false, closeSelector: "#newsletter .close" });
+    expect(pop.body.data.popups).toEqual({ dismiss: false, closeSelector: "#newsletter > .close" });
     const cleared = await u.client.put(url, { popups: { dismiss: true, closeSelector: null } });
     expect(cleared.body.data.popups).toEqual({ dismiss: true, closeSelector: null });
     const audit = await env.owner.query(`SELECT count(*)::int AS n FROM audit_logs WHERE org_id = $1 AND action = 'website.browser_check_updated'`, [u.orgId]);
