@@ -193,7 +193,8 @@ export async function buildIngest(source: NodeJS.ProcessEnv = process.env): Prom
     if (l.website_status !== "ACTIVE") invalid = "WEBSITE_NOT_VERIFIED";
     else if (l.key_state === "REVOKED") invalid = "REVOKED_KEY";
     else if (l.key_state === "PREVIOUS_EXPIRED") invalid = "EXPIRED_KEY";
-    else if (!originKey || originKey !== l.host_key) invalid = "ORIGIN_MISMATCH";
+    else if (!originKey) invalid = "ORIGIN_MISSING"; // non-browser sender (bots, link previews, tools): nothing to attribute
+    else if (originKey !== l.host_key) invalid = "ORIGIN_MISMATCH";
 
     if (invalid) {
       // Record (rate-limited) that misconfigured or foreign traffic used this key.

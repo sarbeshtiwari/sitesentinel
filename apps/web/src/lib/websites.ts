@@ -97,6 +97,7 @@ export function failureText(reason: string | null): string {
 
 export const INVALID_REASON: Record<string, string> = {
   ORIGIN_MISMATCH: "The script ran on a different domain or subdomain than this website. Install it only on this website, or add the other domain as its own website.",
+  ORIGIN_MISSING: "A request arrived without a browser origin (typically a bot, link preview or tool, not a visitor). It was ignored; nothing to fix on your site.",
   WEBSITE_NOT_VERIFIED: "The script ran before ownership was verified. Verify the website; new page loads will then count.",
   REVOKED_KEY: "The page uses a revoked site key. Replace the snippet with the current one.",
   EXPIRED_KEY: "The page uses a previous site key whose grace period ended. Replace the snippet with the current one.",
