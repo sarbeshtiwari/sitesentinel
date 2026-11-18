@@ -110,7 +110,7 @@ REVOKE INSERT, UPDATE, DELETE ON public.deep_scans, public.deep_scan_urls, publi
 CREATE OR REPLACE FUNCTION public.request_deep_scan(p_website uuid, p_cooldown_sec int)
 RETURNS TABLE (result text, execution_id uuid, queued_at timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
-DECLARE w record; s record; v_id uuid := gen_random_uuid(); v_at timestamptz := date_trunc('milliseconds', now());
+DECLARE w record; s record; v_id uuid := gen_random_uuid(); v_at timestamptz := date_trunc('milliseconds', now()); v_until timestamptz;
 BEGIN
   SELECT * INTO w FROM websites WHERE id = p_website AND archived_at IS NULL;
   IF NOT FOUND OR w.org_id IS DISTINCT FROM app_current_org() THEN RETURN QUERY SELECT 'NOT_FOUND', NULL::uuid, NULL::timestamptz; RETURN; END IF;
@@ -122,9 +122,14 @@ BEGIN
                AND e.status IN ('SCHEDULED', 'QUEUED', 'RUNNING', 'RETRYING') AND e.queued_at > now() - interval '8 days') THEN
     RETURN QUERY SELECT 'ALREADY_RUNNING', NULL::uuid, NULL::timestamptz; RETURN;
   END IF;
-  IF EXISTS (SELECT 1 FROM monitoring_executions e WHERE e.website_id = p_website AND e.tier = 'T3_DEEP' AND e.trigger = 'MANUAL'
-               AND e.queued_at > now() - make_interval(secs => p_cooldown_sec)) THEN
-    RETURN QUERY SELECT 'COOLDOWN', NULL::uuid, NULL::timestamptz; RETURN;
+  -- cooldown: a manual scan that actually ran (or is running). One cancelled before it started never crawled anything,
+  -- so it doesn't block the next one. queued_at of the row carries when the cooldown ends.
+  SELECT max(e.queued_at) + make_interval(secs => p_cooldown_sec) INTO v_until FROM monitoring_executions e
+   WHERE e.website_id = p_website AND e.tier = 'T3_DEEP' AND e.trigger = 'MANUAL'
+     AND e.queued_at > now() - make_interval(secs => p_cooldown_sec)
+     AND NOT (e.status = 'CANCELLED' AND e.started_at IS NULL);
+  IF v_until IS NOT NULL THEN
+    RETURN QUERY SELECT 'COOLDOWN', NULL::uuid, v_until; RETURN;
   END IF;
   INSERT INTO monitoring_executions (id, queued_at, org_id, website_id, schedule_id, tier, trigger, status, enqueued_at)
   VALUES (v_id, v_at, w.org_id, p_website, s.id, 'T3_DEEP', 'MANUAL', 'SCHEDULED', now());

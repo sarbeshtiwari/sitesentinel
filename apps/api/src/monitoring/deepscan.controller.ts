@@ -120,7 +120,11 @@ export class DeepScanService {
     });
     if (r.result === "NOT_FOUND") throw Errors.notFound();
     if (r.result === "ALREADY_RUNNING") throw Errors.conflict("A deep scan of this website is already queued or running");
-    if (r.result === "COOLDOWN") throw new AppError(429, "RATE_LIMITED", "A deep scan was started recently; try again later");
+    if (r.result === "COOLDOWN") {
+      const until = r.queued_at ?? new Date(Date.now() + st["monitoring.deepscan.manualCooldownSec"] * 1000);
+      const sec = Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000));
+      throw Errors.rateLimited(sec, `A deep scan ran recently. You can start another in ${sec >= 90 ? `${Math.ceil(sec / 60)} minutes` : `${sec} seconds`}.`);
+    }
     if (r.result.startsWith("NOT_ELIGIBLE")) throw Errors.conflict(`Deep scanning isn't available for this website (${r.result.split(":")[1]})`);
     // Enqueue now; if Redis is unavailable the scheduler's reconcile enqueues the committed execution.
     await this.queue.add("EXECUTE", { v: 1, executionId: r.execution_id!, windowStart: r.queued_at!.toISOString() }, jobOptions(r.execution_id!, policyFor(st, QUEUES.deepscan))).catch(() => undefined);
