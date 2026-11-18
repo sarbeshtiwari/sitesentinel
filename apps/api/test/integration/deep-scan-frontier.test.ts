@@ -115,7 +115,7 @@ describe("frontier limits with batched link processing", () => {
     expect(crawl.filter((p) => p.startsWith("/q?"))).toEqual(Array.from({ length: 20 }, (_, i) => `/q?x=${i + 1}`)); // 20 query variants per path
     expect(crawl.filter((p) => p.startsWith("/w/"))).toEqual(Array.from({ length: 29 }, (_, i) => `/w/${i + 1}`)); // then maxPages
     expect(scan!.pages_dropped).toBe(10 + 5 + 11);
-    expect(scan!.pages_discovered).toBe(99);
+    expect(scan!.pages_discovered).toBe(100); // every page row except search probes (start page + 99 crawled)
     // the same link three times + an <img> to the same URL: one row, four referrers
     const w1 = rows.find((r) => path(r) === "/w/1")!;
     expect(w1).toMatchObject({ kind: "PAGE", referrers: 4, depth: 1 });

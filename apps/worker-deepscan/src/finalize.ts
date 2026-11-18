@@ -189,12 +189,18 @@ export async function finalizeScan(tx: Tx, i: {
     ]);
     const open = await tx.$queryRaw<Array<{ id: string; fingerprint: string; subject: string; category: string; group_key: string }>>`
       SELECT id, fingerprint, subject, category, group_key FROM scan_findings WHERE website_id = ${i.websiteId}::uuid AND status = 'OPEN' FOR UPDATE`;
+    // Findings recorded under an alias host (www.example.com) before the scan crawled the site on one host: the same
+    // page checked under the canonical host resolves them, or they would stay open forever as duplicates.
+    const aliasMap = ((scan.discovery as { hostAliases?: Record<string, string> } | null)?.hostAliases) ?? {};
+    const canonicalSubject = (subject: string) => {
+      try { const u = new URL(subject); const to = aliasMap[u.hostname]; if (!to) return subject; u.hostname = to; return disp(u.href); } catch { return subject; }
+    };
     const toResolve: string[] = [];
     for (const o of open) {
       if (seen.has(o.fingerprint)) continue;
       const siteLevel = o.subject === "site";
       const sitemapLevel = o.group_key === "sitemap";
-      const ok = siteLevel ? complete : sitemapLevel ? Boolean(scan.discovery) : checked.has(o.subject);
+      const ok = siteLevel ? complete : sitemapLevel ? Boolean(scan.discovery) : checked.has(o.subject) || checked.has(canonicalSubject(o.subject));
       if (ok) toResolve.push(o.id);
     }
     if (toResolve.length) {

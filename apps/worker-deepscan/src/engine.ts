@@ -339,7 +339,9 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         // one statement: the start/sitemap pages, what didn't fit, and the discovery record
         await tx.$queryRawUnsafe(`
           WITH ins AS (${FRONTIER_UPSERT})
-          UPDATE deep_scans SET pages_dropped = pages_dropped + $14::int, discovery = $15::jsonb, requests = $16::int, updated_at = now()
+          UPDATE deep_scans SET pages_dropped = pages_dropped + $14::int, discovery = $15::jsonb, requests = $16::int, updated_at = now(),
+                 -- every page the scan knows about (start page, sitemap, links, browser) — not only pages found through links
+                 pages_discovered = pages_discovered + (SELECT count(*)::int FROM ins WHERE inserted AND kind = 'PAGE' AND source <> 'SEARCH')
            WHERE execution_id = $1::uuid RETURNING 1`,
           ctx.executionId, ctx.orgId, ctx.websiteId, ...plan.arrays(), Math.max(0, all.length - room), JSON.stringify(disc), requests);
       });
@@ -481,7 +483,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
           WITH ins AS (${FRONTIER_UPSERT}),
           scan AS (
             UPDATE deep_scans SET pages_completed = pages_completed + $14::int, pages_failed = pages_failed + $15::int, pages_skipped = pages_skipped + $16::int,
-                   pages_discovered = pages_discovered + (SELECT count(*)::int FROM ins WHERE inserted AND kind = 'PAGE' AND source = 'CRAWL'),
+                   pages_discovered = pages_discovered + (SELECT count(*)::int FROM ins WHERE inserted AND kind = 'PAGE' AND source <> 'SEARCH'),
                    pages_dropped = pages_dropped + $17::int, requests = $18::int, bytes = bytes + $19::bigint, updated_at = now()
              WHERE execution_id = $1::uuid RETURNING 1),
           usage AS (${usageUpsert(20, 21)})
@@ -539,7 +541,9 @@ export function createDeepScanEngine(d: DeepScanDeps) {
     // ---- frontier SQL (all scoped to this execution)
     /** Write a plan (no other effect); for discovery paths that run once per scan. */
     async function writePlan(tx: Tx, plan: FrontierPlan) {
-      if (plan.rows.size) await tx.$queryRawUnsafe(`WITH ins AS (${FRONTIER_UPSERT}) SELECT count(*)::int AS n FROM ins`, ctx.executionId, ctx.orgId, ctx.websiteId, ...plan.arrays());
+      if (plan.rows.size) await tx.$queryRawUnsafe(`WITH ins AS (${FRONTIER_UPSERT})
+        UPDATE deep_scans SET pages_discovered = pages_discovered + (SELECT count(*)::int FROM ins WHERE inserted AND kind = 'PAGE' AND source <> 'SEARCH'), updated_at = now()
+         WHERE execution_id = $1::uuid RETURNING 1`, ctx.executionId, ctx.orgId, ctx.websiteId, ...plan.arrays());
     }
     async function markSkipped(tx: Tx, id: bigint, reason: string) {
       await tx.$queryRaw`
