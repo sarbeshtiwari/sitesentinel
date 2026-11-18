@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily SiteSentinel database backup
+
+[Timer]
+# 21:30 UTC = 03:00 IST
+OnCalendar=*-*-* 21:30:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

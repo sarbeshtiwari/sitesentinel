@@ -161,6 +161,21 @@ describe("customer deep-scan API", () => {
       const c = await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/scans/${st.body.data.executionId}/cancel`, {});
       expect(c.body.data.status).toBe("CANCELLED");
       expect((await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/scans/${st.body.data.executionId}/cancel`, {})).status).toBe(409);
+      // a scan cancelled before it started crawled nothing: it doesn't trigger the manual cooldown
+      const { SettingsService } = await import("../../src/settings/settings.service.js");
+      await deepSettings(env, { "monitoring.deepscan.manualCooldownSec": 900 });
+      h.app.get(SettingsService).invalidate();
+      const again = await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/start`, {});
+      expect(again.status).toBe(202);
+      expect((await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/scans/${again.body.data.executionId}/cancel`, {})).body.data.status).toBe("CANCELLED");
+      // one that ran does: the answer says how long to wait (and Retry-After)
+      await env.owner.query(`UPDATE monitoring_executions SET started_at = now() WHERE id = $1`, [again.body.data.executionId]);
+      const cool = await u.client.post(`/api/v1/orgs/${u.orgId}/websites/${s.id}/deep-scan/start`, {});
+      expect(cool.status).toBe(429);
+      expect(cool.body.error.message).toMatch(/You can start another in \d+ (minutes|seconds)/);
+      expect(Number(cool.headers["retry-after"])).toBeGreaterThan(0);
+      await deepSettings(env);
+      h.app.get(SettingsService).invalidate();
       // A scan left RUNNING by an execution that already ended (dead-lettered, killed worker) doesn't stay "Running":
       // the scheduler closes it, and Cancel closes it instead of answering "already finished".
       const exec = st.body.data.executionId as string;

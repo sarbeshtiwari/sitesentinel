@@ -1,0 +1,12 @@
+[Unit]
+Description=SiteSentinel encrypted PostgreSQL backup to S3
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+Environment=SITESENTINEL_DIR=@APP_DIR@
+ExecStart=@REPO@/infra/oracle/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

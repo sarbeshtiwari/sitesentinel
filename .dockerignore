@@ -10,3 +10,15 @@
 test-results
 .playwright-mcp
 **/*.log
+# Never send local secrets or scratch files into a build context (infra/oracle deployment kit)
+text.txt
+.claude
+.local
+**/*.dump
+**/*.sql.gz
+**/*.pem
+**/*.key
+infra/oracle/.env
+infra/oracle/certs
+infra/oracle/backups
+staging-isolation*

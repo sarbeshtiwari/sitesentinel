@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseTrustProxy } from "@wim/core";
 
 /**
  * Deployment configuration (per environment). Anything an operator should be
@@ -33,7 +34,10 @@ const EnvSchema = z.object({
   S3_BUCKET_ARTIFACTS: z.string().default("wim-artifacts"),
 
   COOKIE_SECURE: bool.default(false),
-  TRUST_PROXY: bool.default(false),
+  /** false | true | comma-separated proxy IPs/CIDRs (audit F-1; see @wim/core parseTrustProxy) */
+  TRUST_PROXY: z.string().default("false").transform((v, ctx) => {
+    try { return parseTrustProxy(v); } catch (e) { ctx.addIssue({ code: "custom", message: (e as Error).message }); return z.NEVER; }
+  }),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
