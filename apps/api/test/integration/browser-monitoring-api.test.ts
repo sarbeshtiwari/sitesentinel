@@ -101,6 +101,8 @@ describe("customer browser API", () => {
     expect(vp.syntheticPerformance.fcpMs).toBeGreaterThan(0);
     expect(vp.syntheticPerformance).not.toHaveProperty("inpMs");
     expect(vp.artifacts).toHaveLength(1);
+    expect(vp.overlay).toMatchObject({ found: false, items: [] }); // popups: none on this page
+    expect(vp.dialogs).toBeNull();
     const hist = await u.client.get(`/api/v1/orgs/${u.orgId}/websites/${s.id}/monitoring/browser/results?limit=5`);
     expect(hist.body.data).toHaveLength(1);
     const url = `/api/v1/orgs/${u.orgId}/websites/${s.id}/monitoring/browser/config`;
@@ -113,8 +115,20 @@ describe("customer browser API", () => {
     const ok = await u.client.put(url, { readiness: { strategy: "selector", selector: "#app" }, viewports: ["desktop", "mobile-small"], screenshots: { onSuccess: true, mask: [".price"] } });
     expect(ok.status).toBe(200);
     expect(ok.body.data).toMatchObject({ readiness: { strategy: "selector", selector: "#app", quietMs: 500 }, viewports: ["desktop", "mobile-small"], screenshots: { onSuccess: true, onFailure: true, mask: [".price"] } });
+    expect(ok.body.data.popups).toEqual({ dismiss: true, closeSelector: null }); // defaults for configurations saved before popups existed
+    // popups: the close selector is a plausible CSS selector only (evaluated with document.querySelector in the page)
+    for (const bad of ["javascript:alert(1)", "<img src=x onerror=alert(1)>", ".a > .b", "a{}", "x".repeat(201)]) {
+      const r = await u.client.put(url, { popups: { closeSelector: bad } });
+      expect(r.status, bad).toBe(400);
+    }
+    expect((await u.client.put(url, { popups: { dismiss: "yes" } })).status).toBe(400);
+    const pop = await u.client.put(url, { popups: { dismiss: false, closeSelector: "#newsletter .close" } });
+    expect(pop.status).toBe(200);
+    expect(pop.body.data.popups).toEqual({ dismiss: false, closeSelector: "#newsletter .close" });
+    const cleared = await u.client.put(url, { popups: { dismiss: true, closeSelector: null } });
+    expect(cleared.body.data.popups).toEqual({ dismiss: true, closeSelector: null });
     const audit = await env.owner.query(`SELECT count(*)::int AS n FROM audit_logs WHERE org_id = $1 AND action = 'website.browser_check_updated'`, [u.orgId]);
-    expect(audit.rows[0].n).toBe(2); // the two accepted saves; rejected ones are not audited
+    expect(audit.rows[0].n).toBe(4); // the accepted saves; rejected ones are not audited
   }, 120_000);
 
   it("screenshots: short-lived signed links, PNG streamed from private storage; tampered, expired and cross-tenant access refused", async () => {

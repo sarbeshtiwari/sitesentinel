@@ -67,7 +67,7 @@ export function MonitoringSettingsTab({ orgId, websiteId, canWrite }: { orgId: s
   // new check results) must never overwrite what the user is typing.
   const dirty = useRef({ h: false, b: false, d: false });
   const [h, setHRaw] = useState({ interval: "", path: "/", timeoutSec: "15", expected: "200-299, 401, 403", failureThreshold: "", recoveryThreshold: "" });
-  const [b, setBRaw] = useState({ enabled: true, interval: "", path: "/", viewports: ["desktop"] as string[], strategy: "load", selector: "", timeoutSec: "30", lcpCritMs: "", clsCrit: "", onSuccess: false, fullPage: false, fnEnabled: false, fnSearch: true, fnNav: true, fnForms: true, fnButtons: true, fnPaths: "", fnAcked: false, fnAck: false });
+  const [b, setBRaw] = useState({ enabled: true, interval: "", path: "/", viewports: ["desktop"] as string[], strategy: "load", selector: "", timeoutSec: "30", lcpCritMs: "", clsCrit: "", onSuccess: false, fullPage: false, fnEnabled: false, fnSearch: true, fnNav: true, fnForms: true, fnButtons: true, fnPaths: "", fnAcked: false, fnAck: false, popDismiss: true, popSelector: "" });
   const [d, setDRaw] = useState({ interval: "", maxPages: "", maxDepth: "", include: "", exclude: "", browserDiscovery: false, checkExternalLinks: false, respectRobots: true });
   const setH = (v: typeof h) => { dirty.current.h = true; setHRaw(v); };
   const setB = (v: typeof b) => { dirty.current.b = true; setBRaw(v); };
@@ -82,7 +82,8 @@ export function MonitoringSettingsTab({ orgId, websiteId, canWrite }: { orgId: s
     const c = browser.data?.config as Record<string, any> | undefined;
     if (c) setBRaw((x) => ({ ...x, enabled: c.enabled ?? true, path: c.path ?? "/", viewports: c.viewports ?? ["desktop"], strategy: c.readiness?.strategy ?? "load", selector: c.readiness?.selector ?? "", timeoutSec: String(Math.round((c.navigationTimeoutMs ?? 30000) / 1000)), lcpCritMs: c.performance?.lcpCritMs ? String(c.performance.lcpCritMs) : "", clsCrit: c.performance?.clsCrit != null ? String(c.performance.clsCrit) : "", onSuccess: Boolean(c.screenshots?.onSuccess), fullPage: Boolean(c.screenshots?.fullPage),
       fnEnabled: Boolean(c.functional?.enabled), fnSearch: c.functional?.search !== false, fnNav: c.functional?.navigation !== false, fnForms: c.functional?.forms !== false, fnButtons: c.functional?.buttons !== false,
-      fnPaths: (c.functional?.allowedPaths ?? []).join(", "), fnAcked: Boolean(c.functional?.riskAcknowledgement), fnAck: false }));
+      fnPaths: (c.functional?.allowedPaths ?? []).join(", "), fnAcked: Boolean(c.functional?.riskAcknowledgement), fnAck: false,
+      popDismiss: c.popups?.dismiss !== false, popSelector: c.popups?.closeSelector ?? "" }));
   }, [browser.data]);
   useEffect(() => {
     if (dirty.current.d) return;
@@ -135,6 +136,7 @@ export function MonitoringSettingsTab({ orgId, websiteId, canWrite }: { orgId: s
                   functional: { enabled: b.fnEnabled, search: b.fnSearch, navigation: b.fnNav, forms: b.fnForms, buttons: b.fnButtons,
                     allowedPaths: String(b.fnPaths ?? "").split(",").map((x: string) => x.trim()).filter(Boolean) },
                   ...(b.fnEnabled && b.fnAck ? { acknowledgeFunctionalRisk: true } : {}),
+                  popups: { dismiss: b.popDismiss, closeSelector: b.popSelector.trim() ? b.popSelector.trim() : null },
                   performance: { ...(b.lcpCritMs ? { lcpCritMs: Number(b.lcpCritMs) } : {}), ...(b.clsCrit ? { clsCrit: Number(b.clsCrit) } : {}) },
                 });
               }, "Browser settings saved"); }}>
@@ -158,6 +160,14 @@ export function MonitoringSettingsTab({ orgId, websiteId, canWrite }: { orgId: s
                 <Field label="CLS critical threshold" hint="Empty = platform default" error={bs.errors["performance.clsCrit"]}><Input type="number" step="0.01" disabled={ro} value={b.clsCrit} onChange={(e) => setB({ ...b, clsCrit: e.target.value })} /></Field>
                 <label className="flex items-center gap-2 text-sm"><Checkbox disabled={ro} checked={b.onSuccess} onChange={(e) => setB({ ...b, onSuccess: e.currentTarget.checked })} /> Screenshot on success too</label>
                 <label className="flex items-center gap-2 text-sm"><Checkbox disabled={ro} checked={b.fullPage} onChange={(e) => setB({ ...b, fullPage: e.currentTarget.checked })} /> Full-page screenshots</label>
+                <fieldset className="grid gap-3 border-t border-border pt-4 text-sm sm:col-span-2"><legend className="sr-only">Popups and cookie banners</legend>
+                  <p aria-hidden className="text-sm font-medium">Popups and cookie banners</p>
+                  <label className="flex items-center gap-2"><Checkbox disabled={ro} checked={b.popDismiss} onChange={(e) => setB({ ...b, popDismiss: e.currentTarget.checked })} /> Close popups and cookie banners before checking</label>
+                  <p className="text-xs text-muted-foreground">Performance is measured on the untouched page load first. Then a covering popup is closed with your close button (below), the Escape key, a "Reject" / "Necessary only" button on cookie banners — never "Accept" — or a close button. Nothing that could accept, subscribe, sign up, buy or log in is ever clicked, and no request leaves the browser while closing. A popup that can't be closed fails the check, because it blocks your visitors too.</p>
+                  <Field label="Popup close button (CSS selector)" hint="Optional, e.g. #newsletter .close — tried first. Found with document.querySelector on your page; max 200 characters." error={bs.errors["popups.closeSelector"]}>
+                    <Input disabled={ro} value={b.popSelector} maxLength={200} placeholder="#newsletter .close" onChange={(e) => setB({ ...b, popSelector: e.target.value })} />
+                  </Field>
+                </fieldset>
                 <fieldset className="grid gap-2 border-t border-border pt-4 text-sm sm:col-span-2"><legend className="sr-only">Safe functional tests</legend>
                   <p aria-hidden className="text-sm font-medium">Safe functional tests</p>
                   <label className="flex items-center gap-2"><Checkbox disabled={ro} checked={b.fnEnabled} onChange={(e) => setB({ ...b, fnEnabled: e.currentTarget.checked })} /> Interact with the page (off by default)</label>

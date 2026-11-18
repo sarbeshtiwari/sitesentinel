@@ -1088,5 +1088,32 @@ the platform switch is off → 409 `FEATURE_UNAVAILABLE`; `functional.riskAcknow
 `functional.allowedPaths` otherwise; semantics in SECURITY.md §36). `thirdParty` `{ mode: all|allowlist|none,
 allowedDomains ≤ 50, maxHosts 0–500 }` — enforced by the egress gateway (SECURITY.md §35).
 
+## 7i. Popups, cookie banners and JavaScript dialogs (browser monitoring)
+
+`PUT /orgs/:orgId/websites/:websiteId/monitoring/browser/config` (monitoring:write, audited) accepts
+`popups: { dismiss?: boolean, closeSelector?: string | null }` — merged into the stored configuration like the other
+nested keys; `null` clears the selector. Defaults (also for every configuration saved before this existed):
+`{ dismiss: true, closeSelector: null }`.
+
+* `dismiss` — close a popup / cookie banner covering the page before the layout and functional checks (performance is
+  measured on the untouched load first). `false`: nothing is clicked; a popup is reported as a warning, never a failure,
+  and controls it covers are not reported as `CONTROLS_OBSCURED`.
+* `closeSelector` — the website's own close button, tried first. A plausible CSS selector, 1–200 characters; refused
+  with 400 `VALIDATION_FAILED` (`issues[].path = "popups.closeSelector"`): `javascript:`, `<` (the child combinator `>` is
+  allowed), `{ } ; \`, `url(`, `expression(`, `@import`, control characters, unbalanced
+  brackets/quotes. Evaluated only with `document.querySelector` inside the monitored page.
+
+What may and may not be clicked: SECURITY.md §37.
+
+`GET …/monitoring/browser`, `…/browser/results` and `…/browser/results/:executionId` — each viewport now carries:
+* `overlay: { found, items: [{ kind COOKIE_CONSENT|MODAL|OVERLAY, selector, label, dismissed, method
+  CLOSE_SELECTOR|ESCAPE|REJECT|CLOSE_BUTTON|null, control, attempted, reason DISABLED|NO_SAFE_CONTROL|IN_FRAME|NAVIGATED|TIME_BUDGET|null,
+  blocksPage }], summary }` — `null` for results recorded before this feature;
+* `dialogs: { count, items: [{ type alert|confirm|prompt|beforeunload, message (scrubbed, ≤ 200 chars) }] } | null`.
+
+New failure kind `OVERLAY_BLOCKING_<VIEWPORT>` (class `layout`): "A popup or overlay covers the page at the … viewport
+and could not be closed — real visitors are blocked too". A closed popup and JavaScript dialogs appear in `warnings`.
+Stored in `page_test_results.details` (jsonb) — no schema change.
+
 New roles/permissions: `admin:ops:alerts` (Super Admin, operator), `admin:usage:read` (Super Admin, operator, billing),
 `admin:usage:adjust` and `admin:settings:protected` (Super Admin).

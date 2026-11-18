@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added — Popups, cookie banners and JavaScript dialogs in browser monitoring (2026-11-18)
+- **Fixed false alarms:** a cookie banner, newsletter modal or interstitial shown on load no longer fails the layout check with `CONTROLS_OBSCURED_*` or functional tests with `BUTTON_NOT_CLICKABLE`. After performance is measured on the untouched load, the overlay is detected (dialogs, `aria-modal`, common CMP containers, covering fixed/sticky layers) and closed safely: configured close button → Escape → "Reject" / "Necessary only" on cookie banners (never "Accept") → close control; ≤ 3 clicks, ≤ 5 s per viewport; no new request may leave the browser while closing (SECURITY.md §37).
+- **New result facts** per viewport (`details.overlay`, `details.dialogs`, jsonb — no migration) and on the browser run page ("Popup on load", "JavaScript dialogs"). A closed popup is a warning; one that blocks the page and can't be closed fails as `OVERLAY_BLOCKING_<VIEWPORT>` (and is not reported again as `CONTROLS_OBSCURED`).
+- **Per-website setting** `popups: { dismiss (default true), closeSelector }` in the browser check configuration, validated server-side; Monitoring settings → Browser monitoring: "Close popups and cookie banners before checking" and "Popup close button (CSS selector)".
+- **JavaScript dialogs** (alert / confirm / prompt / beforeunload), previously auto-dismissed silently by Playwright, are now dismissed explicitly (never accepted) and recorded as warnings with a scrubbed message.
+- **Tests:** fixture pages `/c/popup-cookie`, `/c/popup-modal`, `/c/popup-stuck`, `/c/js-alert`; real-Chromium integration suite `browser-popups.test.ts`; unit tests `packages/core/test/overlay.test.ts`.
+
 ### Added — Phase 8: billing and trials (2026-11-15, partial — see docs/BILLING.md)
 - **Off by default:** new protected setting `billing.enabled` (false) gates checkout, plan changes, cancellation and every payment-gateway call; webhooks answer 503 while it is off; entitlement resolution is unchanged while it is off.
 - **Plans and entitlements:** example Free/Starter/Pro/Business plans with INR and USD monthly/annual prices (decision B2, clearly marked); entitlement resolver (subscription → trial plan → free plan → platform defaults, overrides on top) inside `loadOrgContexts` with no worker change; Super Admin plans, immutable price versions, entitlement sets and per-organisation overrides, all audited with a reason.

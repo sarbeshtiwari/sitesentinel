@@ -1164,7 +1164,8 @@ CI isolation job has not been observed running. See DEPLOYMENT.md §20 for the r
   validation is queried; password, payment and file fields are never filled. Proven by tripwires in the fixture site:
   destructive endpoints and any POST mark the run, and every test asserts none was reached.
 * **No CAPTCHA, consent or authentication bypass**: functional tests run anonymously on the public page; nothing is
-  dismissed or solved automatically.
+  solved automatically. Cookie banners and popups covering the page are closed only as described in §37 (reject /
+  close, never accept, nothing sent).
 * **Untrusted page output**: detector results are schema-validated and size-bounded in the worker; a page can only affect
   its own result.
 * **Data**: typed values, page text and screenshots of interactions are not stored; test rows record the control's
@@ -1328,3 +1329,58 @@ page already loads on every passive check, can still change state on a misbehavi
 platform-wide by default and must not be enabled for customers until the product owner accepts the residual risk in
 writing (or a staging-URL isolation feature exists). Blocker 9 stays **open**.
 
+## 37. Popups, cookie banners and JavaScript dialogs on load
+
+A cookie banner or newsletter modal shown on load covers the page; without handling, the layout check reported covered
+controls (`CONTROLS_OBSCURED`) and functional tests `BUTTON_NOT_CLICKABLE` — false alarms. The browser engine now closes
+such popups before the layout and functional checks. This is an interaction with the live page that runs **by default**
+(per website: `popups.dismiss`, default `true`), even when functional tests are off, so it is held to a stricter rule
+than functional tests: **no new request may leave the browser while closing.**
+
+**Order and timing.** Performance (FCP, LCP, CLS, TBT, TTFB, load), rendering and script facts are read from the
+untouched load first. Then an overlay is detected (visible `<dialog open>`, `role=dialog|alertdialog`,
+`aria-modal=true`, pinned cookie-consent containers — OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, TrustArc,
+ids/classes containing cookie/consent/gdpr/cmp — and fixed/sticky layers in front of the page centre or covering ≥ 30 %
+of the viewport that don't hold the page's own main content). Closing is bounded: ≤ 3 clicks, ≤ 1.5 s wait per step,
+≤ 5 s per viewport; after every step the overlay is re-checked.
+
+**What may be clicked, in order:**
+1. the website's configured close button (`popups.closeSelector`) — located only with `document.querySelector` inside
+   the page; the schema refuses `javascript:`, `<`, `>`, `{ } ; \`, `url(`, control characters, unbalanced brackets and
+   more than 200 characters; the hard rules below still apply to the element it finds;
+2. the Escape key;
+3. on cookie banners, a **reject / necessary-only** control ("Reject all", "Decline", "Necessary only", "Deny",
+   "Refuse", a few German/French/Spanish/Italian/Dutch equivalents) — the privacy-preserving choice; then
+4. a close control (text or aria-label "Close", "✕", "×", "Dismiss", "No thanks", "Not now", "Maybe later", "Skip",
+   "Continue without", or an unlabelled icon with a close/dismiss class).
+
+**What is never clicked** (`classifyDismissControl`, unit-tested): anything whose text or label suggests accept / agree /
+allow all / got it / sign up / subscribe / join / register / log in / buy / pay / order / donate / download / upgrade /
+submit / send / confirm / yes; a submit, image or reset input or a `<button>` that would submit its form; form fields;
+links to another page (anything but `#…`). Unrecognised controls are left alone.
+
+**Request guard while closing** (a page-level route, removed after each step): every main-frame navigation is refused
+and recorded as `NAVIGATED` (closing stops; we never navigate back); every non-GET/HEAD, every deny-listed URL and
+**every request the passive page load did not already make** is refused — so a "Reject" handler can't post a consent
+record, call a CMP or tracker, subscribe, or load anything new. The functional-test guard, the third-party policy in the
+capability and the egress gateway stay in force underneath. Requests refused here, and page errors raised while closing,
+are a consequence of our action and are not counted as the page's resource or JavaScript failures; their number is
+recorded (`overlay.blockedRequests`). Consequence: a consent choice is only ever stored client-side (if the page does so
+itself) — never sent to the website or its CMP.
+
+**Outcome.** Recorded per viewport in the result details (`overlay`: kind, safe structural selector, label ≤ 80 chars,
+dismissed, method, control text, reason). A closed popup is a warning. A popup that blocks the page (modal, covers the
+centre or ≥ 30 %) and could not be closed with any permitted control fails the viewport as `OVERLAY_BLOCKING_<VIEWPORT>`
+("real visitors are blocked too"); controls it covers are counted as `overlay.coveredControls`, never as
+`CONTROLS_OBSCURED`. Warnings only: closing switched off by the customer, a small banner that can only be accepted, and
+popups whose buttons are inside an embedded (typically cross-origin) frame — we don't operate inside frames, so we say
+so instead of failing the website. Functional tests that reload the start page close the popup again the same way.
+
+**JavaScript dialogs.** Playwright auto-dismissed `alert` / `confirm` / `prompt` / `beforeunload` silently when no
+listener was registered. The engine now registers one per page: every dialog is **dismissed** (confirm / prompt answered
+"cancel", never accepted, nothing typed) and recorded — count, type, and the message scrubbed of URLs' query strings,
+e-mail addresses, JWTs, long tokens and card-like numbers, ≤ 200 characters. Dialogs are warnings, never failures.
+
+**Limitations.** Popups that appear later than the readiness wait, popups inside cross-origin iframes, and banners whose
+only exit is "Accept" stay open (reported honestly). Marker attributes (`data-wim-ov`, `data-wim-ctl`) are added to the
+page's DOM during the check; the page can tamper with detection, which only affects its own result.

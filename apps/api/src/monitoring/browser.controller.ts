@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { Body, Controller, Get, Inject, Injectable, Param, Put, Query, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { BrowserCheckConfig, describeBrowserFailure, FUNCTIONAL_RISK_STATEMENT, FUNCTIONAL_RISK_VERSION, parseBrowserCheckConfig } from "@wim/core";
+import { BrowserCheckConfig, describeBrowserFailure, describeOverlayItem, FUNCTIONAL_RISK_STATEMENT, FUNCTIONAL_RISK_VERSION, parseBrowserCheckConfig } from "@wim/core";
 import { withMember, withTenant, type Db, type Tx } from "@wim/db";
 import { createS3, type S3 } from "@wim/storage";
 import {
@@ -97,6 +97,8 @@ export class BrowserMonitoringService {
           layout: lay ? { horizontalOverflowPx: lay.horizontal_overflow_px, offscreenText: lay.offscreen_elements, findings: lay.findings } : null,
           syntheticPerformance: p ? { ttfbMs: p.ttfb_ms, fcpMs: p.fcp_ms, lcpMs: p.lcp_ms, cls: p.cls, tbtMs: p.tbt_ms, loadMs: p.load_ms, requests: p.request_count, transferBytes: p.transfer_bytes } : null,
           warnings: (r.details?.warnings ?? []) as string[],
+          overlay: overlayDto(r.details?.overlay),
+          dialogs: r.details?.dialogs && typeof r.details.dialogs.count === "number" ? { count: r.details.dialogs.count, items: (Array.isArray(r.details.dialogs.items) ? r.details.dialogs.items : []).slice(0, 10).map((d: Record<string, unknown>) => ({ type: String(d.type ?? "dialog"), message: String(d.message ?? "").slice(0, 200) })) } : null,
           artifacts: arts.filter((a) => a.executionId === l.execution_id && a.viewport === r.viewport).map((a) => ({ id: a.id, purpose: a.purpose, bytes: a.bytes, expiresAt: a.expiresAt.toISOString() })),
         };
       }),
@@ -338,4 +340,16 @@ export class BrowserMonitoringController {
       .header("content-security-policy", "default-src 'none'; sandbox").header("content-disposition", "inline; filename=screenshot.png").header("referrer-policy", "no-referrer");
     return reply.send(f.body);
   }
+}
+
+/** Popup outcome for one viewport (stored in the result details; older results have none). */
+function overlayDto(raw: unknown): BrowserViewportResultDto["overlay"] {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as { found?: unknown; items?: unknown };
+  if (!o.found || !Array.isArray(o.items)) return { found: false, items: [], summary: null };
+  const items = (o.items as Array<Record<string, any>>).slice(0, 3).map((i) => ({
+    kind: String(i.kind), selector: String(i.selector ?? "").slice(0, 200), label: i.label == null ? null : String(i.label).slice(0, 80), dismissed: Boolean(i.dismissed),
+    method: i.method == null ? null : String(i.method), control: i.control == null ? null : String(i.control).slice(0, 60), attempted: Boolean(i.attempted), reason: i.reason == null ? null : String(i.reason), blocksPage: Boolean(i.blocksPage),
+  }));
+  return { found: true, items, summary: items.map((i) => describeOverlayItem(i as Parameters<typeof describeOverlayItem>[0])).join(" · ") };
 }

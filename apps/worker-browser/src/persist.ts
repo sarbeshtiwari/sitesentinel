@@ -88,7 +88,7 @@ export async function persistBrowserResult(tx: Tx, i: BrowserPersistInput, s: Se
               ${i.ev.status === "INCONCLUSIVE" || i.ev.available === null ? null : !(v?.kinds.some((k) => k === "BLANK_PAGE") || o.navError)},
               ${JSON.stringify({ requestedPath: i.pagePath, finalUrl: o.finalUrl, mainStatus: o.mainStatus, redirects: o.redirects, error: o.navError, readiness: o.readiness, durationMs: o.durationMs })}::jsonb,
               ${JSON.stringify(o.rendering)}::jsonb, ${JSON.stringify(o.network)}::jsonb, ${JSON.stringify(o.scripts)}::jsonb,
-              ${JSON.stringify({ kinds: v?.kinds ?? [], warnings: i.ev.warnings.filter((w) => w.startsWith(o.viewport) || !/^[a-z-]+: /.test(w)), durationMs: o.durationMs, sandbox: i.sandbox, jsErrors: errs })}::jsonb,
+              ${JSON.stringify({ kinds: v?.kinds ?? [], warnings: i.ev.warnings.filter((w) => w.startsWith(o.viewport) || !/^[a-z-]+: /.test(w)), durationMs: o.durationMs, sandbox: i.sandbox, jsErrors: errs, overlay: o.overlay ?? null, dialogs: o.dialogs ?? null })}::jsonb,
               ${i.attempt}, ${i.startedAt}, ${i.finishedAt})`;
     if (o.perf && !o.navError) {
       await tx.$executeRaw`

@@ -555,6 +555,8 @@ export const BrowserCheckConfigInput = z.object({
   functional: z.record(z.string(), z.unknown()).optional(),
   /** release readiness: third-party policy enforced by the gateway (validated in full by the core schema) */
   thirdParty: z.object({ mode: z.enum(["all", "allowlist", "none"]).optional(), allowedDomains: z.array(z.string().max(253)).max(50).optional(), maxHosts: z.number().int().optional() }).strict().optional(),
+  /** popups / cookie banners on load (closeSelector validated in full by the core schema; null clears it) */
+  popups: z.object({ dismiss: z.boolean().optional(), closeSelector: z.string().max(200).nullable().optional() }).strict().optional(),
   /** Phase 4H: required (true) the first time functional tests are enabled — records who accepted the risk, and when */
   acknowledgeFunctionalRisk: z.boolean().optional(),
 }).strict();
@@ -596,6 +598,14 @@ export interface BrowserViewportResultDto {
   /** synthetic (one Chromium through our gateway) — not real-user Core Web Vitals; INP is never produced here */
   syntheticPerformance: { ttfbMs: number | null; fcpMs: number | null; lcpMs: number | null; cls: number | null; tbtMs: number | null; loadMs: number | null; requests: number | null; transferBytes: number | null } | null;
   warnings: string[];
+  /** popup / cookie banner on load and what closing it did (null on results recorded before this existed) */
+  overlay: {
+    found: boolean;
+    items: Array<{ kind: string; selector: string; label: string | null; dismissed: boolean; method: string | null; control: string | null; attempted: boolean; reason: string | null; blocksPage: boolean }>;
+    summary: string | null;
+  } | null;
+  /** JavaScript dialogs the page opened (all dismissed, never accepted) */
+  dialogs: { count: number; items: Array<{ type: string; message: string }> } | null;
   artifacts: Array<{ id: string; purpose: string | null; bytes: number; expiresAt: string }>;
 }
 export interface BrowserCheckResultDto {

@@ -9,6 +9,7 @@ export * from "./monitoring/scheduling.js";
 export * from "./monitoring/http.js";
 export * from "./monitoring/browser.js";
 export * from "./monitoring/components.js";
+export * from "./monitoring/overlay.js";
 export * from "./monitoring/performance.js";
 export * from "./monitoring/deepscan.js";
 export * from "./ops/health.js";
