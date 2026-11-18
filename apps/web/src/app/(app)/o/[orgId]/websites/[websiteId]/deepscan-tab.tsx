@@ -42,7 +42,9 @@ export function findingReason(e: Record<string, unknown>): string | null {
     found.push(`linked from ${pathOnly(e.linkedFrom)}${n > 1 ? ` and ${n - 1} other place${n - 1 === 1 ? "" : "s"}` : ""}`);
   }
   if (found.length) parts.push(found.join(" and "));
-  if (status && e.inSitemap === true && !e.linkedFrom) parts.push("no page on the site links to it");
+  if ((status && e.inSitemap === true && !e.linkedFrom) || e.noInboundLinks === true) parts.push("no other page on the site links to it");
+  if (e.inSitemap === false && e.linkedFrom) parts.push("not listed in your sitemap.xml");
+  if (typeof e.suggestedUrl === "string" && e.suggestedUrl) parts.push(`the current page is probably ${pathOnly(e.suggestedUrl)}`);
   for (const [k, [one, many]] of Object.entries(COUNT_NOUN)) {
     const n = e[k];
     if (typeof n === "number" && n > 0 && k !== "pages") parts.push(`${n} ${n === 1 ? one : many} affected`);

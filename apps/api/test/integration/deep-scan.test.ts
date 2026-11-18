@@ -121,6 +121,15 @@ describe("full scan of the controlled multi-page website", () => {
     }
     // findings
     expect(subjects("BROKEN_PAGE").sort()).toEqual(["/About", "/missing"]);
+    // sitemap vs links: a sitemap-only 404 is a sitemap finding with the likely current page; linked pages missing
+    // from the sitemap (no query-string variants); sitemap pages nothing links to (only judged on a complete scan)
+    expect(subjects("SITEMAP_URL_BROKEN")).toEqual(["/legacy/about"]);
+    expect(open.find((f) => f.category === "SITEMAP_URL_BROKEN")!.evidence).toMatchObject({ status: 404, inSitemap: true, suggestedUrl: `${s.origin}/about` });
+    expect(subjects("PAGE_NOT_IN_SITEMAP")).toContain("/broken-link");
+    expect(subjects("PAGE_NOT_IN_SITEMAP").some((x) => x.includes("?"))).toBe(false);
+    for (const x of subjects("PAGE_NOT_IN_SITEMAP")) expect(byPath(x)!.in_sitemap, x).toBe(false);
+    if (scan!.complete) expect(subjects("ORPHAN_PAGE")).toContain("/orphan-in-sitemap");
+    expect(subjects("ORPHAN_PAGE")).not.toContain("/about");
     expect(open.find((f) => f.category === "BROKEN_PAGE" && f.subject.endsWith("/missing"))!.evidence).toMatchObject({ status: 404, linkedFrom: `${s.origin}/broken-link` });
     expect(subjects("REDIRECT_LOOP")).toEqual(["/loop1"]);
     expect(subjects("REDIRECT_CHAIN")).toEqual(["/old"]);
