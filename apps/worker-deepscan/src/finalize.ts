@@ -121,6 +121,28 @@ export async function finalizeScan(tx: Tx, i: {
     const canon = new Set(ps.map((p) => (p.facts!.canonical ? normalizeUrl(String(p.facts!.canonical), p.url, i.snap.norm)?.href : p.url)));
     if (canon.size > 1) add("DUPLICATE_CONTENT", "site", `content:${hash}`, { pages: ps.slice(0, 10).map((p) => disp(p.url)), count: ps.length });
   }
+  // ---- sitemap vs links: broken sitemap-only entries, linked pages missing from the sitemap, unlinked sitemap pages
+  const sitemapUsed = Number((scan.discovery?.sitemaps as { urls?: number } | undefined)?.urls ?? 0) > 0;
+  const working = checkedPages.filter((p) => p.state === "DONE" && p.source !== "SEARCH" && "titleCount" in (p.facts ?? {}));
+  const onlySelf = (p: UrlRow) => p.referrers === 0 || (p.referrers === 1 && p.first_referrer === p.url);
+  if (sitemapUsed) {
+    for (const p of checkedPages) {
+      if (p.source === "SEARCH") continue;
+      // a sitemap entry nothing links to that doesn't load: an old / renamed address (reported instead of BROKEN_PAGE)
+      if (p.state === "FAILED" && p.in_sitemap && onlySelf(p)) {
+        const i = found.findIndex((f) => f.category === "BROKEN_PAGE" && f.fingerprintKey === p.url);
+        if (i >= 0) found.splice(i, 1);
+        add("SITEMAP_URL_BROKEN", disp(p.url), p.url, { status: p.status_code, error: p.error, inSitemap: true, linkedFrom: null, linkCount: 0, suggestedUrl: suggestReplacement(p.url, working.map((w) => w.url)) });
+      }
+    }
+    for (const p of working) {
+      if (!p.in_sitemap && p.source === "CRAWL" && !new URL(p.url).search) add("PAGE_NOT_IN_SITEMAP", disp(p.url), p.url, { linkedFrom: p.first_referrer, linkCount: p.referrers, inSitemap: false });
+    }
+    // only a scan that saw the whole site can say nothing links to a page
+    if (complete) for (const p of working) {
+      if (p.in_sitemap && p.source === "SITEMAP" && onlySelf(p)) add("ORPHAN_PAGE", disp(p.url), p.url, { inSitemap: true, noInboundLinks: true });
+    }
+  }
   for (const r of rows.filter((x) => (x.kind === "RESOURCE" || x.kind === "EXTERNAL") && x.state === "FAILED")) {
     add(r.kind === "RESOURCE" ? "BROKEN_RESOURCE" : "BROKEN_EXTERNAL_LINK", disp(r.url), r.url, { type: r.resource_type, status: r.status_code, error: r.error, linkedFrom: r.first_referrer, linkCount: r.referrers });
   }
@@ -328,4 +350,15 @@ export async function finalizeScan(tx: Tx, i: {
      WHERE execution_id = ${i.executionId}::uuid`;
   await addUsage(tx, i.orgId, { "deepscan.scans": 1, "deepscan.duration_ms": i.durationMs, ...(status === "PARTIAL" ? { "deepscan.partial_scans": 1 } : {}) });
   return { status, complete, stopReason, outcome, pagesChecked: checkedPages.length, findings: { opened, recurred, reopened, resolved, total: seen.size }, incidents: incidentActions };
+}
+
+/** The working page that most likely replaced a broken URL: same last path segment (or its stem), shortest path wins. */
+export function suggestReplacement(broken: string, working: string[]): string | null {
+  const seg = (u: string) => { try { return new URL(u).pathname.replace(/\/+$/, "").split("/").pop()!.toLowerCase(); } catch { return ""; } };
+  const want = seg(broken);
+  if (!want) return null;
+  const stem = (x: string) => x.replace(/-(phase|part|page)-?\d+$/, "").replace(/-\d+$/, "");
+  const score = (u: string) => { const s = seg(u); return s === want ? 2 : stem(s) === stem(want) || s.startsWith(stem(want)) ? 1 : 0; };
+  const best = working.filter((u) => u !== broken && score(u) > 0).sort((a, b) => score(b) - score(a) || a.length - b.length)[0];
+  return best ? disp(best) : null;
 }
