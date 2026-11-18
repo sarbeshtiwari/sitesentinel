@@ -24,6 +24,34 @@ interface SummaryDto {
   pending?: { executionId: string; status: string; queuedAt: string } | null;
   openFindings: Array<{ group: string; severity: string; count: number }>; effectiveLimits: { maxPages: number; maxDepth: number; browserPages: number; externalLinks: boolean };
 }
+const HTTP_TEXT: Record<number, string> = { 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout", 410: "Gone", 429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
+const ERROR_TEXT: Record<string, string> = { TIMEOUT: "the request timed out", DNS: "the domain name did not resolve", CONNECTION: "the connection failed", TLS: "the HTTPS certificate was rejected", REDIRECT_LOOP: "redirects loop", TOO_MANY_REDIRECTS: "too many redirects" };
+const COUNT_NOUN: Record<string, [string, string]> = { images: ["image", "images"], links: ["link", "links"], buttons: ["button", "buttons"], controls: ["form field", "form fields"], skips: ["heading level skipped", "heading levels skipped"], fields: ["field", "fields"], pages: ["page", "pages"] };
+const pathOnly = (u: string) => { try { const x = new URL(u); return x.pathname + x.search; } catch { return u; } };
+
+/** One plain sentence: why the scanner flagged this (status, where it was found), built from the stored evidence. */
+export function findingReason(e: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+  const status = typeof e.status === "number" ? e.status : null;
+  if (status) parts.push(`Returns HTTP ${status}${HTTP_TEXT[status] ? ` ${HTTP_TEXT[status]}` : ""}`);
+  else if (typeof e.error === "string" && e.error) parts.push(`Could not be loaded: ${ERROR_TEXT[e.error] ?? e.error.toLowerCase().replace(/_/g, " ")}`);
+  const found: string[] = [];
+  if (e.inSitemap === true) found.push("listed in your sitemap.xml");
+  if (typeof e.linkedFrom === "string" && e.linkedFrom) {
+    const n = typeof e.linkCount === "number" ? e.linkCount : 1;
+    found.push(`linked from ${pathOnly(e.linkedFrom)}${n > 1 ? ` and ${n - 1} other place${n - 1 === 1 ? "" : "s"}` : ""}`);
+  }
+  if (found.length) parts.push(found.join(" and "));
+  if (status && e.inSitemap === true && !e.linkedFrom) parts.push("no page on the site links to it");
+  for (const [k, [one, many]] of Object.entries(COUNT_NOUN)) {
+    const n = e[k];
+    if (typeof n === "number" && n > 0 && k !== "pages") parts.push(`${n} ${n === 1 ? one : many} affected`);
+  }
+  if (!parts.length) return null;
+  const s = parts.join(" · ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export const GROUP_LABEL: Record<string, string> = { broken_pages: "Broken pages", broken_resources: "Broken resources", forms: "Forms & search", sitemap: "Sitemap", seo: "SEO", accessibility: "Accessibility (automated checks)", structure: "Structure" };
 const STOP_LABEL: Record<string, string> = {
   FRONTIER_EXHAUSTED: "Every discovered page was checked", PAGE_LIMIT: "Stopped at the page limit", DURATION: "Stopped at the time limit", REQUEST_BUDGET: "Request budget used up",
@@ -149,7 +177,7 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
                     <TBody>
                       {findings.data.map((x) => (
                         <TR key={x.id}>
-                          <TD className="max-w-96"><Link className="font-medium hover:text-primary" href={`${pagePath}/findings/${x.id}`}>{x.title}</Link><div className="text-xs text-muted-foreground">{GROUP_LABEL[x.group] ?? x.group}</div></TD>
+                          <TD className="max-w-96"><Link className="font-medium hover:text-primary" href={`${pagePath}/findings/${x.id}`}>{x.title}</Link><div className="text-xs text-muted-foreground">{GROUP_LABEL[x.group] ?? x.group}</div>{(() => { const why = findingReason(x.evidence); return why ? <div className="mt-0.5 text-xs text-foreground/80">{why}</div> : null; })()}</TD>
                           <TD><Badge tone={SEVERITY_TONE[x.severity]}>{x.severity}</Badge></TD>
                           <TD className="hidden max-w-72 truncate font-mono text-xs md:table-cell">{x.subject}</TD>
                           <TD className="hidden text-xs text-muted-foreground lg:table-cell">{x.occurrenceCount}× · last {fmtTime(x.lastDetectedAt)}</TD>

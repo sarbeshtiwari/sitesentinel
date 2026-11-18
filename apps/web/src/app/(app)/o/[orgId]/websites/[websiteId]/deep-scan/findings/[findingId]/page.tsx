@@ -9,7 +9,7 @@ import { Hint, KeyValue, QueryState, Section } from "@/components/monitoring";
 import { get } from "@/lib/api";
 import { useOrgId } from "@/lib/hooks";
 import { fmtTime, mk, SEVERITY_TONE } from "@/lib/monitoring";
-import { GROUP_LABEL, type FindingDto } from "../../../deepscan-tab";
+import { findingReason, GROUP_LABEL, type FindingDto } from "../../../deepscan-tab";
 
 const METHOD: Record<string, string> = { HTTP: "HTTP request", HTML_ANALYSIS: "Static HTML analysis", SITEMAP: "Sitemap analysis", ROBOTS: "robots.txt", BROWSER: "Rendered in a browser", SEARCH_PROBE: "Test query through the site's search form" };
 const EVENT: Record<string, string> = { OPENED: "Detected", RECURRED: "Detected again", REOPENED: "Reappeared after being fixed", RESOLVED: "Fixed (not found by a complete scan)" };
@@ -34,6 +34,7 @@ export default function FindingPage() {
             <div className="grid gap-5 lg:grid-cols-3">
               <div className="grid content-start gap-5 lg:col-span-2">
               <Section title="What was detected" icon={<Search />}>
+                {findingReason(f.evidence) && <p className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm font-medium">{findingReason(f.evidence)}</p>}
                 <KeyValue items={[
                   ["Where", <span key="w" className="break-all">{f.subject}</span>], ["Detection", METHOD[f.detectionMethod] ?? f.detectionMethod],
                   ["First detected", fmtTime(f.firstDetectedAt)], ["Last detected", fmtTime(f.lastDetectedAt)], ["Times seen", f.occurrenceCount],
