@@ -22,7 +22,7 @@ interface SummaryDto {
   entitled: boolean; enabled: boolean; pausedReason: string | null; resuming?: boolean; nextRunAt: string | null; latestScan: ScanDto | null;
   /** a scan waiting for the scanner (no scan record yet) */
   pending?: { executionId: string; status: string; queuedAt: string } | null;
-  openFindings: Array<{ group: string; severity: string; count: number }>; effectiveLimits: { maxPages: number; maxDepth: number; browserPages: number; externalLinks: boolean };
+  openFindings: Array<{ group: string; severity: string; count: number }>; openSitemapBroken?: number; effectiveLimits: { maxPages: number; maxDepth: number; browserPages: number; externalLinks: boolean };
 }
 const HTTP_TEXT: Record<number, string> = { 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout", 410: "Gone", 429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
 const ERROR_TEXT: Record<string, string> = { TIMEOUT: "the request timed out", DNS: "the domain name did not resolve", CONNECTION: "the connection failed", TLS: "the HTTPS certificate was rejected", REDIRECT_LOOP: "redirects loop", TOO_MANY_REDIRECTS: "too many redirects" };
@@ -107,6 +107,7 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
   const slow = waiting && Date.now() - queuedSince > 60_000;
   const schedulePaused = s?.pausedReason === "DISABLED_BY_CUSTOMER";
   const completed = scans.data?.find((x) => x.status === "COMPLETED");
+  const sitemapBroken = s?.openSitemapBroken ?? 0;
   const count = (g: string) => s?.openFindings.filter((x) => x.group === g).reduce((a, b) => a + b.count, 0) ?? 0;
   const pagePath = `/o/${orgId}/websites/${websiteId}/deep-scan`;
 
@@ -155,8 +156,8 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
                   {latest.status !== "COMPLETED" && !running && <Hint>A {latest.status.toLowerCase()} scan did not check everything: it never marks findings as fixed or pages as removed.</Hint>}
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     <MetricCard label="Pages discovered" icon={<FileSearch />} tone="brand" value={latest.coverage.pagesDiscovered} hint={`${latest.coverage.pagesChecked} checked · ${latest.coverage.pagesSkippedByPolicy} skipped by policy · ${latest.coverage.pagesNotCrawledLimits} over limits`} />
-                    <MetricCard label="Broken pages" icon={<Unlink />} tone={count("broken_pages") ? "danger" : "neutral"} value={count("broken_pages")} hint={`${count("broken_resources")} broken resources`} />
-                    <MetricCard label="SEO / structure" icon={<ListTree />} tone={count("seo") + count("structure") + count("sitemap") ? "warning" : "neutral"} value={count("seo") + count("structure") + count("sitemap")} hint={`${count("accessibility")} accessibility (automated)`} />
+                    <MetricCard label="Broken pages" icon={<Unlink />} tone={count("broken_pages") ? "danger" : sitemapBroken ? "warning" : "neutral"} value={count("broken_pages") + sitemapBroken} hint={[sitemapBroken ? `${sitemapBroken} only in your sitemap (not linked)` : null, `${count("broken_resources")} broken resources`].filter(Boolean).join(" · ")} />
+                    <MetricCard label="SEO / structure" icon={<ListTree />} tone={count("seo") + count("structure") + count("sitemap") - sitemapBroken ? "warning" : "neutral"} value={count("seo") + count("structure") + count("sitemap") - sitemapBroken} hint={`${count("accessibility")} accessibility (automated)`} />
                     <MetricCard label="Duration" icon={<Timer />} tone="info" value={latest.finishedAt && latest.stopReason !== "ABANDONED" ? fmtDuration(Math.round((new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) / 1000)) : "—"} hint={latest.stopReason === "ABANDONED" ? "The scan stopped without finishing" : `${latest.requests} requests · ${latest.coverage.resourcesChecked} resources`} />
                   </div>
                   {completed && <Hint>Last completed scan: <Link className="text-foreground hover:text-primary" href={`${pagePath}/scans/${completed.executionId}`}>{fmtTime(completed.startedAt)}</Link>. Limits: up to {s.effectiveLimits.maxPages} pages, depth {s.effectiveLimits.maxDepth}{s.effectiveLimits.browserPages ? ", browser-assisted discovery" : ""}{s.effectiveLimits.externalLinks ? ", external links" : ""}. <Link className="text-primary hover:underline" href={`/o/${orgId}/usage`}>Usage against quota</Link></Hint>}
