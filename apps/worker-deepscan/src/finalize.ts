@@ -139,28 +139,44 @@ export async function finalizeScan(tx: Tx, i: {
   const now = new Date();
   const seen = new Set<string>();
   let opened = 0, recurred = 0, reopened = 0, resolved = 0;
+  // one statement for every finding: upsert (OPENED / RECURRED / REOPENED from the row as it was before it) + its event
+  const batch: Array<{ fingerprint: string; category: string; group: string; severity: string; subject: string; title: string; evidence: string; recommendation: string; method: string }> = [];
   for (const f of found) {
     const spec = FINDINGS[f.category];
     const fingerprint = fp(f.category, f.fingerprintKey);
     if (seen.has(fingerprint)) continue;
     seen.add(fingerprint);
     const severity = findingSeverity(f.category, i.snap.severityOverrides as Record<string, Severity>);
-    const [row] = await tx.$queryRaw<Array<{ id: string; prev_status: string | null; inserted: boolean }>>`
-      INSERT INTO scan_findings (org_id, website_id, fingerprint, category, group_key, severity, subject, title, evidence, recommendation, detection_method,
-                                 first_detected_at, last_detected_at, first_execution_id, last_execution_id)
-      VALUES (${i.orgId}::uuid, ${i.websiteId}::uuid, ${fingerprint}, ${f.category}, ${spec.group}, ${severity}, ${f.subject.slice(0, 600)}, ${spec.title},
-              ${JSON.stringify({ ...f.evidence, impact: spec.impact })}::jsonb, ${spec.recommendation}, ${spec.method}, ${now}, ${now}, ${i.executionId}::uuid, ${i.executionId}::uuid)
-      ON CONFLICT (website_id, fingerprint) DO UPDATE
-        SET last_detected_at = ${now}, last_execution_id = ${i.executionId}::uuid, occurrence_count = scan_findings.occurrence_count + 1,
-            severity = EXCLUDED.severity, evidence = EXCLUDED.evidence, subject = EXCLUDED.subject,
-            status = 'OPEN', resolved_at = NULL, resolved_execution_id = NULL,
-            reopen_count = scan_findings.reopen_count + CASE WHEN scan_findings.status = 'RESOLVED' THEN 1 ELSE 0 END
-      RETURNING id, (SELECT status FROM scan_findings WHERE website_id = ${i.websiteId}::uuid AND fingerprint = ${fingerprint}) AS prev_status, (xmax = 0) AS inserted`;
-    const type = row!.inserted ? "OPENED" : row!.prev_status === "RESOLVED" ? "REOPENED" : "RECURRED";
-    if (type === "OPENED") opened++; else if (type === "REOPENED") reopened++; else recurred++;
-    await tx.$executeRaw`
-      INSERT INTO scan_finding_events (org_id, finding_id, execution_id, type, data) VALUES (${i.orgId}::uuid, ${row!.id}::uuid, ${i.executionId}::uuid, ${type}, ${JSON.stringify({ severity })}::jsonb)
-      ON CONFLICT (finding_id, execution_id, type) DO NOTHING`;
+    batch.push({ fingerprint, category: f.category, group: spec.group, severity, subject: f.subject.slice(0, 600), title: spec.title,
+      evidence: JSON.stringify({ ...f.evidence, impact: spec.impact }), recommendation: spec.recommendation, method: spec.method });
+  }
+  if (batch.length) {
+    const col = <K extends keyof (typeof batch)[number]>(k: K) => batch.map((b) => b[k]);
+    const types = await tx.$queryRaw<Array<{ type: string }>>`
+      WITH t AS (
+        SELECT * FROM unnest(${col("fingerprint")}::text[], ${col("category")}::text[], ${col("group")}::text[], ${col("severity")}::text[], ${col("subject")}::text[],
+                             ${col("title")}::text[], ${col("evidence")}::text[], ${col("recommendation")}::text[], ${col("method")}::text[])
+               WITH ORDINALITY AS t(fingerprint, category, group_key, severity, subject, title, evidence, recommendation, method, ord)),
+      up AS (
+        INSERT INTO scan_findings (org_id, website_id, fingerprint, category, group_key, severity, subject, title, evidence, recommendation, detection_method,
+                                   first_detected_at, last_detected_at, first_execution_id, last_execution_id)
+        SELECT ${i.orgId}::uuid, ${i.websiteId}::uuid, t.fingerprint, t.category, t.group_key, t.severity, t.subject, t.title, t.evidence::jsonb, t.recommendation, t.method,
+               ${now}, ${now}, ${i.executionId}::uuid, ${i.executionId}::uuid FROM t ORDER BY t.ord
+        ON CONFLICT (website_id, fingerprint) DO UPDATE
+          SET last_detected_at = ${now}, last_execution_id = ${i.executionId}::uuid, occurrence_count = scan_findings.occurrence_count + 1,
+              severity = EXCLUDED.severity, evidence = EXCLUDED.evidence, subject = EXCLUDED.subject,
+              status = 'OPEN', resolved_at = NULL, resolved_execution_id = NULL,
+              reopen_count = scan_findings.reopen_count + CASE WHEN scan_findings.status = 'RESOLVED' THEN 1 ELSE 0 END
+        RETURNING id, fingerprint, severity,
+                  CASE WHEN xmax = 0 THEN 'OPENED'
+                       WHEN (SELECT p.status FROM scan_findings p WHERE p.website_id = ${i.websiteId}::uuid AND p.fingerprint = scan_findings.fingerprint) = 'RESOLVED' THEN 'REOPENED'
+                       ELSE 'RECURRED' END AS type),
+      ev AS (
+        INSERT INTO scan_finding_events (org_id, finding_id, execution_id, type, data)
+        SELECT ${i.orgId}::uuid, up.id, ${i.executionId}::uuid, up.type, jsonb_build_object('severity', up.severity) FROM up JOIN t ON t.fingerprint = up.fingerprint ORDER BY t.ord
+        ON CONFLICT (finding_id, execution_id, type) DO NOTHING)
+      SELECT type FROM up`;
+    for (const { type } of types) if (type === "OPENED") opened++; else if (type === "REOPENED") reopened++; else recurred++;
   }
   // Resolution: only a COMPLETED scan, and only for subjects it actually checked (pages/resources reached and analysed,
   // sitemaps after full discovery, site-level checks only when the whole site was covered).
@@ -173,15 +189,22 @@ export async function finalizeScan(tx: Tx, i: {
     ]);
     const open = await tx.$queryRaw<Array<{ id: string; fingerprint: string; subject: string; category: string; group_key: string }>>`
       SELECT id, fingerprint, subject, category, group_key FROM scan_findings WHERE website_id = ${i.websiteId}::uuid AND status = 'OPEN' FOR UPDATE`;
+    const toResolve: string[] = [];
     for (const o of open) {
       if (seen.has(o.fingerprint)) continue;
       const siteLevel = o.subject === "site";
       const sitemapLevel = o.group_key === "sitemap";
       const ok = siteLevel ? complete : sitemapLevel ? Boolean(scan.discovery) : checked.has(o.subject);
-      if (!ok) continue;
-      await tx.$executeRaw`UPDATE scan_findings SET status = 'RESOLVED', resolved_at = ${now}, resolved_execution_id = ${i.executionId}::uuid WHERE id = ${o.id}::uuid AND status = 'OPEN'`;
-      await tx.$executeRaw`INSERT INTO scan_finding_events (org_id, finding_id, execution_id, type) VALUES (${i.orgId}::uuid, ${o.id}::uuid, ${i.executionId}::uuid, 'RESOLVED') ON CONFLICT DO NOTHING`;
-      resolved++;
+      if (ok) toResolve.push(o.id);
+    }
+    if (toResolve.length) {
+      await tx.$queryRaw`
+        WITH r AS (UPDATE scan_findings SET status = 'RESOLVED', resolved_at = ${now}, resolved_execution_id = ${i.executionId}::uuid
+                    WHERE id = ANY(${toResolve}::uuid[]) AND status = 'OPEN' RETURNING id)
+        INSERT INTO scan_finding_events (org_id, finding_id, execution_id, type)
+        SELECT ${i.orgId}::uuid, f.id, ${i.executionId}::uuid, 'RESOLVED' FROM unnest(${toResolve}::uuid[]) WITH ORDINALITY AS f(id, ord) ORDER BY f.ord
+        ON CONFLICT DO NOTHING RETURNING id`;
+      resolved = toResolve.length;
     }
   }
 
@@ -274,12 +297,16 @@ export async function finalizeScan(tx: Tx, i: {
 
   // ---------------------------------------------------------------- inventory (discovered_pages), final status, usage
   // Only HTML documents are pages: an <a href> to an image or file (e.g. /brand/logo.svg) is a link, not a page.
-  for (const p of checkedPages.filter((x) => x.state === "DONE" && /html/i.test(x.content_type ?? ""))) {
-    const s = disp(p.url);
+  const inv = checkedPages.filter((x) => x.state === "DONE" && /html/i.test(x.content_type ?? ""));
+  if (inv.length) {
     await tx.$executeRaw`
       INSERT INTO discovered_pages (org_id, website_id, url, url_hash, path_template, source, depth, title, content_hash, last_seen_at)
-      VALUES (${i.orgId}::uuid, ${i.websiteId}::uuid, ${s}, ${createHash("sha256").update(p.url).digest("hex")}, ${pathTemplate(new URL(p.url))}, ${p.source}, ${p.depth},
-              ${p.facts?.title ? String(p.facts.title).slice(0, 300) : null}, ${p.facts?.textHash ?? null}, ${now})
+      SELECT ${i.orgId}::uuid, ${i.websiteId}::uuid, t.url, t.hash, t.tpl, t.source, t.depth, t.title, t.content_hash, ${now}
+        FROM unnest(${inv.map((p) => disp(p.url))}::text[], ${inv.map((p) => createHash("sha256").update(p.url).digest("hex"))}::text[],
+                    ${inv.map((p) => pathTemplate(new URL(p.url)))}::text[], ${inv.map((p) => p.source)}::text[], ${inv.map((p) => p.depth)}::int[],
+                    ${inv.map((p) => (p.facts?.title ? String(p.facts.title).slice(0, 300) : null))}::text[], ${inv.map((p) => (p.facts?.textHash ?? null) as string | null)}::text[])
+             WITH ORDINALITY AS t(url, hash, tpl, source, depth, title, content_hash, ord)
+       ORDER BY t.ord
       ON CONFLICT (website_id, url_hash) DO UPDATE SET last_seen_at = ${now}, title = EXCLUDED.title, content_hash = EXCLUDED.content_hash, status = 'ACTIVE', missed_crawls = 0`;
   }
   if (complete) {

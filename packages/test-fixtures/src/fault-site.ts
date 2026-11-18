@@ -331,6 +331,24 @@ export async function startFaultSite(pki: TestPki, host = "127.0.0.1", ports: { 
       if (pm) return later(toggles.get(`${h}#slow`) ? 1500 : slow, () => page({ title: `Mini page ${pm[1]}`, canonical: `${origin}${u.pathname}` }));
       return page({ title: "Not found", status: 404 });
     }
+    if (kind === "wide") {
+      // frontier limits under batching: one home page with far more links / resources / search forms than the limits allow
+      if (u.pathname === "/") {
+        const links = [
+          ...Array.from({ length: 3 }, () => "/w/1"), // duplicate links merge into one row (referrers)
+          ...Array.from({ length: 60 }, (_, i) => `/item/${i + 1}`), // one numeric template: trap cap 50
+          ...Array.from({ length: 25 }, (_, i) => `/q?x=${i + 1}`), // query variants of one path: cap 20
+          ...Array.from({ length: 39 }, (_, i) => `/w/${i + 2}`), // beyond maxPages
+          ...Array.from({ length: 5 }, (_, i) => `http://ext${i + 1}.example/`), "http://10.0.0.1/", // external cap; IP literal never stored
+        ];
+        const forms = Array.from({ length: 5 }, (_, i) => `<form role="search" action="/s${i + 1}" method="get"><input type="search" name="q"><button>Go</button></form>`).join("");
+        const imgs = ['<img src="/w/1" alt="x">', ...Array.from({ length: 15 }, (_, i) => `<img src="/r/${i + 1}.png" alt="x">`)].join("");
+        return page({ title: "Wide home", canonical: `${origin}/`, body: `${links.map((l) => `<a href="${l}">x</a>`).join("")}${forms}${imgs}` });
+      }
+      if (/^\/r\/\d+\.png$/.test(u.pathname)) { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+      if (u.pathname === "/robots.txt" || u.pathname === "/sitemap.xml") return page({ title: "Not found", status: 404 });
+      return page({ title: `Wide ${u.pathname}${u.search}`, canonical: `${origin}${u.pathname}${u.search}`, body: '<a href="/">Home</a>' });
+    }
     if (kind === "huge") {
       if (u.pathname === "/sitemap.xml") {
         res.writeHead(200, { "content-type": "application/xml" });
