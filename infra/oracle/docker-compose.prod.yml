@@ -1,0 +1,505 @@
+# SiteSentinel — single-server production stack (Oracle Cloud Always Free Ampere A1: 4 OCPU / 24 GB, arm64).
+# Guide: docs/DEPLOY_ORACLE.md. Normally driven by infra/oracle/deploy.sh, which runs:
+#   docker compose -p sitesentinel --env-file /opt/sitesentinel/.env -f infra/oracle/docker-compose.prod.yml …
+#
+# Network design (mirrors infra/security/isolation and infra/compose/docker-compose.browser-ops.yml, SECURITY.md §25):
+#   edge             public bridge       nginx only — the ONLY published ports (80, 443)
+#   app              internal 10.253.10  nginx(.2) → web, admin, api, ingest
+#   data             internal 10.253.20  postgres(.10), redis(.11), api, ingest, scheduler, workers, migrate
+#   http-egress      internal 10.253.30  egress-gateway(.2), worker-http, worker-deepscan, worker-browser(.20)
+#   browser-egress   internal 10.253.40  egress-gateway(.2), browser-runner(.22)          — Chromium's only route out
+#   browser-control  internal 10.253.50  worker-browser(.20), browser-runner(.22)         — runner reachable only here
+#   outbound         bridge (internet)   egress-gateway, api (S3, payment APIs), worker-notify (email),
+#                                         worker-browser (screenshot upload to AWS S3 only; it never runs a browser)
+# Monitoring traffic (worker-http, worker-deepscan, Chromium) reaches the internet ONLY through the egress gateway.
+# browser-runner has no data network, no internet route and no secrets. scheduler is on `data` only.
+#
+# Every secret comes from the env file (generated on the server by setup.sh; see env.example). Each service receives
+# only the variables it needs. Database connections are TLS (verify-full against the internal CA made by setup.sh).
+name: sitesentinel
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+# Hardened defaults for every application container (non-root user is set in each image).
+x-hardened: &hardened
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  logging: *logging
+
+x-build: &build
+  context: ../..
+
+services:
+  # ------------------------------------------------------------------ state
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    entrypoint: ["/bin/sh", "/start-postgres.sh"]
+    command:
+      - postgres
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/tls/server.key
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=5GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - wal_compression=on
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - log_min_duration_statement=1000
+      - -c
+      - idle_in_transaction_session_timeout=300s
+    environment:
+      POSTGRES_DB: wim
+      POSTGRES_USER: postgres # bootstrap superuser: used only by migrate (roles) and docker exec; apps never use it
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?run setup.sh}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --data-checksums
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./postgres/start-postgres.sh:/start-postgres.sh:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls:/tls-src:ro
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/backups:/backups
+    shm_size: 1g
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"] # entrypoint: chown data dir, drop to postgres
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 5g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wim"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      data: { ipv4_address: 10.253.20.10 }
+
+  redis:
+    image: redis:7.4-alpine
+    user: redis
+    restart: unless-stopped
+    logging: *logging
+    # BullMQ requires noeviction; AOF so queued jobs survive restarts. Password from the env file (not in `ps` on the
+    # host: it is only visible inside this container).
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory 768mb --maxmemory-policy noeviction --protected-mode yes --rename-command FLUSHALL '' --rename-command FLUSHDB '' --rename-command DEBUG ''"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?run setup.sh}
+    volumes: ["redis-data:/data"]
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      data: { ipv4_address: 10.253.20.11 }
+
+  # One-shot: roles + prisma migrate deploy + packages/db/sql/*.sql + seed. Every app service waits for it.
+  migrate:
+    build: { <<: *build, dockerfile: infra/docker/migrate.Dockerfile }
+    image: sitesentinel/migrate:${IMAGE_TAG:-latest}
+    restart: "no"
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+    environment:
+      BOOTSTRAP_DATABASE_URL: postgresql://postgres:${PG_SUPERUSER_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      MIGRATION_DATABASE_URL: postgresql://wim_owner:${PG_OWNER_PASSWORD:?run setup.sh}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      PG_OWNER_PASSWORD: ${PG_OWNER_PASSWORD}
+      PG_APP_PASSWORD: ${PG_APP_PASSWORD:?run setup.sh}
+      PG_ADMIN_PASSWORD: ${PG_ADMIN_PASSWORD:?run setup.sh}
+      PG_WORKER_PASSWORD: ${PG_WORKER_PASSWORD:?run setup.sh}
+      PG_BROWSER_PASSWORD: ${PG_BROWSER_PASSWORD:?run setup.sh}
+      PG_SCANNER_PASSWORD: ${PG_SCANNER_PASSWORD:?run setup.sh}
+      PG_INGEST_PASSWORD: ${PG_INGEST_PASSWORD:?run setup.sh}
+      PG_READONLY_PASSWORD: ${PG_READONLY_PASSWORD:?run setup.sh}
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    mem_limit: 1g
+    networks: [data]
+
+  # ------------------------------------------------------------------ egress + browser isolation
+  egress-gateway:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/egress-gateway.Dockerfile }
+    image: sitesentinel/egress-gateway:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      EGRESS_PORT: "8080"
+      EGRESS_TOKEN_SECRET: ${EGRESS_TOKEN_SECRET:?run setup.sh}
+      DNS_RESOLVERS: ${DNS_RESOLVERS:-1.1.1.1,8.8.8.8}
+      NODE_OPTIONS: --max-old-space-size=384
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    networks:
+      outbound: {}
+      http-egress: { ipv4_address: 10.253.30.2 }
+      browser-egress: { ipv4_address: 10.253.40.2 }
+
+  browser-runner:
+    build: { <<: *build, dockerfile: infra/docker/browser-runner.Dockerfile }
+    image: sitesentinel/browser-runner:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      NODE_ENV: production
+      RUNNER_GATEWAY_URL: http://10.253.40.2:8080
+      RUNNER_ADVERTISE_HOST: 10.253.50.22
+      RUNNER_MAX_SESSIONS: ${RUNNER_MAX_SESSIONS:-2}
+      RUNNER_SANDBOX: "true"
+    # Required for the Chromium sandbox (SECURITY.md §29) — identical to infra/compose/docker-compose.browser-ops.yml.
+    read_only: true
+    tmpfs: ["/tmp:size=512m", "/dev/shm:size=256m"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true", "seccomp=../security/seccomp/chromium.json"]
+    mem_limit: ${RUNNER_MEM_LIMIT:-1g}
+    cpus: 1.0
+    pids_limit: 512
+    networks:
+      browser-egress: { ipv4_address: 10.253.40.22 }
+      browser-control: { ipv4_address: 10.253.50.22 }
+
+  # ------------------------------------------------------------------ public services (behind nginx)
+  api:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/api.Dockerfile }
+    image: sitesentinel/api:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HOST: 0.0.0.0
+      PORT: "4000"
+      REGION: ${REGION:-ap-hyderabad-1}
+      APP_URL: ${APP_URL:?}
+      ADMIN_URL: ${ADMIN_URL:?}
+      API_URL: ${API_URL:?}
+      SDK_URL: ${SDK_URL:?}
+      INGEST_URL: ${INGEST_URL:?}
+      EMAIL_FROM_DOMAIN: ${EMAIL_FROM_DOMAIN:?}
+      EMAIL_FROM_LOCAL_PART: ${EMAIL_FROM_LOCAL_PART:-no-reply}
+      DATABASE_URL: postgresql://wim_app:${PG_APP_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      ADMIN_DATABASE_URL: postgresql://wim_admin:${PG_ADMIN_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-wim}
+      KEK_RING_JSON: ${KEK_RING_JSON:?run setup.sh}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET_ARTIFACTS: ${S3_BUCKET_ARTIFACTS:-wim-artifacts}
+      COOKIE_SECURE: "true"
+      # Only nginx (fixed address on the app network) may set X-Forwarded-For — audit finding F-1.
+      TRUST_PROXY: 10.253.10.2
+      NODE_OPTIONS: --max-old-space-size=768
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+    networks: [app, data, outbound]
+
+  ingest:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/ingest.Dockerfile }
+    image: sitesentinel/ingest:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HOST: 0.0.0.0
+      INGEST_PORT: "4200"
+      INGEST_DATABASE_URL: postgresql://wim_ingest:${PG_INGEST_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      SETTINGS_DATABASE_URL: postgresql://wim_app:${PG_APP_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-wim}
+      TRUST_PROXY: 10.253.10.2
+      NODE_OPTIONS: --max-old-space-size=384
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    networks: [app, data]
+
+  web:
+    <<: *hardened
+    build:
+      <<: *build
+      dockerfile: infra/docker/web.Dockerfile
+      args: { API_INTERNAL_URL: "http://api:4000", APP_URL: "${APP_URL}" }
+    image: sitesentinel/web:${IMAGE_TAG:-latest}
+    tmpfs: ["/tmp:size=64m,mode=1777", "/app/apps/web/.next/cache:size=256m,mode=1777"]
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL}
+      NODE_OPTIONS: --max-old-space-size=512
+    depends_on:
+      api: { condition: service_healthy }
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 128
+    networks: [app]
+
+  admin:
+    <<: *hardened
+    build:
+      <<: *build
+      dockerfile: infra/docker/admin.Dockerfile
+      args: { API_INTERNAL_URL: "http://api:4000", ADMIN_URL: "${ADMIN_URL}" }
+    image: sitesentinel/admin:${IMAGE_TAG:-latest}
+    tmpfs: ["/tmp:size=64m,mode=1777", "/app/apps/admin/.next/cache:size=128m,mode=1777"]
+    environment:
+      NODE_ENV: production
+      ADMIN_URL: ${ADMIN_URL}
+      NODE_OPTIONS: --max-old-space-size=384
+    depends_on:
+      api: { condition: service_healthy }
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    networks: [app]
+
+  # ------------------------------------------------------------------ background services
+  scheduler:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/scheduler.Dockerfile }
+    image: sitesentinel/scheduler:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_DATABASE_URL: postgresql://wim_worker:${PG_WORKER_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-wim}
+      SCHEDULER_INSTANCE_ID: scheduler-1
+      NODE_OPTIONS: --max-old-space-size=320
+      # Billing gateway reconciliation needs the key ring AND internet; this container has neither by design (data
+      # network only). Billing is off (billing.enabled=false) — revisit before enabling payments.
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 128
+    networks: [data]
+
+  worker-http:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/worker-http.Dockerfile }
+    image: sitesentinel/worker-http:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_DATABASE_URL: postgresql://wim_worker:${PG_WORKER_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-wim}
+      SDK_URL: ${SDK_URL:?}
+      EGRESS_GATEWAY_URL: http://10.253.30.2:8080
+      EGRESS_TOKEN_SECRET: ${EGRESS_TOKEN_SECRET}
+      WORKER_ID: worker-http-1
+      NODE_OPTIONS: --max-old-space-size=512
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      egress-gateway: { condition: service_healthy }
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 128
+    networks:
+      data: {}
+      http-egress: {}
+
+  worker-deepscan:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/worker-deepscan.Dockerfile }
+    image: sitesentinel/worker-deepscan:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SCANNER_DATABASE_URL: postgresql://wim_scanner:${PG_SCANNER_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-wim}
+      EGRESS_GATEWAY_URL: http://10.253.30.2:8080
+      EGRESS_TOKEN_SECRET: ${EGRESS_TOKEN_SECRET}
+      WORKER_ID: worker-deepscan-1
+      NODE_OPTIONS: --max-old-space-size=512
+      # Browser-assisted discovery (optional, off unless entitled): add BROWSER_RUNNER_URL=http://10.253.50.22:3000
+      # AND the browser-control network below. Never browser-egress.
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      egress-gateway: { condition: service_healthy }
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    networks:
+      data: {}
+      http-egress: {}
+
+  worker-notify:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/worker-notify.Dockerfile }
+    image: sitesentinel/worker-notify:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_DATABASE_URL: postgresql://wim_worker:${PG_WORKER_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-wim}
+      APP_URL: ${APP_URL}
+      ADMIN_URL: ${ADMIN_URL}
+      EMAIL_FROM_DOMAIN: ${EMAIL_FROM_DOMAIN}
+      EMAIL_FROM_LOCAL_PART: ${EMAIL_FROM_LOCAL_PART:-no-reply}
+      OPS_FALLBACK_ALERT_EMAILS: ${OPS_FALLBACK_ALERT_EMAILS:?set at least one operator email}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-resend}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      AWS_REGION: ${SES_REGION:-ap-south-1}
+      SES_CONFIGURATION_SET: ${SES_CONFIGURATION_SET:-}
+      WORKER_ID: worker-notify-1
+      NODE_OPTIONS: --max-old-space-size=320
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 128
+    networks: [data, outbound]
+
+  worker-browser:
+    <<: *hardened
+    build: { <<: *build, dockerfile: infra/docker/worker-browser.Dockerfile }
+    image: sitesentinel/worker-browser:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BROWSER_DATABASE_URL: postgresql://wim_browser:${PG_BROWSER_PASSWORD}@postgres:5432/wim?sslmode=verify-full&sslrootcert=/etc/sitesentinel/pg-ca.crt
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      QUEUE_PREFIX: ${QUEUE_PREFIX:-wim}
+      EGRESS_GATEWAY_URL: http://10.253.30.2:8080
+      EGRESS_TOKEN_SECRET: ${EGRESS_TOKEN_SECRET}
+      BROWSER_RUNNER_URL: http://10.253.50.22:3000
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET_ARTIFACTS: ${S3_BUCKET_ARTIFACTS:-wim-artifacts}
+      WORKER_ID: worker-browser-1
+      NODE_OPTIONS: --max-old-space-size=512
+    volumes:
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/pg-tls/ca.crt:/etc/sitesentinel/pg-ca.crt:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      egress-gateway: { condition: service_healthy }
+      browser-runner: { condition: service_healthy }
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    networks:
+      data: {}
+      browser-control: { ipv4_address: 10.253.50.20 }
+      http-egress: { ipv4_address: 10.253.30.20 }
+      outbound: {} # AWS S3 screenshot upload only (artifacts stay on the existing bucket)
+
+  # ------------------------------------------------------------------ edge
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.28-alpine
+    restart: unless-stopped
+    logging: *logging
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:8080"
+      - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:8443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/cloudflare-realip.conf:/etc/nginx/cloudflare-realip.conf:ro # refreshed weekly
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - ${SITESENTINEL_DIR:-/opt/sitesentinel}/certs:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/nginx-health | grep -q ok"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      web: { condition: service_healthy }
+      admin: { condition: service_healthy }
+      api: { condition: service_healthy }
+      ingest: { condition: service_healthy }
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
+    networks:
+      edge: {}
+      app: { ipv4_address: 10.253.10.2 }
+
+volumes:
+  pg-data:
+  redis-data:
+
+# Fixed addresses (.2–.127) are referenced by configuration (TRUST_PROXY, gateway/runner URLs, pg_hba); dynamic
+# addresses come only from .128–.255 (ip_range), so a container can never take a fixed address first.
+networks:
+  edge: {}
+  outbound: {}
+  app: { internal: true, ipam: { config: [{ subnet: 10.253.10.0/24, ip_range: 10.253.10.128/25 }] } }
+  data: { internal: true, ipam: { config: [{ subnet: 10.253.20.0/24, ip_range: 10.253.20.128/25 }] } }
+  http-egress: { internal: true, ipam: { config: [{ subnet: 10.253.30.0/24, ip_range: 10.253.30.128/25 }] } }
+  browser-egress: { internal: true, ipam: { config: [{ subnet: 10.253.40.0/24, ip_range: 10.253.40.128/25 }] } }
+  browser-control: { internal: true, ipam: { config: [{ subnet: 10.253.50.0/24, ip_range: 10.253.50.128/25 }] } }

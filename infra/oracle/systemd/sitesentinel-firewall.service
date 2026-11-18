@@ -1,0 +1,15 @@
+[Unit]
+Description=SiteSentinel firewall (80/443 from Cloudflare only, DOCKER-USER)
+# Docker recreates DOCKER-USER empty after a reboot (iptables state is not persisted by Docker): re-apply after it.
+After=docker.service netfilter-persistent.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=SITESENTINEL_DIR=@APP_DIR@
+ExecStart=@REPO@/infra/oracle/firewall.sh
+
+[Install]
+WantedBy=multi-user.target docker.service

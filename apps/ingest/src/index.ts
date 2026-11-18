@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import pg from "pg";
 import { Redis } from "ioredis";
 import { z } from "zod";
-import { isSiteKey, originHostKey, parseSdkConfig } from "@wim/core";
+import { isSiteKey, originHostKey, parseSdkConfig, parseTrustProxy } from "@wim/core";
 import { loadSettings, createDb } from "@wim/db";
 import { createLogger } from "@wim/logger";
 import { SDK_MANIFEST, readSdkFile } from "@wim/sdk";
@@ -30,7 +30,10 @@ const Env = z.object({
   REDIS_URL: z.string().min(1),
   INGEST_PORT: z.coerce.number().int().default(4200),
   HOST: z.string().default("127.0.0.1"),
-  TRUST_PROXY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  /** false | true | comma-separated proxy IPs/CIDRs (audit F-1; see @wim/core parseTrustProxy) */
+  TRUST_PROXY: z.string().default("false").transform((v, ctx) => {
+    try { return parseTrustProxy(v); } catch (e) { ctx.addIssue({ code: "custom", message: (e as Error).message }); return z.NEVER; }
+  }),
 });
 
 const Event = z.object({

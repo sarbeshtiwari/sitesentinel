@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh Cloudflare IP ranges (nginx real IP + host firewall)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=SITESENTINEL_DIR=@APP_DIR@
+ExecStart=@REPO@/infra/oracle/update-cloudflare-ips.sh

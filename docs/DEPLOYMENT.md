@@ -4,6 +4,9 @@
 >
 > Related: [ARCHITECTURE.md](ARCHITECTURE.md) (service topology §3, cost model §6, workers §7) · [SECURITY.md](SECURITY.md) (egress §5, browser isolation §6, keys §12)
 
+> **Running it today:** the single-server production kit for Oracle Cloud (Always Free, ARM) behind Cloudflare is in
+> [`infra/oracle/`](../infra/oracle) with the step-by-step guide [DEPLOY_ORACLE.md](DEPLOY_ORACLE.md) (§26 below).
+
 This document defines how the platform is built, deployed, operated and scaled. It starts on a **single VPS** and migrates to **managed cloud infrastructure** without architectural changes, because every service is already a separate container with externalized state.
 
 ---
@@ -1081,3 +1084,26 @@ staging, secret manager or production-like infrastructure); 9 open (product risk
   under emulation — the native amd64 isolation run (CI) is a precondition for step 7.
 * **Step 4:** invariants now include 1g (browser role) and 1h (scanner role); both must pass on staging.
 * Evidence and the owner's dependency list: RELEASE_READINESS.md §11–§15.
+
+## 26. Single-server production on Oracle Cloud (Stage A, implemented)
+
+Step-by-step guide: **[DEPLOY_ORACLE.md](DEPLOY_ORACLE.md)**. The kit implements Stage A (§2.1) on one Oracle Cloud
+Ampere A1 VM (4 OCPU / 24 GB, arm64, ₹0) behind Cloudflare, replacing Render + the Mac-hosted workers:
+
+* `infra/oracle/docker-compose.prod.yml` — PostgreSQL 16 (TLS-only `pg_hba`, `verify-full` from every service), Redis 7
+  (password, AOF, noeviction), one-shot `migrate` (roles → `prisma migrate deploy` → `packages/db/sql` → seed), api, web,
+  admin, ingest, scheduler, worker-http/-deepscan/-notify/-browser, browser-runner (Chromium seccomp profile), egress
+  gateway, nginx. Networks mirror §16 / SECURITY.md §25 (`app`, `data`, `http-egress`, `browser-egress`,
+  `browser-control` internal; only nginx publishes ports). Memory limits fit 24 GB; json-file log rotation.
+* Images: `infra/docker/{api,web,admin,ingest,worker-http,worker-notify,migrate}.Dockerfile` (new; multi-stage,
+  `pnpm deploy --prod`, non-root, multi-arch) plus the existing scheduler / worker-deepscan / worker-browser /
+  browser-runner / egress-gateway Dockerfiles. Next.js apps build `output: "standalone"` when
+  `NEXT_OUTPUT_STANDALONE=1` (set only by their Dockerfiles).
+* Edge: `infra/oracle/nginx/` — one server block per hostname (`sentinel-client|admin|api|ingest.ziptat.in`), Cloudflare
+  Origin Certificate, optional Authenticated Origin Pulls, real client IP from `CF-Connecting-IP` (Cloudflare ranges
+  only), HSTS, gzip. **F-1:** nginx overwrites `X-Forwarded-For` with the single real client IP; `TRUST_PROXY` now also
+  accepts proxy IPs/CIDRs (`@wim/core` `parseTrustProxy`) and is set to nginx's fixed address `10.253.10.2`.
+* Host: `setup.sh` (Docker, swap, unattended upgrades, fail2ban, iptables `DOCKER-USER` allow-list for Cloudflare,
+  generated secrets in `/opt/sitesentinel/.env`, internal PostgreSQL CA), `deploy.sh` (build, migrate, up, health
+  checks; `deploy.sh <ref>` = rollback), `backup.sh` (daily `pg_dump -Fc` → gpg AES-256 → S3, keep 14) and `restore.sh`
+  (restore drill into a scratch database; Render migration with `--plain`).

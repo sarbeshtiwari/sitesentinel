@@ -4,6 +4,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added — Oracle Cloud single-server production kit (2026-11-18)
+- **`infra/oracle/`** + **[docs/DEPLOY_ORACLE.md](docs/DEPLOY_ORACLE.md):** the whole platform on one Oracle Cloud Always Free Ampere A1 VM (arm64) behind Cloudflare at `sentinel-client|admin|api|ingest.ziptat.in` — production compose with the isolation networks, TLS-only PostgreSQL with per-service roles, one-shot migrate service, nginx with Cloudflare real-IP and origin certificate, `setup.sh` / `deploy.sh` / `backup.sh` (encrypted daily dumps to S3, 14 kept) / `restore.sh`, Render migration steps. New Dockerfiles for api, web, admin, ingest, worker-http, worker-notify and migrate; Next apps build standalone output only when `NEXT_OUTPUT_STANDALONE=1`.
+- **Security (audit F-1):** `TRUST_PROXY` (api, ingest) accepts a comma-separated list of trusted proxy IPs/CIDRs besides `true`/`false`; the Oracle stack trusts only nginx, which overwrites `X-Forwarded-For` with the real client IP, so per-IP rate limits cannot be bypassed with a forged header. Existing `true`/`false` values behave as before. Test: `packages/core/test/trust-proxy.test.ts`.
+
 ### Added — Real-time notifications in the web app: toasts, desktop notifications and sound (2026-11-18)
 - **Toasts:** new in-app notifications pop up top-right (bottom on phones) with severity colour and icon, title, body, website and time; max 3 visible (+N more → Notifications); non-critical close after 8 s (paused on hover / focus), CRITICAL stays until dismissed; announced via polite / assertive live regions; reduced motion respected. Clicking opens the notification's link and marks it read.
 - **Desktop (OS) notifications** via the Web Notifications API from the open tab (no push service, no service worker, no third-party calls): shown when no tab of the app is focused (optionally also when focused); CRITICAL requires interaction, others close after 10 s; silent (own sound). Permission is requested only from an "Enable desktop notifications" button (bell menu, Notifications, Preferences).
