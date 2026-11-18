@@ -18,7 +18,8 @@ import { BrowserTab } from "./browser-tab";
 import { DeepScanTab } from "./deepscan-tab";
 import { MonitoringSettingsTab } from "./monitoring-settings-tab";
 import { PerformanceTab } from "./performance-tab";
-import { ComponentsTab, PagesTab, ResponsiveTab } from "./insights-tabs";
+import { ComponentsTab, ResponsiveTab } from "./insights-tabs";
+import { PagesTab } from "./pages-tab";
 import { presetRange, useOverview, useSchedule } from "@/lib/monitoring";
 
 const TABS = ["overview", "availability", "performance", "browser", "pages", "components", "responsive", "deep-scan", "monitoring-settings", "verification", "installation", "settings", "history", "audit"] as const;

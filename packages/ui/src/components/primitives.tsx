@@ -341,14 +341,37 @@ export function FilterBar({ children, className, trailing }: { children: React.R
   );
 }
 
-/** Cursor pagination: previous/next with an optional position label. */
-export function Pagination({ onPrev, onNext, hasPrev, hasNext, label, className }: { onPrev?: () => void; onNext?: () => void; hasPrev?: boolean; hasNext?: boolean; label?: React.ReactNode; className?: string }) {
+/**
+ * Pagination. Cursor mode: previous/next with an optional position label. Numbered mode (pass `page`, `pages` and
+ * `onPage`): previous / numbered pages (first, last and a window around the current one, gaps shown as …) / next.
+ * `trailing` sits before the buttons (e.g. a page-size select).
+ */
+export function Pagination({ onPrev, onNext, hasPrev, hasNext, label, className, page, pages, onPage, trailing }: {
+  onPrev?: () => void; onNext?: () => void; hasPrev?: boolean; hasNext?: boolean; label?: React.ReactNode; className?: string;
+  page?: number; pages?: number; onPage?: (page: number) => void; trailing?: React.ReactNode;
+}) {
+  const numbered = page !== undefined && pages !== undefined && onPage !== undefined;
+  const prev = numbered ? () => onPage!(page! - 1) : onPrev;
+  const next = numbered ? () => onPage!(page! + 1) : onNext;
+  const canPrev = numbered ? page! > 1 : hasPrev;
+  const canNext = numbered ? page! < pages! : hasNext;
+  const items: Array<number | "gap"> = [];
+  if (numbered) {
+    for (let i = 1; i <= pages!; i++) {
+      if (i === 1 || i === pages || Math.abs(i - page!) <= 1) items.push(i);
+      else if (items[items.length - 1] !== "gap") items.push("gap");
+    }
+  }
   return (
-    <nav aria-label="Pagination" className={cn("flex items-center justify-between gap-2 pt-3", className)}>
+    <nav aria-label="Pagination" className={cn("flex flex-wrap items-center justify-between gap-2 pt-3", className)}>
       <span className="text-xs text-muted-foreground">{label}</span>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" disabled={!hasPrev} onClick={onPrev}><ChevronLeft /> Previous</Button>
-        <Button variant="outline" size="sm" disabled={!hasNext} onClick={onNext}>Next <ChevronRight /></Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {trailing}
+        <Button variant="outline" size="sm" disabled={!canPrev} onClick={prev} aria-label={numbered ? "Previous page" : undefined}><ChevronLeft /> <span className={numbered ? "hidden sm:inline" : undefined}>Previous</span></Button>
+        {numbered && items.map((it, i) => it === "gap"
+          ? <span key={`g${i}`} aria-hidden className="px-1 text-xs text-muted-foreground">…</span>
+          : <Button key={it} variant={it === page ? "primary" : "outline"} size="sm" className={cn("min-w-8 px-2", Math.abs(it - page!) > 0 && it !== 1 && it !== pages && "hidden sm:inline-flex")} aria-label={`Page ${it}`} aria-current={it === page ? "page" : undefined} onClick={() => it !== page && onPage!(it)}>{it}</Button>)}
+        <Button variant="outline" size="sm" disabled={!canNext} onClick={next} aria-label={numbered ? "Next page" : undefined}><span className={numbered ? "hidden sm:inline" : undefined}>Next</span> <ChevronRight /></Button>
       </div>
     </nav>
   );
