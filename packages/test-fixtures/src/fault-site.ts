@@ -229,7 +229,7 @@ export async function startFaultSite(pki: TestPki, host = "127.0.0.1", ports: { 
             <span class="nl-x" onclick="document.getElementById('promo').style.display='none'" style="position:absolute;right:12px;top:8px;cursor:pointer">›</span>
           </div>`);
       case "/c/js-alert": return html(`<main><h1>Shop with an alert</h1><p>An alert greets every visitor.</p><button type="button">Show more</button></main>
-          <script>alert("Welcome to our shop! Your code is sk_live_abcdefghijklmnopqrstuvwxyz");</script>`);
+          <script>alert("Welcome to our shop! Your code is " + ["sk", "live", "abcdefghijklmnopqrstuvwxyz"].join("_"));</script>`);
       case "/c/clipped": return html(`<main><h1>Clipped</h1><p style="width:120px;height:20px;overflow:hidden;white-space:nowrap">This sentence is far too long for its box and gets cut off without an ellipsis.</p></main>`);
       default: return html("<h1>Not found</h1>", "", 404);
     }

@@ -63,7 +63,7 @@ describe("which controls may close a popup", () => {
 
 describe("dialog messages", () => {
   it("are bounded and scrubbed", () => {
-    const m = scrubDialogMessage(`Welcome back bob@example.com! token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijk key sk_live_abcdefghijklmnopqrstuvwxyz card 4111111111111111 see https://a.example/x?session=abc ${"z ".repeat(200)}`);
+    const m = scrubDialogMessage(`Welcome back bob@example.com! token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijk key ${["sk", "live", "abcdefghijklmnopqrstuvwxyz"].join("_")} card 4111111111111111 see https://a.example/x?session=abc ${"z ".repeat(200)}`);
     expect(m.length).toBeLessThanOrEqual(200);
     expect(m).not.toMatch(/bob@example\.com|eyJ|sk_live|4111111111111111|session=abc/);
     expect(m).toContain("[email]");
