@@ -9,7 +9,7 @@ import { Hint, KeyValue, QueryState, Section } from "@/components/monitoring";
 import { get } from "@/lib/api";
 import { useOrgId } from "@/lib/hooks";
 import { fmtTime, mk, SEVERITY_TONE } from "@/lib/monitoring";
-import { GROUP_LABEL } from "../../deepscan-tab";
+import { findingReason, GROUP_LABEL } from "../../deepscan-tab";
 import { PageStatusBadge, pathOnly, provenance, ScoreBadge, SCORE_FORMULA_TEXT, SEV_ORDER, SeverityChips, skipText, SOURCE, type PageFacts, type Sev } from "../../pages-tab";
 
 interface PageFinding {
@@ -45,6 +45,7 @@ function FindingItem({ f, href, resolved }: { f: PageFinding; href: string; reso
         <Link href={href} className="font-medium hover:text-primary">{f.title}</Link>
         <span className="text-xs text-muted-foreground">{GROUP_LABEL[f.group] ?? f.group}</span>
       </div>
+      {!resolved && findingReason(f.evidence) && <p className="text-sm font-medium">{findingReason(f.evidence)}</p>}
       {f.description && <p className="text-sm text-muted-foreground">{f.description}</p>}
       {!resolved && <p className="flex items-start gap-1.5 text-sm"><Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden /><span><span className="font-medium">How to fix: </span>{f.howToFix}</span></p>}
       {!resolved && <Evidence e={f.evidence} />}

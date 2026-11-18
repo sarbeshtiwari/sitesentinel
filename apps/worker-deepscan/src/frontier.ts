@@ -133,3 +133,14 @@ export function usageArrays(entries: Record<string, number>): [string[], number[
   const keys = Object.keys(entries).filter((k) => entries[k]);
   return [keys, keys.map((k) => Math.round(entries[k]!))];
 }
+
+/** File links that are resources, not pages (by path extension). */
+const FILE_TYPES: Array<[RegExp, string]> = [
+  [/\.(jpe?g|png|gif|webp|avif|svg|ico|bmp|tiff?)$/i, "image"],
+  [/\.(pdf|docx?|xlsx?|pptx?|csv|txt|zip|rar|7z|gz)$/i, "other"],
+  [/\.(mp4|webm|mov|m4v|mp3|wav|ogg)$/i, "other"],
+];
+export function linkedFileType(u: URL): string | null {
+  for (const [re, t] of FILE_TYPES) if (re.test(u.pathname)) return t;
+  return null;
+}

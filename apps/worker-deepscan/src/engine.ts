@@ -11,7 +11,7 @@ import { addUsage, loadOrgContexts, SecurityError, TransientError, type Executio
 import { openSession } from "@wim/worker-browser";
 import { fetchChain, type FetchResult } from "./fetch.js";
 import { finalizeScan } from "./finalize.js";
-import { candidates, FRONTIER_STATE, FRONTIER_UPSERT, FrontierPlan, usageArrays, usageUpsert, type FrontierState } from "./frontier.js";
+import { candidates, FRONTIER_STATE, FRONTIER_UPSERT, FrontierPlan, linkedFileType, usageArrays, usageUpsert, type FrontierState } from "./frontier.js";
 import { analyzeHtml, parseSitemap, type HtmlForm } from "./html.js";
 
 export interface DeepScanDeps {
@@ -253,8 +253,12 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         if (r.error === "EGRESS_UNAUTHORIZED") throw new SecurityError("egress gateway rejected the scanner's capability");
         if (r.finalUrl.hostname !== home.hostname && aliases.has(r.finalUrl.hostname)) {
           hostAliases[home.hostname] = r.finalUrl.hostname;
-          snap.norm = { ...snap.norm, hostAliases };
+        } else {
+          // Both hosts answer without redirecting (or the alias redirects here): the alias is the same site, so its
+          // URLs are crawled on the registered host. Otherwise every page is checked twice and halves the page budget.
+          for (const a of aliases) hostAliases[a] = home.hostname;
         }
+        snap.norm = { ...snap.norm, hostAliases };
       }
       for (const host of snap.scope.hosts.filter((h) => !aliases.has(h))) {
         const robotsUrl = new URL(`${new URL(snap.origin).protocol}//${host}/robots.txt`);
@@ -454,6 +458,9 @@ export function createDeepScanEngine(d: DeepScanDeps) {
           }
           if (decision !== "OK") continue;
           // beyond the depth, in a trap, or beyond maxPages: a URL not yet in the frontier counts as dropped
+          // a link to an image / document / media file is a resource, not a page: it must not use up the page budget
+          const fileType = linkedFileType(x);
+          if (fileType) { if (plan.count.RESOURCE < snap.limits.maxPages * 5) plan.add(x, "RESOURCE", "CRAWL", row.depth + 1, referrer, false, fileType); continue; }
           if (row.depth + 1 > snap.limits.maxDepth || plan.trapped(x) || plan.count.PAGE >= snap.limits.maxPages) { if (!plan.has(x)) dropped++; continue; }
           plan.add(x, "PAGE", "CRAWL", row.depth + 1, referrer, false);
         }
