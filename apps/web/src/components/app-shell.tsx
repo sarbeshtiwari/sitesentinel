@@ -15,6 +15,9 @@ import { useState } from "react";
 import { errorMessage, post } from "@/lib/api";
 import { useConfig, useMe, useOrg } from "@/lib/hooks";
 import { useLiveUpdates } from "@/lib/monitoring";
+import { useRealtimeNotifications } from "@/lib/realtime-notifications";
+import { NotificationBell } from "./notification-bell";
+import { NotificationToasts } from "./notification-toasts";
 
 function VerifyBanner() {
   const [sent, setSent] = useState(false);
@@ -48,9 +51,9 @@ const LABELS: Record<string, string> = {
   "api-monitoring": "API monitoring", browser: "Browser run", "deep-scan": "Deep scan", scans: "Scans", findings: "Findings",
 };
 // Website sub-paths without an index page → the website tab that lists them.
-const WEBSITE_TAB_SEGMENT: Record<string, string> = { browser: "browser", "deep-scan": "deep-scan" };
+const WEBSITE_TAB_SEGMENT: Record<string, string> = { browser: "browser", "deep-scan": "deep-scan", pages: "pages" };
 // The record type each id-segment refers to, by the segment before it.
-const ID_LABEL: Record<string, string> = { websites: "Website", incidents: "Incident", browser: "Run", scans: "Scan", findings: "Finding" };
+const ID_LABEL: Record<string, string> = { websites: "Website", incidents: "Incident", browser: "Run", scans: "Scan", findings: "Finding", pages: "Page" };
 
 /** Breadcrumbs derived from the URL only (no extra requests); ids are shown by record type. */
 function useCrumbs(pathname: string, orgName?: string) {
@@ -68,7 +71,7 @@ function useCrumbs(pathname: string, orgName?: string) {
       return;
     }
     if (parts[i - 3] === "websites" && parts[i - 1] === "deep-scan") return; // "scans" / "findings": no page; the Deep scan crumb covers it
-    const label = UUID.test(p) ? (ID_LABEL[parts[i - 1] ?? ""] ?? "Details") : (LABELS[p] ?? p);
+    const label = UUID.test(p) || (parts[i - 1] === "pages" && /^url-[0-9a-f]{64}$/.test(p)) ? (ID_LABEL[parts[i - 1] ?? ""] ?? "Details") : (LABELS[p] ?? p);
     items.push({ label, href });
   });
   return items;
@@ -85,6 +88,8 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
   const orgId = params.orgId ?? orgs[0]?.id;
   // Live updates only inside an organisation the user is viewing (membership is enforced by the API).
   const unread = useLiveUpdates(params.orgId);
+  // New in-app notifications → toast, desktop notification and sound (leader tab polls; see realtime-notifications).
+  useRealtimeNotifications(params.orgId);
   const org = useOrg();
   const current = orgs.find((o) => o.id === orgId);
   // Hide sections the member's role cannot open; the API enforces the same permissions.
@@ -124,7 +129,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
         <SidebarItem LinkComponent={Link} href={at("usage")} icon={<Gauge />} active={on("usage")}>Usage & limits</SidebarItem>
       </SidebarSection>
       {orgId && (
-        <SidebarSection title="Settings" id="org-settings" collapsible defaultOpen={false} containsActive={is(`${base}/settings`)}>
+        <SidebarSection title="Settings" id="org-settings" collapsible containsActive={is(`${base}/settings`)}>
           {can("org:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/general`} icon={<Settings />} active={is(`${base}/settings/general`)}>General</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/team`} icon={<Users />} active={is(`${base}/settings/team`)}>Team</SidebarItem>}
           {can("member:read") && <SidebarItem LinkComponent={Link} href={`${base}/settings/roles`} icon={<KeyRound />} active={is(`${base}/settings/roles`)}>Roles</SidebarItem>}
@@ -184,14 +189,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
             <a href={`mailto:${config.supportEmail}`} className={iconBtn} aria-label="Help and support"><LifeBuoy className="h-[18px] w-[18px]" aria-hidden /></a>
           </Tooltip>
         )}
-        {orgId && (
-          <Tooltip content="Notifications" side="bottom">
-            <Link href={`/o/${orgId}/notifications`} className={iconBtn} aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}>
-              <Bell className="h-[18px] w-[18px]" aria-hidden />
-              {unread > 0 && <span aria-hidden className="absolute right-1 top-1 min-w-4 rounded-full bg-danger px-1 text-center text-[10px] font-semibold leading-4 text-white ring-2 ring-background">{unread > 99 ? "99+" : unread}</span>}
-            </Link>
-          </Tooltip>
-        )}
+        {params.orgId && <NotificationBell orgId={params.orgId} unread={unread} className={iconBtn} />}
         <ThemeToggle className="text-muted-foreground" />
       </div>
     </>
@@ -224,6 +222,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
       ) : undefined}
     >
       {children}
+      <NotificationToasts orgId={params.orgId} />
     </AppShell>
   );
 }

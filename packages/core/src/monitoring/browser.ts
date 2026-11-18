@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Thresholds, Verdict } from "./http.js";
 import { evaluateFunctional, evaluateLayout, FunctionalConfig, type FunctionalResult, type LayoutFacts } from "./components.js";
+import { blockingOverlay, describeOverlayItem, PopupConfig, type DialogFacts, type OverlayFacts } from "./overlay.js";
 import { classifyPerf, DEFAULT_ALERT_ON, DEFAULT_PERF_THRESHOLDS, PERF_METRIC_INFO, PERF_METRICS, PerformanceConfig, type PerfMetric, type PerfThresholdSet } from "./performance.js";
 
 /**
@@ -77,6 +78,8 @@ export const BrowserCheckConfig = z.object({
     /** extra CSS selectors masked before capture (inputs, password fields etc. are always masked) */
     mask: z.array(z.string().min(1).max(200)).max(20).default([]),
   }).strict().default({ onFailure: true, onSuccess: false, fullPage: false, mask: [] }),
+  /** popups / cookie banners on load: closed (privacy-preserving, side-effect-free) before layout and functional checks */
+  popups: PopupConfig.default({ dismiss: true, closeSelector: null }),
   consoleErrorsAreFailures: z.boolean().default(false),
   thirdPartyFailuresAreFailures: z.boolean().default(false),
   performance: PerformanceConfig.default({}),
@@ -117,6 +120,10 @@ export interface ViewportObservation {
   network: { failed: ResourceIssue[]; httpErrors: ResourceIssue[]; requests: number; transferBytes: number };
   layout: ({ overflowPx: number; offscreenText: number; firstViewportVisible: boolean } & Partial<Omit<LayoutFacts, "overflowPx" | "offscreenText">>) | null;
   perf: { ttfbMs: number | null; fcpMs: number | null; lcpMs: number | null; cls: number | null; tbtMs: number | null; longTasks: number | null; loadMs: number | null } | null;
+  /** popup / cookie banner found after load (measured before any dismissal) and what closing it did; absent = not inspected */
+  overlay?: OverlayFacts | null;
+  /** JavaScript dialogs (alert / confirm / prompt / beforeunload) the page opened — all dismissed, never accepted */
+  dialogs?: DialogFacts | null;
 }
 
 // ---------------------------------------------------------------- evaluation
@@ -226,15 +233,30 @@ export function evaluateBrowser(obs: ViewportObservation[], cfg: BrowserCheckCon
     }
     // layout: objective findings fail the viewport (sideways scroll, unusable navigation, covered or off-screen
     // controls); clipped text, overlaps and off-screen text are heuristics recorded as warnings
+    // popups on load: a dismissed overlay (or one the customer chose not to close) is a warning; one we could not close
+    // with any safe control blocks real visitors too and fails the viewport — and then explains any covered controls.
+    // (Controls covered by a detected overlay that stays open are counted in overlay.coveredControls by the engine, not
+    // as obscuredControls, so they are never reported a second time as CONTROLS_OBSCURED.)
+    const tag = o.viewport.toUpperCase().replaceAll("-", "_");
+    const blocking = o.navError ? null : blockingOverlay(o.overlay);
+    if (!o.navError && o.overlay?.found) {
+      for (const it of o.overlay.items) if (it !== blocking) warnings.push(`${o.viewport}: ${describeOverlayItem(it)}`);
+      if (o.overlay.blockedRequests) warnings.push(`${o.viewport}: ${o.overlay.blockedRequests} request(s) refused by the safety guard while closing the popup`);
+    }
+    if (!o.navError && o.dialogs?.count) {
+      const types = [...new Set(o.dialogs.items.map((d) => d.type))].join(", ");
+      const first = o.dialogs.items[0]?.message;
+      warnings.push(`${o.viewport}: the page opened ${o.dialogs.count} JavaScript dialog(s) (${types || "dialog"}) — dismissed${first ? `: "${first.slice(0, 120)}"` : ""}`);
+    }
+    if (blocking) fail("layout", `OVERLAY_BLOCKING_${tag}`, vp);
     if (o.layout) {
-      const tag = o.viewport.toUpperCase().replaceAll("-", "_");
       const l = evaluateLayout({ clippedText: 0, overlaps: 0, obscuredControls: 0, offscreenControls: 0, oversizedImages: 0, navState: "NONE", samples: [], ...o.layout });
       if (o.layout.overflowPx > 4) fail("layout", `HORIZONTAL_OVERFLOW_${tag}`, vp);
       else if (o.layout.navState === "BROKEN") fail("layout", `NAV_BROKEN_${tag}`, vp);
       else if (o.layout.navState === "MISSING") fail("layout", `NAV_MISSING_${tag}`, vp);
-      else if ((o.layout.obscuredControls ?? 0) > 0) fail("layout", `CONTROLS_OBSCURED_${tag}`, vp);
+      else if ((o.layout.obscuredControls ?? 0) > 0 && !blocking) fail("layout", `CONTROLS_OBSCURED_${tag}`, vp);
       else if ((o.layout.offscreenControls ?? 0) > 0) fail("layout", `CONTROLS_OFFSCREEN_${tag}`, vp);
-      else pass("layout");
+      else if (!blocking) pass("layout");
       for (const h of l.heuristic) warnings.push(`${o.viewport}: ${h} (heuristic)`);
     }
     // performance: critical thresholds fail, warning thresholds only warn (primary viewport only — others aren't comparable)
@@ -334,6 +356,8 @@ export function describeBrowserFailure(kind: string): string {
   if (o) return `The page scrolls horizontally at the ${o[1]!.toLowerCase().replace("_", "-")} viewport`;
   const nav = /^NAV_(BROKEN|MISSING)_(.+)$/.exec(kind);
   if (nav) return nav[1] === "BROKEN" ? `The navigation menu does not open at the ${nav[2]!.toLowerCase().replaceAll("_", "-")} viewport` : `The navigation is not reachable at the ${nav[2]!.toLowerCase().replaceAll("_", "-")} viewport`;
+  const ov = /^OVERLAY_BLOCKING_(.+)$/.exec(kind);
+  if (ov) return `A popup or overlay covers the page at the ${ov[1]!.toLowerCase().replaceAll("_", "-")} viewport and could not be closed — real visitors are blocked too`;
   const ctl = /^CONTROLS_(OBSCURED|OFFSCREEN)_(.+)$/.exec(kind);
   if (ctl) return `Controls are ${ctl[1] === "OBSCURED" ? "covered by other elements" : "outside the screen"} at the ${ctl[2]!.toLowerCase().replaceAll("_", "-")} viewport`;
   const fn = /^FUNCTIONAL_(.+)$/.exec(kind);

@@ -1,5 +1,4 @@
 import { isIP } from "node:net";
-import { createHash } from "node:crypto";
 import type { Redis } from "ioredis";
 import {
   displayUrl, effectiveScanLimits, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate, robotsAllows, scopeDecision,
@@ -12,7 +11,8 @@ import { addUsage, loadOrgContexts, SecurityError, TransientError, type Executio
 import { openSession } from "@wim/worker-browser";
 import { fetchChain, type FetchResult } from "./fetch.js";
 import { finalizeScan } from "./finalize.js";
-import { analyzeHtml, parseSitemap } from "./html.js";
+import { candidates, FRONTIER_STATE, FRONTIER_UPSERT, FrontierPlan, usageArrays, usageUpsert, type FrontierState } from "./frontier.js";
+import { analyzeHtml, parseSitemap, type HtmlForm } from "./html.js";
 
 export interface DeepScanDeps {
   db: Db;
@@ -32,11 +32,11 @@ export const SCANNER_AGENT = "SiteSentinel";
 /** One harmless query per distinct search form (no personal data, nothing that could trigger an action). */
 const SEARCH_PROBE_TERM = "test";
 const MAX_SEARCH_PROBES = 3;
+/** resources / external links claimed per query in the status-check phase */
+const RESOURCE_BATCH = 25;
 const INFRA = new Set(["GATEWAY_UNAVAILABLE", "EGRESS_RATE_LIMITED", "GATEWAY_ERROR"]);
 /** Connection-level failures: the site's problem only if OUR path (worker → gateway → internet) is healthy. */
 const CONNECTION_LEVEL = new Set(["CONNECTION_FAILED", "CONNECT_TIMEOUT", "RESPONSE_TIMEOUT", "PROTOCOL_ERROR", "DNS_FAILURE"]);
-const PER_TEMPLATE_CAP = 50; // trap guard: at most N URLs per numeric path template
-const PER_PATH_QUERY_CAP = 20; // trap guard: at most N query variants per path
 
 export interface ScanSnapshot {
   scope: Scope;
@@ -53,8 +53,6 @@ export interface ScanSnapshot {
   severityOverrides: Record<string, string>;
   incidentGroups: string[];
 }
-
-const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /**
  * Tier C deep-scan engine (Phase 4E). Runs in worker-deepscan (DB role wim_scanner; networks data + http-egress).
@@ -118,12 +116,16 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         if (aborted()) break;
         if (Date.now() > hardDeadline) { stop = "DURATION"; break; }
         if (requests >= snap.limits.maxRequests) { stop = "REQUEST_BUDGET"; break; }
-        const quotaLeft = await withSystem(d.db, (tx) => pagesLeftToday(tx, ctx.orgId, snap.limits.pagesPerDay));
-        if (quotaLeft <= 0) { stop = "DAILY_QUOTA"; break; }
-        const [row] = await withSystem(d.db, (tx) => tx.$queryRaw<Array<{ id: bigint; url: string; depth: number; in_sitemap: boolean }>>`
-          SELECT id, url, depth, in_sitemap FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE' AND state = 'QUEUED'
-           ORDER BY depth, id LIMIT 1`);
-        if (!row) break; // frontier exhausted
+        // today's page quota and the next page, in one statement
+        const [next] = await withSystem(d.db, (tx) => tx.$queryRaw<Array<{ used: bigint | null; id: bigint | null; url: string; depth: number; in_sitemap: boolean }>>`
+          SELECT (SELECT value FROM usage_counters WHERE org_id = ${ctx.orgId}::uuid AND period_start = (now() AT TIME ZONE 'UTC')::date AND key = 'deepscan.pages') AS used,
+                 u.id, u.url, u.depth, u.in_sitemap
+            FROM (SELECT 1) one LEFT JOIN LATERAL (
+                   SELECT id, url, depth, in_sitemap FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE' AND state = 'QUEUED'
+                    ORDER BY depth, id LIMIT 1) u ON true`);
+        if (snap.limits.pagesPerDay - Number(next?.used ?? 0) <= 0) { stop = "DAILY_QUOTA"; break; }
+        if (next?.id == null) break; // frontier exhausted
+        const row = { id: next.id, url: next.url, depth: next.depth, in_sitemap: next.in_sitemap };
         const r = await crawlPage(row);
         if (r === "INFRA") {
           infraStreak++;
@@ -141,17 +143,25 @@ export function createDeepScanEngine(d: DeepScanDeps) {
 
       // ---- 4. first-party resources and (if enabled) external links: status only, never parsed or followed
       if (!stop) {
-        for (;;) {
-          if (aborted()) return await interrupted();
-          if (Date.now() > hardDeadline || requests >= snap.limits.maxRequests) break; // resources are best-effort within the budget
-          const [res] = await withSystem(d.db, (tx) => tx.$queryRaw<Array<{ id: bigint; url: string; kind: string }>>`
-            SELECT id, url, kind FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind IN ('RESOURCE', 'EXTERNAL') AND state = 'QUEUED'
-             ORDER BY kind DESC, id LIMIT 1`);
-          if (!res) break;
-          if ((await checkResource(res)) === "INFRA") {
-            overheadRequests++;
-            if (++infraStreak >= 3) { if (ctx.attempt < ctx.maxAttempts) throw new TransientError("monitoring infrastructure unavailable"); break; }
-          } else infraStreak = 0;
+        // No URL is added in this phase, so the queue is claimed in batches (same order); each row stays guarded by
+        // its QUEUED → checked transition, and the budget / abort checks still run before every request.
+        let batch: Array<{ id: bigint; url: string; kind: string }> = [];
+        resources: for (;;) {
+          if (!batch.length) {
+            batch = await withSystem(d.db, (tx) => tx.$queryRaw<Array<{ id: bigint; url: string; kind: string }>>`
+              SELECT id, url, kind FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind IN ('RESOURCE', 'EXTERNAL') AND state = 'QUEUED'
+               ORDER BY kind DESC, id LIMIT ${RESOURCE_BATCH}`);
+            if (!batch.length) break;
+          }
+          while (batch.length) {
+            if (aborted()) return await interrupted();
+            if (Date.now() > hardDeadline || requests >= snap.limits.maxRequests) break resources; // resources are best-effort within the budget
+            const res = batch.shift()!;
+            if ((await checkResource(res)) === "INFRA") {
+              overheadRequests++;
+              if (++infraStreak >= 3) { if (ctx.attempt < ctx.maxAttempts) throw new TransientError("monitoring infrastructure unavailable"); break resources; }
+            } else infraStreak = 0;
+          }
         }
       }
 
@@ -318,11 +328,16 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       }
       const all = [...unique.values()];
       await withSystem(d.db, async (tx) => {
-        let pages = await pageCount(tx);
+        const [{ pages }] = await tx.$queryRaw<Array<{ pages: number }>>`SELECT count(*)::int AS pages FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE'`;
         const room = Math.max(0, snap.limits.maxPages - pages);
-        for (const p of all.slice(0, room)) if (await insertUrl(tx, p.url, "PAGE", p.source, p.depth, null, p.inSitemap)) pages++;
-        if (all.length > room) await bumpDropped(tx, all.length - room);
-        await tx.$executeRaw`UPDATE deep_scans SET discovery = ${JSON.stringify(disc)}::jsonb, requests = ${requests}, updated_at = now() WHERE execution_id = ${ctx.executionId}::uuid`;
+        const plan = new FrontierPlan();
+        for (const p of all.slice(0, room)) plan.add(p.url, "PAGE", p.source, p.depth, null, p.inSitemap);
+        // one statement: the start/sitemap pages, what didn't fit, and the discovery record
+        await tx.$queryRawUnsafe(`
+          WITH ins AS (${FRONTIER_UPSERT})
+          UPDATE deep_scans SET pages_dropped = pages_dropped + $14::int, discovery = $15::jsonb, requests = $16::int, updated_at = now()
+           WHERE execution_id = $1::uuid RETURNING 1`,
+          ctx.executionId, ctx.orgId, ctx.websiteId, ...plan.arrays(), Math.max(0, all.length - room), JSON.stringify(disc), requests);
       });
       return disc;
     }
@@ -348,14 +363,17 @@ export function createDeepScanEngine(d: DeepScanDeps) {
               const st = await fetchChain(u, fd, snap.scope, snap.norm, { readBody: true, maxRedirects: 10 });
               if (st.body) for (const l of analyzeHtml(st.body.toString("utf8")).out.links) { const x = normalizeUrl(l.href, st.finalUrl, snap.norm); if (x) staticLinks.add(x.href); }
               let added = 0, onlyRendered = 0;
+              const rendered = hrefs.map((h) => normalizeUrl(h, u, snap.norm)).filter((x): x is URL => Boolean(x) && scopeDecision(x!, snap.scope) === "OK");
+              const [hs, ts, ps] = candidates(rendered);
               await withSystem(d.db, async (tx) => {
-                for (const h of hrefs) {
-                  const x = normalizeUrl(h, u, snap.norm);
-                  if (!x || scopeDecision(x, snap.scope) !== "OK") continue;
+                const [st] = await tx.$queryRawUnsafe<FrontierState[]>(FRONTIER_STATE, ctx.executionId, hs, ts, ps);
+                const plan = new FrontierPlan(st);
+                for (const x of rendered) {
                   if (!staticLinks.has(x.href)) onlyRendered++;
-                  if ((await pageCount(tx)) >= snap.limits.maxPages) break;
-                  if (await insertUrl(tx, x, "PAGE", "BROWSER", 1, displayUrl(u), false)) added++;
+                  if (plan.count.PAGE >= snap.limits.maxPages) break;
+                  if (plan.add(x, "PAGE", "BROWSER", 1, displayUrl(u), false)) added++;
                 }
+                await writePlan(tx, plan);
               });
               if (onlyRendered) spa.push({ page: displayUrl(u), links: onlyRendered });
               void added;
@@ -399,68 +417,87 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       const blocked = r.error && /^BLOCKED_|^NO_ADDRESSES$/.test(r.error) ? r.error : null;
       const state = blocked ? "SKIPPED" : r.error && r.error !== "REDIRECT_LOOP" && r.error !== "TOO_MANY_REDIRECTS" ? "FAILED" : r.status !== null && r.status >= 400 ? "FAILED" : "DONE";
       const facts = analysed ? { ...analysed.facts, template: pathTemplate(u!), xRobots: r.xRobots, lastModified: r.lastModified, malformedLinks: analysed.out.malformedLinks, truncated: r.truncated } : { template: pathTemplate(u!), xRobots: r.xRobots };
+      // Outgoing URLs, normalised in memory; the frontier is read once and written once for the whole page.
+      const ok = state === "DONE";
+      const referrer = displayUrl(u!);
+      const base = r.finalUrl;
+      const redirectTarget = redirected && ok && scopeDecision(r.finalUrl, snap.scope) === "OK" ? r.finalUrl : null;
+      const links = analysed && ok ? analysed.out.links.map((l) => normalizeUrl(l.href, base, snap.norm)) : [];
+      const probes = analysed && ok ? searchProbes(analysed.facts.forms, base) : [];
+      const resources = analysed && ok && snap.checkResources ? analysed.out.resources.map((x) => ({ x: normalizeUrl(x.href, base, snap.norm), type: x.type })) : [];
+      const [hashes, templates, paths] = candidates([redirectTarget, ...links, ...probes, ...resources.map((x) => x.x)]);
       await withSystem(d.db, async (tx) => {
         // the state guard makes the page (and its usage) count exactly once, even if a crash replays it
-        const [won] = await tx.$queryRaw<Array<{ id: bigint }>>`
-          UPDATE deep_scan_urls SET state = ${state}, skip_reason = ${blocked}, status_code = ${r.status}, final_url = ${displayUrl(r.finalUrl)},
-                 redirect_chain = ${JSON.stringify(r.chain)}::jsonb, content_type = ${r.contentType?.slice(0, 100) ?? null}, bytes = ${r.bytes}, duration_ms = ${r.durationMs},
-                 facts = ${JSON.stringify({ ...facts, outOfScopeRedirect: r.outOfScopeRedirect })}::jsonb, error = ${r.error}, checked_at = now()
-           WHERE id = ${row.id} AND state = 'QUEUED' RETURNING id`;
-        if (!won) return;
-        let newPages = 0, external = 0;
-        if (redirected && state === "DONE" && scopeDecision(r.finalUrl, snap.scope) === "OK" && (await pageCount(tx)) < snap.limits.maxPages) {
-          if (await insertUrl(tx, r.finalUrl, "PAGE", "CRAWL", row.depth, displayUrl(u!), false)) newPages++;
+        const [st] = await tx.$queryRawUnsafe<Array<FrontierState & { won: number }>>(`
+          WITH won AS (
+            UPDATE deep_scan_urls SET state = $5::text, skip_reason = $6::text, status_code = $7::int, final_url = $8::text, redirect_chain = $9::jsonb,
+                   content_type = $10::text, bytes = $11::int, duration_ms = $12::int, facts = $13::jsonb, error = $14::text, checked_at = now()
+             WHERE id = $15::bigint AND state = 'QUEUED' RETURNING id)
+          SELECT (SELECT count(*)::int FROM won) AS won, s.* FROM (${FRONTIER_STATE}) s`,
+          ctx.executionId, hashes, templates, paths,
+          state, blocked, r.status, displayUrl(r.finalUrl), JSON.stringify(r.chain), r.contentType?.slice(0, 100) ?? null, r.bytes, r.durationMs,
+          JSON.stringify({ ...facts, outOfScopeRedirect: r.outOfScopeRedirect }), r.error, row.id);
+        if (!st?.won) return;
+        // Plan with exactly the per-link rules (applied in link order against the counts as they grow).
+        const plan = new FrontierPlan(st);
+        let external = 0, dropped = 0;
+        if (redirectTarget && plan.count.PAGE < snap.limits.maxPages) plan.add(redirectTarget, "PAGE", "CRAWL", row.depth, referrer, false);
+        for (const x of links) {
+          if (!x) continue;
+          const decision = scopeDecision(x, snap.scope);
+          if (!snap.scope.hosts.includes(x.hostname)) {
+            external++;
+            // IP-literal links (routers, metadata, mapped IPv6…) are never requested, not even via the gateway
+            if (isIP(x.hostname.replace(/^\[|\]$/g, ""))) continue;
+            if (snap.limits.externalLinks && plan.count.EXTERNAL < snap.limits.maxExternalLinks) plan.add(x, "EXTERNAL", "CRAWL", row.depth + 1, referrer, false);
+            continue;
+          }
+          if (decision !== "OK") continue;
+          // beyond the depth, in a trap, or beyond maxPages: a URL not yet in the frontier counts as dropped
+          if (row.depth + 1 > snap.limits.maxDepth || plan.trapped(x) || plan.count.PAGE >= snap.limits.maxPages) { if (!plan.has(x)) dropped++; continue; }
+          plan.add(x, "PAGE", "CRAWL", row.depth + 1, referrer, false);
         }
-        if (analysed && state === "DONE") {
-          let pages = await pageCount(tx);
-          const base = r.finalUrl;
-          for (const l of analysed.out.links) {
-            const x = normalizeUrl(l.href, base, snap.norm);
-            if (!x) continue;
-            const decision = scopeDecision(x, snap.scope);
-            if (!snap.scope.hosts.includes(x.hostname)) {
-              external++;
-              // IP-literal links (routers, metadata, mapped IPv6…) are never requested, not even via the gateway
-              if (isIP(x.hostname.replace(/^\[|\]$/g, ""))) continue;
-              if (snap.limits.externalLinks && (await countKind(tx, "EXTERNAL")) < snap.limits.maxExternalLinks) await insertUrl(tx, x, "EXTERNAL", "CRAWL", row.depth + 1, displayUrl(u!), false);
-              continue;
-            }
-            if (decision !== "OK") continue;
-            if (row.depth + 1 > snap.limits.maxDepth) { if (await isNew(tx, x)) await bumpDropped(tx, 1); continue; }
-            if (await trapped(tx, x)) continue;
-            if (pages >= snap.limits.maxPages) { if (await isNew(tx, x)) await bumpDropped(tx, 1); continue; }
-            if (await insertUrl(tx, x, "PAGE", "CRAWL", row.depth + 1, displayUrl(u!), false)) { pages++; newPages++; }
-          }
-          // Site search: submit each distinct GET search form once with a harmless test query (read-only, like any
-          // crawled link; POST forms are never submitted). Its result page is crawled as a SEARCH page.
-          for (const fm of analysed.facts.forms) {
-            if (!fm.search || fm.method !== "GET" || !fm.queryField) continue;
-            const target = normalizeUrl(fm.action?.trim() ? fm.action : base.href, base, snap.norm);
-            if (!target || scopeDecision(target, snap.scope) !== "OK") continue;
-            target.searchParams.set(fm.queryField, SEARCH_PROBE_TERM);
-            const probe = normalizeUrl(target.href, null, snap.norm);
-            if (!probe || probe.searchParams.get(fm.queryField) !== SEARCH_PROBE_TERM) continue; // query params ignored by config
-            const [{ n }] = await tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND source = 'SEARCH'`;
-            if (n >= MAX_SEARCH_PROBES) break;
-            await insertUrl(tx, probe, "PAGE", "SEARCH", row.depth + 1, displayUrl(u!), false);
-          }
-          if (snap.checkResources) {
-            for (const res of analysed.out.resources) {
-              const x = normalizeUrl(res.href, base, snap.norm);
-              if (!x || !snap.scope.hosts.includes(x.hostname)) continue; // third-party resources are not ours to probe
-              if ((await countKind(tx, "RESOURCE")) >= snap.limits.maxPages * 5) break;
-              await insertUrl(tx, x, "RESOURCE", "CRAWL", row.depth + 1, displayUrl(u!), false, res.type);
-            }
-          }
+        // Site search: each distinct GET search form once with a harmless test query (read-only, like any crawled
+        // link; POST forms are never submitted). Its result page is crawled as a SEARCH page.
+        for (const probe of probes) {
+          if (plan.count.SEARCH >= MAX_SEARCH_PROBES) break;
+          plan.add(probe, "PAGE", "SEARCH", row.depth + 1, referrer, false);
         }
-        await tx.$executeRaw`
-          UPDATE deep_scans SET pages_completed = pages_completed + ${state === "DONE" ? 1 : 0}, pages_failed = pages_failed + ${state === "FAILED" ? 1 : 0},
-                 pages_skipped = pages_skipped + ${state === "SKIPPED" ? 1 : 0}, pages_discovered = pages_discovered + ${newPages},
-                 requests = ${requests}, bytes = bytes + ${r.bytes}, updated_at = now()
-           WHERE execution_id = ${ctx.executionId}::uuid`;
-        await addUsage(tx, ctx.orgId, { "deepscan.pages": state === "SKIPPED" ? 0 : 1, "deepscan.bytes": r.bytes, "deepscan.requests": 1 + r.chain.length, "deepscan.external_links_seen": external });
+        for (const { x, type } of resources) {
+          if (!x || !snap.scope.hosts.includes(x.hostname)) continue; // third-party resources are not ours to probe
+          if (plan.count.RESOURCE >= snap.limits.maxPages * 5) break;
+          plan.add(x, "RESOURCE", "CRAWL", row.depth + 1, referrer, false, type);
+        }
+        // one statement: frontier rows, scan progress (incl. dropped / discovered), usage
+        const [keys, values] = usageArrays({ "deepscan.pages": state === "SKIPPED" ? 0 : 1, "deepscan.bytes": r.bytes, "deepscan.requests": 1 + r.chain.length, "deepscan.external_links_seen": external });
+        await tx.$queryRawUnsafe(`
+          WITH ins AS (${FRONTIER_UPSERT}),
+          scan AS (
+            UPDATE deep_scans SET pages_completed = pages_completed + $14::int, pages_failed = pages_failed + $15::int, pages_skipped = pages_skipped + $16::int,
+                   pages_discovered = pages_discovered + (SELECT count(*)::int FROM ins WHERE inserted AND kind = 'PAGE' AND source = 'CRAWL'),
+                   pages_dropped = pages_dropped + $17::int, requests = $18::int, bytes = bytes + $19::bigint, updated_at = now()
+             WHERE execution_id = $1::uuid RETURNING 1),
+          usage AS (${usageUpsert(20, 21)})
+          SELECT count(*)::int AS n FROM ins`,
+          ctx.executionId, ctx.orgId, ctx.websiteId, ...plan.arrays(),
+          state === "DONE" ? 1 : 0, state === "FAILED" ? 1 : 0, state === "SKIPPED" ? 1 : 0, dropped, requests, r.bytes, keys, values);
       });
       return state === "SKIPPED" ? "SKIPPED" : "DONE";
+    }
+
+    /** The probe URL of each distinct GET search form that can be submitted without JavaScript, in page order. */
+    function searchProbes(forms: HtmlForm[], base: URL): URL[] {
+      const out: URL[] = [];
+      for (const fm of forms) {
+        if (!fm.search || fm.method !== "GET" || !fm.queryField) continue;
+        const target = normalizeUrl(fm.action?.trim() ? fm.action : base.href, base, snap.norm);
+        if (!target || scopeDecision(target, snap.scope) !== "OK") continue;
+        target.searchParams.set(fm.queryField, SEARCH_PROBE_TERM);
+        const probe = normalizeUrl(target.href, null, snap.norm);
+        if (!probe || probe.searchParams.get(fm.queryField) !== SEARCH_PROBE_TERM) continue; // query params ignored by config
+        out.push(probe);
+      }
+      return out;
     }
 
     async function checkResource(row: { id: bigint; url: string; kind: string }): Promise<"DONE" | "INFRA"> {
@@ -473,62 +510,34 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       const r = await guardedFetch(u, { method: "HEAD", readBody: false });
       if (r.error && INFRA.has(r.error)) return "INFRA";
       const state = r.error ? (/^BLOCKED_/.test(r.error) ? "SKIPPED" : "FAILED") : r.status !== null && r.status >= 400 ? "FAILED" : "DONE";
-      await withSystem(d.db, async (tx) => {
-        const [won] = await tx.$queryRaw<Array<{ id: bigint }>>`
+      const [keys, values] = usageArrays({ "deepscan.resources": 1, "deepscan.requests": 1 });
+      // one statement: the result, scan progress and usage, all guarded by the QUEUED → checked transition
+      await withSystem(d.db, (tx) => tx.$queryRaw`
+        WITH won AS (
           UPDATE deep_scan_urls SET state = ${state}, status_code = ${r.status}, final_url = ${displayUrl(r.finalUrl)}, content_type = ${r.contentType?.slice(0, 100) ?? null},
                  bytes = ${r.bytes}, duration_ms = ${r.durationMs}, error = ${r.error}, skip_reason = ${state === "SKIPPED" ? r.error : null}, checked_at = now()
-           WHERE id = ${row.id} AND state = 'QUEUED' RETURNING id`;
-        if (!won) return;
-        await tx.$executeRaw`UPDATE deep_scans SET resources_checked = resources_checked + 1, requests = ${requests}, updated_at = now() WHERE execution_id = ${ctx.executionId}::uuid`;
-        await addUsage(tx, ctx.orgId, { "deepscan.resources": 1, "deepscan.requests": 1 });
-      });
+           WHERE id = ${row.id} AND state = 'QUEUED' RETURNING id),
+        scan AS (
+          UPDATE deep_scans SET resources_checked = resources_checked + 1, requests = ${requests}, updated_at = now()
+           WHERE execution_id = ${ctx.executionId}::uuid AND EXISTS (SELECT 1 FROM won) RETURNING 1),
+        usage AS (
+          INSERT INTO usage_counters (org_id, period_start, key, value, updated_at)
+          SELECT ${ctx.orgId}::uuid, (now() AT TIME ZONE 'UTC')::date, k, v, now() FROM unnest(${keys}::text[], ${values}::bigint[]) AS u(k, v)
+           WHERE EXISTS (SELECT 1 FROM won)
+          ON CONFLICT (org_id, period_start, key) DO UPDATE SET value = usage_counters.value + EXCLUDED.value, updated_at = now())
+        SELECT count(*)::int AS won FROM won`);
       return "DONE";
     }
 
     // ---- frontier SQL (all scoped to this execution)
-    async function insertUrl(tx: Tx, u: URL, kind: string, source: string, depth: number, referrer: string | null, inSitemap: boolean, resourceType: string | null = null): Promise<boolean> {
-      const [r] = await tx.$queryRaw<Array<{ inserted: boolean }>>`
-        INSERT INTO deep_scan_urls (execution_id, org_id, website_id, url_hash, url, kind, resource_type, depth, source, in_sitemap, referrers, first_referrer, facts)
-        VALUES (${ctx.executionId}::uuid, ${ctx.orgId}::uuid, ${ctx.websiteId}::uuid, ${sha(u.href)}, ${u.href}, ${kind}, ${resourceType}, ${depth}, ${source}, ${inSitemap},
-                ${referrer ? 1 : 0}, ${referrer}, ${JSON.stringify({ template: pathTemplate(u) })}::jsonb)
-        ON CONFLICT (execution_id, url_hash) DO UPDATE
-          SET referrers = LEAST(deep_scan_urls.referrers + EXCLUDED.referrers, 1000000),
-              in_sitemap = deep_scan_urls.in_sitemap OR EXCLUDED.in_sitemap,
-              first_referrer = coalesce(deep_scan_urls.first_referrer, EXCLUDED.first_referrer)
-        RETURNING (xmax = 0) AS inserted`;
-      return Boolean(r?.inserted);
-    }
-    async function isNew(tx: Tx, u: URL) {
-      const [r] = await tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND url_hash = ${sha(u.href)}`;
-      return r!.n === 0;
-    }
-    async function pageCount(tx: Tx) {
-      const [r] = await tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE'`;
-      return r!.n;
-    }
-    async function countKind(tx: Tx, kind: string) {
-      const [r] = await tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = ${kind}`;
-      return r!.n;
-    }
-    /** crawler-trap guard: bounded URLs per numeric path template and per path's query variants */
-    async function trapped(tx: Tx, u: URL) {
-      const [r] = await tx.$queryRaw<Array<{ tpl: number; q: number }>>`
-        SELECT count(*) FILTER (WHERE facts ->> 'template' = ${pathTemplate(u)})::int AS tpl,
-               count(*) FILTER (WHERE split_part(url, '?', 1) = ${`${u.origin}${u.pathname}`})::int AS q
-          FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE'`;
-      const trap = r!.tpl >= PER_TEMPLATE_CAP || (u.search && r!.q >= PER_PATH_QUERY_CAP);
-      if (trap && (await isNew(tx, u))) await bumpDropped(tx, 1);
-      return Boolean(trap);
-    }
-    async function bumpDropped(tx: Tx, n: number) {
-      await tx.$executeRaw`UPDATE deep_scans SET pages_dropped = pages_dropped + ${n}, updated_at = now() WHERE execution_id = ${ctx.executionId}::uuid`;
-    }
-    async function bumpSkipped(tx: Tx, n: number) {
-      await tx.$executeRaw`UPDATE deep_scans SET pages_skipped = pages_skipped + ${n}, updated_at = now() WHERE execution_id = ${ctx.executionId}::uuid`;
+    /** Write a plan (no other effect); for discovery paths that run once per scan. */
+    async function writePlan(tx: Tx, plan: FrontierPlan) {
+      if (plan.rows.size) await tx.$queryRawUnsafe(`WITH ins AS (${FRONTIER_UPSERT}) SELECT count(*)::int AS n FROM ins`, ctx.executionId, ctx.orgId, ctx.websiteId, ...plan.arrays());
     }
     async function markSkipped(tx: Tx, id: bigint, reason: string) {
-      const n = await tx.$executeRaw`UPDATE deep_scan_urls SET state = 'SKIPPED', skip_reason = ${reason}, checked_at = now() WHERE id = ${id} AND state = 'QUEUED'`;
-      if (n) await bumpSkipped(tx, 1);
+      await tx.$queryRaw`
+        WITH s AS (UPDATE deep_scan_urls SET state = 'SKIPPED', skip_reason = ${reason}, checked_at = now() WHERE id = ${id} AND state = 'QUEUED' RETURNING 1)
+        UPDATE deep_scans SET pages_skipped = pages_skipped + 1, updated_at = now() WHERE execution_id = ${ctx.executionId}::uuid AND EXISTS (SELECT 1 FROM s) RETURNING 1`;
     }
   };
 
@@ -592,10 +601,4 @@ async function withSystemLong<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T>
     await tx.$queryRaw`SELECT set_config('app.system', 'on', true)`;
     return fn(tx);
   }, { timeout: 300_000, maxWait: 30_000 });
-}
-
-async function pagesLeftToday(tx: Tx, orgId: string, perDay: number): Promise<number> {
-  const [r] = await tx.$queryRaw<Array<{ v: bigint | null }>>`
-    SELECT value AS v FROM usage_counters WHERE org_id = ${orgId}::uuid AND period_start = (now() AT TIME ZONE 'UTC')::date AND key = 'deepscan.pages'`;
-  return perDay - Number(r?.v ?? 0);
 }

@@ -74,7 +74,8 @@ describe("installation verification via heartbeats", () => {
     }
     const det = await detail(o.client, o.orgId, w.id);
     expect(det.installation).toBe("INVALID_CONFIGURATION");
-    expect(det.install).toMatchObject({ pageLoads: 0, lastSeenAt: null, lastInvalidReason: "ORIGIN_MISMATCH" });
+    // the last spoofing request had no Origin at all: recorded separately (bot / tool), still never counted
+    expect(det.install).toMatchObject({ pageLoads: 0, lastSeenAt: null, lastInvalidReason: "ORIGIN_MISSING" });
     // A subdomain is a different website identity.
     const sub = await sdkCollect(h, heartbeat(w.install.siteKey), `https://shop.${d}`);
     expect(sub).toBe(204);

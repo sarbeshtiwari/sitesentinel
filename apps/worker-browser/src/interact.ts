@@ -56,10 +56,10 @@ export async function installGuard(ctx: BrowserContext, firstParty: (u: string) 
 }
 
 /** Read-only detection + layout facts for one viewport (no interaction). */
-export async function detectAndInspect(page: Page, detect: boolean): Promise<{ components: DetectedComponent[]; layout: LayoutFacts | null }> {
+export async function detectAndInspect(page: Page, detect: boolean): Promise<{ components: DetectedComponent[]; layout: LayoutFacts | null; coveredByOverlay: number }> {
   const components = detect ? dedupeComponents(sanitizeDetected(await page.evaluate(detectComponents, 250).catch(() => null))) : [];
   const raw = (await page.evaluate(inspectLayout).catch(() => null)) as Record<string, unknown> | null;
-  if (!raw) return { components, layout: null };
+  if (!raw) return { components, layout: null, coveredByOverlay: 0 };
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0);
   const nav = String(raw.navState);
   const layout: LayoutFacts = {
@@ -68,7 +68,7 @@ export async function detectAndInspect(page: Page, detect: boolean): Promise<{ c
     navState: (["VISIBLE", "MISSING", "NONE"].includes(nav) ? nav : "NONE") as LayoutFacts["navState"], // TOGGLE: resolved by clicking it (resolveNavToggle)
     samples: Array.isArray(raw.samples) ? (raw.samples as Array<{ issue: unknown; selector: unknown }>).slice(0, 20).map((s) => ({ issue: String(s.issue).slice(0, 80), selector: String(s.selector).slice(0, 120) })) : [],
   };
-  return { components, layout: Object.assign(layout, { pendingToggle: nav === "TOGGLE" }) };
+  return { components, layout: Object.assign(layout, { pendingToggle: nav === "TOGGLE" }), coveredByOverlay: n(raw.coveredByOverlay) };
 }
 
 interface Ctx {
@@ -80,6 +80,8 @@ interface Ctx {
   firstParty: (u: string) => boolean;
   /** Phase 4H destination policy (empty = whole site) */
   allowedPaths: readonly string[];
+  /** close the popup again after the start page was reloaded (same safe procedure as after the first load) */
+  redismiss?: () => Promise<void>;
 }
 
 /** Time left for one more interaction, or null if the budget is spent. */
@@ -125,7 +127,9 @@ async function backTo(c: Ctx): Promise<true | "budget" | "failed"> {
   if (c.page.url() === c.url) return true;
   const t = left(c, 2000);
   if (t === null) return "budget";
-  return c.page.goto(c.url, { timeout: t, waitUntil: "load" }).then(() => true as const, () => "failed" as const);
+  const ok = await c.page.goto(c.url, { timeout: t, waitUntil: "load" }).then(() => true as const, () => "failed" as const);
+  if (ok === true && c.redismiss) await c.redismiss().catch(() => undefined);
+  return ok;
 }
 /** The outcome of a test that couldn't start because returning to the start page didn't work. */
 const notStarted = (b: "budget" | "failed") => (b === "budget" ? { outcome: "SKIPPED" as const, reason: "TIME_BUDGET" } : { outcome: "INCONCLUSIVE" as const, reason: "PAGE_RELOAD_FAILED" });
@@ -180,8 +184,8 @@ export async function resolveNavToggle(page: Page, viewport: string, deadline: n
   }
 }
 
-export async function runFunctionalTests(page: Page, opts: { url: string; viewport: string; deadline: number; cfg: FunctionalConfig; components: DetectedComponent[]; guard: GuardLog; firstParty: (u: string) => boolean }): Promise<FunctionalResult[]> {
-  const c: Ctx = { page, url: page.url() || opts.url, viewport: opts.viewport, deadline: Math.min(opts.deadline, Date.now() + opts.cfg.budgetMs), guard: opts.guard, firstParty: opts.firstParty, allowedPaths: opts.cfg.allowedPaths };
+export async function runFunctionalTests(page: Page, opts: { url: string; viewport: string; deadline: number; cfg: FunctionalConfig; components: DetectedComponent[]; guard: GuardLog; firstParty: (u: string) => boolean; redismiss?: () => Promise<void> }): Promise<FunctionalResult[]> {
+  const c: Ctx = { page, url: page.url() || opts.url, viewport: opts.viewport, deadline: Math.min(opts.deadline, Date.now() + opts.cfg.budgetMs), guard: opts.guard, firstParty: opts.firstParty, allowedPaths: opts.cfg.allowedPaths, redismiss: opts.redismiss };
   const out: FunctionalResult[] = [];
   const errors: string[] = [];
   const onErr = (e: Error) => { if (errors.length < 50) errors.push(e.message.slice(0, 200)); };

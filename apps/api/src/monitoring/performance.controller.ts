@@ -2,7 +2,7 @@ import { Body, Controller, Get, Inject, Injectable, Param, Put, Query } from "@n
 import { z } from "zod";
 import {
   BrowserCheckConfig, classifyPerf, compareWindows, DEFAULT_ALERT_ON, effectivePerfThresholds, histPercentile, mergeHistograms, MIN_SAMPLES,
-  PERF_METRICS, PerformanceConfig, worstPerfStatus,
+  PAGE_SCORE_FORMULA, PAGE_SCORE_PENALTY, PERF_METRICS, PerformanceConfig, worstPerfStatus,
   type Histogram, type PerfMetric, type PerfStatus, type PerfThresholdSet, type SettingsSnapshot,
 } from "@wim/core";
 import { withMember, type Db, type Tx } from "@wim/db";
@@ -14,6 +14,7 @@ import { AuditService, orgStream } from "../audit/audit.service.js";
 import { AppError, Errors } from "../common/errors.js";
 import { Client, CurrentOrg, CurrentSession, parse, RequirePermission, type ClientInfo, type OrgContext, type SessionContext } from "../common/context.js";
 import { rangeOf } from "./range.js";
+import { inventorySummary, loadPageInventory, pageFacts, pageFindingDto, pathOf, queryInventory, type PageSort } from "./page-inventory.js";
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 const n = (v: unknown) => (v == null ? 0 : Number(v));
@@ -284,7 +285,13 @@ export class PerformanceService {
   }
 
   // ------------------------------------------------------------------ pages
-  async pages(s: SessionContext, o: OrgContext, websiteId: string, q: { cursor?: string; limit: number; search?: string }) {
+  /**
+   * Every page of the website (see page-inventory.ts): discovered pages ∪ page URLs of the latest deep scan(s) that no
+   * scan has fetched yet / that failed / were skipped, each with its score, open findings by severity and group, check
+   * state, and — for the browser-monitored page — LCP, components and responsive. Offset pagination (the inventory is
+   * bounded by the scan page limits); filters, search and sort are applied server-side before slicing.
+   */
+  async pages(s: SessionContext, o: OrgContext, websiteId: string, q: z.infer<typeof PagesQuery>) {
     const st = await this.settings.get();
     return this.member(s, o, async (tx) => {
       await this.website(tx, o.orgId, websiteId);
@@ -292,57 +299,76 @@ export class PerformanceService {
       const cfgRow = await tx.monitoringConfiguration.findUnique({ where: { websiteId }, select: { browserCheck: true } });
       const browserPath = BrowserCheckConfig.safeParse(cfgRow?.browserCheck ?? {}).data?.path ?? "/";
       const browserOn = (await tx.monitoringSchedule.findFirst({ where: { websiteId, tier: "T2_RENDER", apiEndpointId: null, status: "ACTIVE" }, select: { id: true } })) !== null;
-      const rows = await tx.$queryRaw<Array<Record<string, any>>>`
-        SELECT d.id, d.url, d.url_hash, d.status::text AS status, d.title, d.source, d.depth, d.first_seen_at, d.last_seen_at, m.id AS monitored_id, m.last_result_at
-          FROM discovered_pages d LEFT JOIN monitored_pages m ON m.discovered_page_id = d.id
-         WHERE d.website_id = ${websiteId}::uuid AND d.status <> 'REMOVED' -- pages no longer found by complete scans
-           AND (${q.search ?? null}::text IS NULL OR d.url ILIKE '%' || ${q.search ?? null} || '%')
-           AND (${q.cursor ?? null}::text IS NULL OR d.url > ${q.cursor ?? null})
-         ORDER BY d.url LIMIT ${q.limit + 1}`;
-      const page = rows.slice(0, q.limit);
-      const urls = page.map((r) => r.url as string);
-      const mids = page.map((r) => r.monitored_id).filter(Boolean) as string[];
-      // latest deep-scan state per URL (latest scan only), open findings per URL, components and responsive per monitored page
-      const scan = await tx.$queryRaw<Array<{ url: string; state: string; status_code: number | null; checked_at: Date | null; execution_id: string }>>`
-        SELECT DISTINCT ON (u.url) u.url, u.state, u.status_code, u.checked_at, u.execution_id FROM deep_scan_urls u
-         WHERE u.website_id = ${websiteId}::uuid AND u.kind = 'PAGE' AND u.url = ANY(${urls}::text[]) ORDER BY u.url, u.id DESC`;
-      const findings = await tx.$queryRaw<Array<{ subject: string; n: bigint }>>`
-        SELECT subject, count(*) AS n FROM scan_findings WHERE website_id = ${websiteId}::uuid AND status = 'OPEN' AND subject = ANY(${urls}::text[]) GROUP BY 1`;
-      const comps = await tx.$queryRaw<Array<{ monitored_page_id: string; n: bigint; changes: bigint }>>`
+      const inv = await loadPageInventory(tx, websiteId);
+      const [sort, dir] = (q.sort ?? "path:asc").split(":") as [PageSort, "asc" | "desc" | undefined];
+      const { total, pages, slice } = queryInventory(inv.rows, { filter: q.filter, search: q.search, sort, dir: dir ?? (sort === "path" ? "asc" : "desc"), page: q.page, pageSize: q.pageSize });
+      const mids = slice.map((r) => r.monitoredId).filter(Boolean) as string[];
+      const comps = mids.length ? await tx.$queryRaw<Array<{ monitored_page_id: string; n: bigint; changes: bigint }>>`
         SELECT c.monitored_page_id, count(*) FILTER (WHERE c.status = 'PRESENT') AS n,
                (SELECT count(*) FROM component_events e JOIN page_components c2 ON c2.id = e.page_component_id WHERE c2.monitored_page_id = c.monitored_page_id AND e.created_at > now() - interval '7 days') AS changes
-          FROM page_components c WHERE c.monitored_page_id = ANY(${mids}::uuid[]) GROUP BY 1`;
-      const resp = await tx.$queryRaw<Array<{ monitored_page_id: string; failed: bigint; total: bigint }>>`
+          FROM page_components c WHERE c.monitored_page_id = ANY(${mids}::uuid[]) GROUP BY 1` : [];
+      const resp = mids.length ? await tx.$queryRaw<Array<{ monitored_page_id: string; failed: bigint; total: bigint }>>`
         SELECT DISTINCT ON (r.monitored_page_id) r.monitored_page_id,
                (SELECT count(*) FROM responsive_test_results x WHERE x.execution_id = r.execution_id AND x.status = 'FAILED') AS failed,
                (SELECT count(*) FROM responsive_test_results x WHERE x.execution_id = r.execution_id) AS total
           FROM responsive_test_results r WHERE r.website_id = ${websiteId}::uuid AND r.monitored_page_id = ANY(${mids}::uuid[]) AND r.tested_at > now() - interval '62 days'
-         ORDER BY r.monitored_page_id, r.tested_at DESC`;
+         ORDER BY r.monitored_page_id, r.tested_at DESC` : [];
       const since = new Date(Date.now() - 86_400_000);
       const perf = mids.length ? await this.rollups(tx, { orgId: o.orgId, websiteIds: [websiteId], subjectType: "PAGE", metricPrefix: `perf.lcp.${t.primaryViewport}`, from: since, to: new Date(), grain: "hour" }) : [];
       const by = <T extends Record<string, any>>(list: T[], k: keyof T) => new Map(list.map((x) => [x[k] as string, x]));
-      const scanBy = by(scan, "url"), fBy = by(findings, "subject"), cBy = by(comps, "monitored_page_id"), rBy = by(resp, "monitored_page_id");
+      const cBy = by(comps, "monitored_page_id"), rBy = by(resp, "monitored_page_id");
+      const latest = inv.latestScan;
       return {
-        data: page.map((r) => {
-          const mid = r.monitored_id as string | null;
+        data: slice.map((r) => {
+          const mid = r.monitoredId;
           const a = emptyAgg();
           for (const x of perf) if (x.subjectId === mid) addRow(a, x);
           const sa = stats("lcp", a);
-          const sc = scanBy.get(r.url), rr = mid ? rBy.get(mid) : undefined;
+          const rr = mid ? rBy.get(mid) : undefined;
           return {
-            id: r.id, url: r.url, path: pathOf(r.url), title: r.title, status: r.status, source: r.source, depth: r.depth,
-            firstSeenAt: iso(r.first_seen_at), lastSeenAt: iso(r.last_seen_at),
+            ...pageFacts(r),
             // scope: only the configured browser path is browser-monitored; other pages are covered by deep scans only
-            monitoring: { browser: Boolean(mid) && browserOn && pathOf(r.url) === browserPath, deepScan: Boolean(sc), monitoredPageId: mid },
-            deepScan: sc ? { state: sc.state, httpStatus: sc.status_code, checkedAt: iso(sc.checked_at), executionId: sc.execution_id } : null,
-            openFindings: n(fBy.get(r.url)?.n),
-            browser: mid ? { lastResultAt: iso(r.last_result_at), lcpP75_24h: sa.p75, lcpSamples_24h: sa.samples, lcpStatus: sa.sufficient ? classifyPerf(sa.p75, t.thresholds.lcp) : "INSUFFICIENT_DATA" } : null,
+            monitoring: { browser: Boolean(mid) && browserOn && pathOf(r.url) === browserPath, deepScan: r.scanState !== null || r.lastExecutionId !== null, monitoredPageId: mid },
+            browser: mid ? { lastResultAt: r.monitoredLastResultAt, lcpP75_24h: sa.p75, lcpSamples_24h: sa.samples, lcpStatus: sa.sufficient ? classifyPerf(sa.p75, t.thresholds.lcp) : "INSUFFICIENT_DATA" } : null,
             components: mid ? { present: n(cBy.get(mid)?.n), changes7d: n(cBy.get(mid)?.changes) } : null,
             responsive: rr ? { failedViewports: n(rr.failed), viewports: n(rr.total) } : null,
           };
         }),
-        nextCursor: rows.length > q.limit ? page[page.length - 1]!.url : null,
-        scope: { browserPath, browserMonitoring: browserOn, note: "Browser checks (performance, components, responsive) run on the configured browser path only; other discovered pages are covered by deep scans." },
+        total, page: q.page, pageSize: q.pageSize, pages,
+        summary: inventorySummary(inv.rows),
+        latestScan: latest ? { ...latest, partial: latest.status !== "COMPLETED", notChecked: inv.rows.filter((r) => r.state === "NOT_CHECKED").length } : null,
+        runningScan: inv.runningScan,
+        scoreFormula: PAGE_SCORE_FORMULA,
+        scope: { browserPath, browserMonitoring: browserOn, note: "Browser checks (performance, components, responsive) run on the configured browser path only; other pages are covered by deep scans." },
+      };
+    });
+  }
+
+  /** One page: facts, score breakdown, OPEN findings with how to fix, findings resolved in the last 30 days. 404 unless the page belongs to this website. */
+  async pageDetail(s: SessionContext, o: OrgContext, websiteId: string, pageId: string) {
+    return this.member(s, o, async (tx) => {
+      const w = await this.website(tx, o.orgId, websiteId);
+      const inv = await loadPageInventory(tx, websiteId);
+      const hash = pageId.startsWith("url-") ? pageId.slice(4) : null;
+      const r = inv.rows.find((x) => (hash ? x.urlHash === hash : x.id === pageId));
+      if (!r) throw Errors.notFound();
+      const cols = { id: true, category: true, groupKey: true, severity: true, status: true, subject: true, title: true, evidence: true, recommendation: true, detectionMethod: true, occurrenceCount: true, reopenCount: true, firstDetectedAt: true, lastDetectedAt: true, resolvedAt: true } as const;
+      const rank = (sv: string) => ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"].indexOf(sv);
+      const open = (await tx.scanFinding.findMany({ where: { websiteId, subject: r.url, status: "OPEN" }, select: cols, orderBy: { lastDetectedAt: "desc" }, take: 500 }))
+        .sort((a, b) => rank(a.severity) - rank(b.severity));
+      const resolved = await tx.scanFinding.findMany({ where: { websiteId, subject: r.url, status: "RESOLVED", resolvedAt: { gte: new Date(Date.now() - 30 * 86_400_000) } }, select: cols, orderBy: { resolvedAt: "desc" }, take: 100 });
+      // site-wide findings naming this page in their evidence (duplicate titles / descriptions / content): shown, not scored
+      const related = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM scan_findings WHERE website_id = ${websiteId}::uuid AND status = 'OPEN' AND subject = 'site' AND evidence -> 'pages' ? ${r.url} LIMIT 50`;
+      const siteWide = related.length ? await tx.scanFinding.findMany({ where: { websiteId, id: { in: related.map((x) => x.id) } }, select: cols }) : [];
+      return {
+        ...pageFacts(r),
+        websiteOrigin: w.canonicalOrigin,
+        score: { value: r.score.score, band: r.score.band, basis: r.score.basis, penalty: r.score.penalty, bySeverity: r.score.bySeverity, penalties: PAGE_SCORE_PENALTY, formula: PAGE_SCORE_FORMULA },
+        findings: open.map(pageFindingDto),
+        resolvedFindings: resolved.map(pageFindingDto),
+        siteWideFindings: siteWide.map(pageFindingDto),
+        latestScan: inv.latestScan,
       };
     });
   }
@@ -450,10 +476,18 @@ function dtoResponsive(x: Record<string, any>) {
     executionId: x.execution_id ?? null, at: x.tested_at ? new Date(x.tested_at).toISOString() : null,
   };
 }
-function pathOf(url: string) { try { const u = new URL(url); return `${u.pathname}${u.search}`; } catch { return url; } }
 
 const id = (v: string) => parse(Uuid, v);
-const PagesQuery = z.object({ cursor: z.string().max(2048).optional(), search: z.string().min(1).max(100).optional(), limit: z.coerce.number().int().min(1).max(200).default(50) }).strict();
+const PagesQuery = z.object({
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce.number().int().refine((v) => [10, 25, 50, 100].includes(v), "pageSize must be 10, 25, 50 or 100").default(25),
+  search: z.string().min(1).max(100).optional(),
+  /** `path` | `score` | `findings`, optionally `:asc` / `:desc` (default asc for path, desc otherwise) */
+  sort: z.string().regex(/^(path|score|findings)(:(asc|desc))?$/).optional(),
+  filter: z.enum(["all", "with_findings", "not_checked", "failed", "skipped"]).default("all"),
+}).strict();
+/** discovered page id (uuid) or `url-<sha256 of the normalised URL>` for a URL no scan has fetched as a page yet */
+const PageId = z.union([z.uuid(), z.string().regex(/^url-[0-9a-f]{64}$/)]);
 const SinceQuery = z.object({ since: z.iso.datetime() }).strict();
 
 @Controller("api/v1/orgs/:orgId/websites/:websiteId")
@@ -494,6 +528,12 @@ export class PerformanceController {
   @RequirePermission("website:read")
   async pages(@CurrentSession() s: SessionContext, @CurrentOrg() o: OrgContext, @Param("websiteId") w: string, @Query() q: unknown) {
     return this.p.pages(s, o, id(w), parse(PagesQuery, q));
+  }
+
+  @Get("pages/:pageId")
+  @RequirePermission("website:read")
+  async page(@CurrentSession() s: SessionContext, @CurrentOrg() o: OrgContext, @Param("websiteId") w: string, @Param("pageId") pg: string) {
+    return { data: await this.p.pageDetail(s, o, id(w), parse(PageId, pg)) };
   }
 
   @Get("components/changes")

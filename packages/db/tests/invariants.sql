@@ -339,6 +339,24 @@ BEGIN
   RAISE NOTICE 'PASS wim_scanner least-privilege';
 END $$;
 
+-- 1i. Views run with the owner's privileges (they bypass RLS): no tenant/worker runtime role may hold any view,
+-- also after the idempotent SQL layer has been re-applied (every deploy re-runs 050_grants.sql's "ALL TABLES" grants)
+DO $$
+DECLARE v record; r text;
+BEGIN
+  FOR v IN SELECT c.oid, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind IN ('v', 'm')
+              -- extension views (pg_stat_statements) keep the extension's own PUBLIC grant; ours never do
+              AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') LOOP
+    FOREACH r IN ARRAY ARRAY['wim_app', 'wim_worker', 'wim_browser', 'wim_scanner', 'wim_ingest'] LOOP
+      ASSERT NOT (has_table_privilege(r, v.oid, 'SELECT') OR has_table_privilege(r, v.oid, 'INSERT')
+               OR has_table_privilege(r, v.oid, 'UPDATE') OR has_table_privilege(r, v.oid, 'DELETE')),
+        format('%s holds privileges on view %s (owner-privileged views bypass RLS)', r, v.relname);
+    END LOOP;
+  END LOOP;
+  RAISE NOTICE 'PASS no runtime tenant/worker role holds an owner-privileged view';
+END $$;
+
 -- 2. Rule #1: a domain can never hold two live claims (even across tenants) ----
 DO $$ BEGIN
   BEGIN

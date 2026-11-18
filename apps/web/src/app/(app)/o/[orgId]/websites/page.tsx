@@ -1,6 +1,6 @@
 "use client";
 import type { WebsiteSummaryDto } from "@wim/contracts";
-import { Alert, Badge, buttonVariants, DropdownItem, DropdownMenu, EmptyState, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR } from "@wim/ui";
+import { Badge, buttonVariants, DropdownItem, DropdownMenu, EmptyState, ErrorState, PageHeader, Skeleton, Table, TBody, TD, TH, THead, TR } from "@wim/ui";
 import { ArrowLeftRight, Globe, MoreHorizontal, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -37,7 +37,7 @@ export default function WebsitesPage() {
           {write && <Link href={`${base}/new`} className={buttonVariants({ size: "sm" })}><Plus /> Add website</Link>}
         </>}
       />
-      {sites.isLoading ? <div role="status" aria-label="Loading"><Skeleton className="h-64" /></div> : sites.isError ? <Alert tone="danger" title={errorMessage(sites.error)} /> : !sites.data?.length ? (
+      {sites.isLoading ? <div role="status" aria-label="Loading"><Skeleton className="h-64" /></div> : sites.isError ? <ErrorState title="Couldn't load websites" description={errorMessage(sites.error)} onRetry={() => void sites.refetch()} /> : !sites.data?.length ? (
         <EmptyState
           icon={<Globe />}
           title="No websites yet"

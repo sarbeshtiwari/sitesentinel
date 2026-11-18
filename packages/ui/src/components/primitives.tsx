@@ -15,11 +15,11 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-primary text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary)_88%,black)] active:bg-[color-mix(in_srgb,var(--primary)_80%,black)]",
+        primary: "bg-primary-solid text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary-solid)_88%,black)] active:bg-[color-mix(in_srgb,var(--primary-solid)_80%,black)]",
         secondary: "bg-muted text-foreground hover:bg-[color-mix(in_srgb,var(--muted)_70%,var(--border-strong))]",
         outline: "border border-border-strong bg-card text-foreground shadow-xs hover:bg-sunken",
         ghost: "text-foreground hover:bg-muted",
-        danger: "bg-danger text-danger-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--danger)_88%,black)]",
+        danger: "bg-danger-solid text-danger-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--danger-solid)_88%,black)]",
         link: "text-primary underline-offset-4 hover:underline px-0 h-auto",
       },
       size: { sm: "h-8 px-3 text-[13px] [&_svg]:h-3.5 [&_svg]:w-3.5", md: "h-9 px-4 [&_svg]:h-4 [&_svg]:w-4", lg: "h-10 px-5 [&_svg]:h-4 [&_svg]:w-4", icon: "h-9 w-9 [&_svg]:h-4 [&_svg]:w-4" },
@@ -124,10 +124,10 @@ const badgeVariants = cva("inline-flex items-center gap-1 whitespace-nowrap roun
     tone: {
       neutral: "bg-muted text-muted-foreground ring-border",
       brand: "bg-primary-soft text-primary ring-[color-mix(in_srgb,var(--primary)_22%,transparent)]",
-      success: "bg-[color-mix(in_srgb,var(--success)_11%,transparent)] text-success ring-[color-mix(in_srgb,var(--success)_24%,transparent)]",
-      warning: "bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-warning ring-[color-mix(in_srgb,var(--warning)_26%,transparent)]",
-      danger: "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] text-danger ring-[color-mix(in_srgb,var(--danger)_24%,transparent)]",
-      info: "bg-[color-mix(in_srgb,var(--info)_11%,transparent)] text-info ring-[color-mix(in_srgb,var(--info)_24%,transparent)]",
+      success: "bg-[color-mix(in_srgb,var(--success)_11%,transparent)] text-success-text ring-[color-mix(in_srgb,var(--success)_24%,transparent)]",
+      warning: "bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-warning-text ring-[color-mix(in_srgb,var(--warning)_26%,transparent)]",
+      danger: "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)] text-danger-text ring-[color-mix(in_srgb,var(--danger)_24%,transparent)]",
+      info: "bg-[color-mix(in_srgb,var(--info)_11%,transparent)] text-info-text ring-[color-mix(in_srgb,var(--info)_24%,transparent)]",
     },
   },
   defaultVariants: { tone: "neutral" },
@@ -341,14 +341,37 @@ export function FilterBar({ children, className, trailing }: { children: React.R
   );
 }
 
-/** Cursor pagination: previous/next with an optional position label. */
-export function Pagination({ onPrev, onNext, hasPrev, hasNext, label, className }: { onPrev?: () => void; onNext?: () => void; hasPrev?: boolean; hasNext?: boolean; label?: React.ReactNode; className?: string }) {
+/**
+ * Pagination. Cursor mode: previous/next with an optional position label. Numbered mode (pass `page`, `pages` and
+ * `onPage`): previous / numbered pages (first, last and a window around the current one, gaps shown as …) / next.
+ * `trailing` sits before the buttons (e.g. a page-size select).
+ */
+export function Pagination({ onPrev, onNext, hasPrev, hasNext, label, className, page, pages, onPage, trailing }: {
+  onPrev?: () => void; onNext?: () => void; hasPrev?: boolean; hasNext?: boolean; label?: React.ReactNode; className?: string;
+  page?: number; pages?: number; onPage?: (page: number) => void; trailing?: React.ReactNode;
+}) {
+  const numbered = page !== undefined && pages !== undefined && onPage !== undefined;
+  const prev = numbered ? () => onPage!(page! - 1) : onPrev;
+  const next = numbered ? () => onPage!(page! + 1) : onNext;
+  const canPrev = numbered ? page! > 1 : hasPrev;
+  const canNext = numbered ? page! < pages! : hasNext;
+  const items: Array<number | "gap"> = [];
+  if (numbered) {
+    for (let i = 1; i <= pages!; i++) {
+      if (i === 1 || i === pages || Math.abs(i - page!) <= 1) items.push(i);
+      else if (items[items.length - 1] !== "gap") items.push("gap");
+    }
+  }
   return (
-    <nav aria-label="Pagination" className={cn("flex items-center justify-between gap-2 pt-3", className)}>
+    <nav aria-label="Pagination" className={cn("flex flex-wrap items-center justify-between gap-2 pt-3", className)}>
       <span className="text-xs text-muted-foreground">{label}</span>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" disabled={!hasPrev} onClick={onPrev}><ChevronLeft /> Previous</Button>
-        <Button variant="outline" size="sm" disabled={!hasNext} onClick={onNext}>Next <ChevronRight /></Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {trailing}
+        <Button variant="outline" size="sm" disabled={!canPrev} onClick={prev} aria-label={numbered ? "Previous page" : undefined}><ChevronLeft /> <span className={numbered ? "hidden sm:inline" : undefined}>Previous</span></Button>
+        {numbered && items.map((it, i) => it === "gap"
+          ? <span key={`g${i}`} aria-hidden className="px-1 text-xs text-muted-foreground">…</span>
+          : <Button key={it} variant={it === page ? "primary" : "outline"} size="sm" className={cn("min-w-8 px-2", Math.abs(it - page!) > 0 && it !== 1 && it !== pages && "hidden sm:inline-flex")} aria-label={`Page ${it}`} aria-current={it === page ? "page" : undefined} onClick={() => it !== page && onPage!(it)}>{it}</Button>)}
+        <Button variant="outline" size="sm" disabled={!canNext} onClick={next} aria-label={numbered ? "Next page" : undefined}><span className={numbered ? "hidden sm:inline" : undefined}>Next</span> <ChevronRight /></Button>
       </div>
     </nav>
   );

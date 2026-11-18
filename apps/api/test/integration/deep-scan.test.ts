@@ -298,6 +298,26 @@ describe("security of the scanner", () => {
     env.dns.setA(s.host, ["127.0.0.1"]);
   }, 180_000);
 
+  it("a scan that reaches no page adds no occurrence to (and never reopens) an open finding-group incident", async () => {
+    const org = await newOrg();
+    const s = await deepSite(env, org, "mini");
+    await scanNow(env, [s.id]);
+    const before = (await incidentsOf(c, s.id)).map((i) => [i.id, i.occurrence_count, i.status, String(i.last_detected_at)]);
+    expect(before.length).toBeGreaterThan(0);
+    env.dns.setA(s.host, []);
+    env.dns.zone.a.delete(s.host);
+    env.dns.zone.aaaa.set(s.host, ["::ffff:10.0.0.5"]);
+    try {
+      const [scan] = await scanNow(env, [s.id]);
+      expect(scan).toMatchObject({ status: "PARTIAL", stop_reason: "NO_PAGE_REACHABLE" });
+      expect((await incidentsOf(c, s.id)).map((i) => [i.id, i.occurrence_count, i.status, String(i.last_detected_at)])).toEqual(before);
+      expect((await c.query(`SELECT count(*)::int AS n FROM incident_occurrences WHERE execution_id = $1`, [scan!.execution_id])).rows[0].n).toBe(0);
+    } finally {
+      env.dns.zone.aaaa.delete(s.host);
+      env.dns.setA(s.host, ["127.0.0.1"]);
+    }
+  }, 180_000);
+
   it("IPv4-mapped IPv6 and private AAAA answers are refused; the scan fails safely without findings", async () => {
     const org = await newOrg();
     const s = await deepSite(env, org, "mini");

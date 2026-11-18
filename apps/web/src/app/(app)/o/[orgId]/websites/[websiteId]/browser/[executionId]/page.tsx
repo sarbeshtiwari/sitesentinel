@@ -68,6 +68,8 @@ function ViewportCard({ orgId, v }: { orgId: string; v: BrowserViewportResultDto
           ["Visible text", rend.textLength ?? "—"], ["Broken images", arr(rend.brokenImages).length], ["Failed fonts", rend.failedFonts ?? 0],
           ["Failed stylesheets", rend.failedStylesheets ?? 0],
           ["Layout overflow", v.layout ? (v.layout.horizontalOverflowPx > 4 ? `${v.layout.horizontalOverflowPx} px horizontal scroll` : "None") : "—"],
+          ["Popup on load", <span key="ov" data-testid={`overlay-${v.viewport}`}>{overlayLine(v.overlay)}</span>],
+          ...(v.dialogs?.count ? [["JavaScript dialogs", <span key="dl" className="break-words">{`${v.dialogs.count} (${[...new Set(v.dialogs.items.map((d) => d.type))].join(", ") || "dialog"}) — dismissed, never accepted${v.dialogs.items[0]?.message ? `: “${v.dialogs.items[0].message}”` : ""}`}</span>] as [string, React.ReactNode]] : []),
         ]} />
         <div className="border-t border-border pt-4">
           <SubHeading>Synthetic performance <Badge tone="info" className="ml-1">Lab, not real users</Badge></SubHeading>
@@ -93,6 +95,13 @@ function ViewportCard({ orgId, v }: { orgId: string; v: BrowserViewportResultDto
       </div>
     </Section>
   );
+}
+
+/** One honest line: what covered the page on load at this viewport and what closing it did. */
+function overlayLine(o: BrowserViewportResultDto["overlay"]): string {
+  if (!o) return "—";
+  if (!o.found) return "None detected";
+  return o.summary ?? "Detected";
 }
 
 function SubHeading({ children }: { children: React.ReactNode }) {

@@ -49,6 +49,9 @@ export function startVerifyWorker(source: NodeJS.ProcessEnv = process.env) {
   if (env.NETGUARD_ALLOW_LOOPBACK_FOR_TESTS && env.NODE_ENV !== "test") {
     throw new Error("NETGUARD_ALLOW_LOOPBACK_FOR_TESTS is only permitted when NODE_ENV=test");
   }
+  if (env.NODE_ENV === "production" && /^https?:\/\/(localhost|127\.)/.test(env.SDK_URL)) {
+    throw new Error("SDK_URL must be the public script address in production (the installation check looks for that tag)");
+  }
   if (env.NODE_ENV === "production" && (!env.EGRESS_GATEWAY_URL || !env.EGRESS_TOKEN_SECRET)) {
     throw new Error("EGRESS_GATEWAY_URL and EGRESS_TOKEN_SECRET are mandatory in production (fail closed)");
   }

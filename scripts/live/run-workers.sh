@@ -11,7 +11,7 @@ ENV_FILE="${SITESENTINEL_LIVE_ENV:-$HOME/.sitesentinel/live.env}"
 [ -f "$ENV_FILE" ] || { echo "missing $ENV_FILE (copy scripts/live/live.env.example and fill it in)"; exit 1; }
 if [ "$(stat -f %Lp "$ENV_FILE" 2>/dev/null || stat -c %a "$ENV_FILE")" != "600" ]; then echo "refusing: $ENV_FILE must be chmod 600"; exit 1; fi
 set -a; . "$ENV_FILE"; set +a
-for v in WORKER_DATABASE_URL SCANNER_DATABASE_URL REDIS_URL EGRESS_TOKEN_SECRET KEK_RING_JSON APP_URL OPS_FALLBACK_ALERT_EMAILS; do
+for v in WORKER_DATABASE_URL SCANNER_DATABASE_URL REDIS_URL EGRESS_TOKEN_SECRET KEK_RING_JSON APP_URL OPS_FALLBACK_ALERT_EMAILS SDK_URL; do
   [ -n "${!v:-}" ] || { echo "missing $v in $ENV_FILE"; exit 1; }
 done
 export NODE_ENV=production EGRESS_PORT="${EGRESS_PORT:-8091}"

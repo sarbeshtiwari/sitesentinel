@@ -192,6 +192,44 @@ export async function startFaultSite(pki: TestPki, host = "127.0.0.1", ports: { 
         const body = () => html(`<main><h1>Performance page</h1><p>Content for synthetic performance measurement.</p><img alt="hero" src="/b/img/ok.png" width="300" height="100"></main>`);
         return toggles.get(`${h}#perf`) === "slow" ? later(1200, body) : body();
       }
+      // Popups on load. Controls sit in the lower half of the viewport, where the popups cover them.
+      // Trap endpoints: /c/consent* (a consent record), /c/danger/* and the tracker host must never be reached.
+      case "/c/popup-cookie": {
+        const tracker = toggles.get(`${h}#tracker`) ?? `tracker.${h}`;
+        return html(`<main><h1>Shop with a cookie banner</h1><p>A consent banner covers the lower part of the page.</p><div style="height:48vh"></div>
+          <nav aria-label="Main"><a href="/c/about">About</a> <a href="/c/products">Products</a></nav><button type="button" aria-expanded="false" aria-controls="m" onclick="var m=document.getElementById('m');m.hidden=!m.hidden;this.setAttribute('aria-expanded',String(!m.hidden))">Show more</button><div id="m" hidden><p>More.</p></div></main>
+          <div id="cookie-consent-banner" role="region" aria-label="Cookie consent" style="position:fixed;left:0;right:0;bottom:0;height:45vh;background:#222;color:#fff;padding:16px;z-index:50">
+            <h2>We value your privacy</h2><p>We use cookies to improve your experience.</p>
+            <button type="button" id="accept" onclick="new Image().src='/c/consent-accept';fetch('/c/consent',{method:'POST',body:'all'});document.getElementById('cookie-consent-banner').remove()">Accept all</button>
+            <button type="button" id="reject" onclick="fetch('/c/consent',{method:'POST',body:'necessary'}).catch(function(){});fetch('http://${tracker}/consent?c=reject').catch(function(){});new Image().src='/c/consent-reject';document.cookie='consent=necessary;path=/';document.getElementById('cookie-consent-banner').remove()">Reject all</button>
+            <a href="/c/privacy">Privacy policy</a>
+          </div>`);
+      }
+      case "/c/popup-modal": {
+        const noEsc = u.searchParams.has("noesc");
+        return html(`<main><h1>Shop with a newsletter popup</h1><p>A modal newsletter dialog opens on load.</p><div style="height:40vh"></div>
+          <nav aria-label="Main"><a href="/c/about">About</a> <a href="/c/products">Products</a></nav><button type="button" aria-expanded="false" aria-controls="m" onclick="var m=document.getElementById('m');m.hidden=!m.hidden;this.setAttribute('aria-expanded',String(!m.hidden))">Show more</button><div id="m" hidden><p>More.</p></div></main>
+          <div id="nl-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:90">
+            <div role="dialog" aria-modal="true" aria-labelledby="nl-title" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:320px;background:#fff;padding:20px">
+              <button type="button" aria-label="Close" style="float:right" onclick="document.getElementById('nl-backdrop').remove()">✕</button>
+              <h2 id="nl-title">Get 10% off</h2>
+              <form action="/c/subscribe" method="post" onsubmit="return true"><label>Email <input type="email" name="email"></label><button type="submit">Subscribe</button></form>
+              <a href="/c/offers">See all offers</a>
+            </div></div>
+          ${noEsc ? "" : `<script>document.addEventListener('keydown',function(e){if(e.key==='Escape'){var b=document.getElementById('nl-backdrop');if(b)b.remove()}})</script>`}`);
+      }
+      // A full-screen interstitial with no recognisable close control: only the website's own (configured) close
+      // button — an unlabelled icon — closes it. Without a configured selector it blocks visitors.
+      case "/c/popup-stuck": return html(`<main><h1>Shop behind an interstitial</h1><p>Content.</p><div style="height:40vh"></div>
+          <nav aria-label="Main"><a href="/c/about">About</a> <a href="/c/products">Products</a></nav><button type="button">Show more</button></main>
+          <div id="promo" style="position:fixed;inset:0;background:#fff;z-index:99;padding:40px">
+            <h2>Members only offer</h2><p>Unlock this page.</p>
+            <button type="button" onclick="fetch('/c/danger/subscribe',{method:'POST'})">Subscribe to continue</button>
+            <a href="/c/join">Join now</a>
+            <span class="nl-x" onclick="document.getElementById('promo').style.display='none'" style="position:absolute;right:12px;top:8px;cursor:pointer">›</span>
+          </div>`);
+      case "/c/js-alert": return html(`<main><h1>Shop with an alert</h1><p>An alert greets every visitor.</p><button type="button">Show more</button></main>
+          <script>alert("Welcome to our shop! Your code is " + ["sk", "live", "abcdefghijklmnopqrstuvwxyz"].join("_"));</script>`);
       case "/c/clipped": return html(`<main><h1>Clipped</h1><p style="width:120px;height:20px;overflow:hidden;white-space:nowrap">This sentence is far too long for its box and gets cut off without an ellipsis.</p></main>`);
       default: return html("<h1>Not found</h1>", "", 404);
     }
@@ -292,6 +330,24 @@ export async function startFaultSite(pki: TestPki, host = "127.0.0.1", ports: { 
       const pm = /^\/p(\d)$/.exec(u.pathname);
       if (pm) return later(toggles.get(`${h}#slow`) ? 1500 : slow, () => page({ title: `Mini page ${pm[1]}`, canonical: `${origin}${u.pathname}` }));
       return page({ title: "Not found", status: 404 });
+    }
+    if (kind === "wide") {
+      // frontier limits under batching: one home page with far more links / resources / search forms than the limits allow
+      if (u.pathname === "/") {
+        const links = [
+          ...Array.from({ length: 3 }, () => "/w/1"), // duplicate links merge into one row (referrers)
+          ...Array.from({ length: 60 }, (_, i) => `/item/${i + 1}`), // one numeric template: trap cap 50
+          ...Array.from({ length: 25 }, (_, i) => `/q?x=${i + 1}`), // query variants of one path: cap 20
+          ...Array.from({ length: 39 }, (_, i) => `/w/${i + 2}`), // beyond maxPages
+          ...Array.from({ length: 5 }, (_, i) => `http://ext${i + 1}.example/`), "http://10.0.0.1/", // external cap; IP literal never stored
+        ];
+        const forms = Array.from({ length: 5 }, (_, i) => `<form role="search" action="/s${i + 1}" method="get"><input type="search" name="q"><button>Go</button></form>`).join("");
+        const imgs = ['<img src="/w/1" alt="x">', ...Array.from({ length: 15 }, (_, i) => `<img src="/r/${i + 1}.png" alt="x">`)].join("");
+        return page({ title: "Wide home", canonical: `${origin}/`, body: `${links.map((l) => `<a href="${l}">x</a>`).join("")}${forms}${imgs}` });
+      }
+      if (/^\/r\/\d+\.png$/.test(u.pathname)) { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+      if (u.pathname === "/robots.txt" || u.pathname === "/sitemap.xml") return page({ title: "Not found", status: 404 });
+      return page({ title: `Wide ${u.pathname}${u.search}`, canonical: `${origin}${u.pathname}${u.search}`, body: '<a href="/">Home</a>' });
     }
     if (kind === "huge") {
       if (u.pathname === "/sitemap.xml") {

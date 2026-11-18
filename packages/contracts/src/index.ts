@@ -555,6 +555,8 @@ export const BrowserCheckConfigInput = z.object({
   functional: z.record(z.string(), z.unknown()).optional(),
   /** release readiness: third-party policy enforced by the gateway (validated in full by the core schema) */
   thirdParty: z.object({ mode: z.enum(["all", "allowlist", "none"]).optional(), allowedDomains: z.array(z.string().max(253)).max(50).optional(), maxHosts: z.number().int().optional() }).strict().optional(),
+  /** popups / cookie banners on load (closeSelector validated in full by the core schema; null clears it) */
+  popups: z.object({ dismiss: z.boolean().optional(), closeSelector: z.string().max(200).nullable().optional() }).strict().optional(),
   /** Phase 4H: required (true) the first time functional tests are enabled — records who accepted the risk, and when */
   acknowledgeFunctionalRisk: z.boolean().optional(),
 }).strict();
@@ -596,6 +598,14 @@ export interface BrowserViewportResultDto {
   /** synthetic (one Chromium through our gateway) — not real-user Core Web Vitals; INP is never produced here */
   syntheticPerformance: { ttfbMs: number | null; fcpMs: number | null; lcpMs: number | null; cls: number | null; tbtMs: number | null; loadMs: number | null; requests: number | null; transferBytes: number | null } | null;
   warnings: string[];
+  /** popup / cookie banner on load and what closing it did (null on results recorded before this existed) */
+  overlay: {
+    found: boolean;
+    items: Array<{ kind: string; selector: string; label: string | null; dismissed: boolean; method: string | null; control: string | null; attempted: boolean; reason: string | null; blocksPage: boolean }>;
+    summary: string | null;
+  } | null;
+  /** JavaScript dialogs the page opened (all dismissed, never accepted) */
+  dialogs: { count: number; items: Array<{ type: string; message: string }> } | null;
   artifacts: Array<{ id: string; purpose: string | null; bytes: number; expiresAt: string }>;
 }
 export interface BrowserCheckResultDto {
@@ -735,13 +745,24 @@ export interface MonitoringUsageDto {
 export const NotificationListQuery = z.object({
   unread: z.enum(["true", "false"]).optional(),
   cursor: z.string().max(100).optional(),
+  /** only notifications created at or after this instant (real-time delivery polling; ISO 8601) */
+  since: z.iso.datetime({ offset: true }).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 }).strict();
 export interface NotificationDto {
   id: string; type: string; severity: string | null; title: string; body: string; link: string | null;
   incidentId: string | null; read: boolean; createdAt: string;
+  /** website the notification is about (via its incident or link), when known; same organisation only */
+  websiteId?: string | null; websiteName?: string | null;
 }
 export const NOTIFICATION_EVENT_TYPES = ["INCIDENT_OPENED", "INCIDENT_RESOLVED", "SSL_EXPIRING", "BROWSER_FAILURE", "DEEP_SCAN_FINDINGS", "MONITORING_INTERRUPTED"] as const;
+const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM (24-hour)");
+export const QuietHoursInput = z.object({
+  start: HHMM,
+  end: HHMM,
+  tz: z.string().min(1).max(64).refine((tz) => { try { new Intl.DateTimeFormat("en", { timeZone: tz }); return true; } catch { return false; } }, "Unknown time zone"),
+  exceptCritical: z.boolean(),
+}).strict();
 export const NotificationPreferenceInput = z.object({
   channel: z.enum(["EMAIL", "IN_APP"]),
   enabled: z.boolean(),
@@ -750,9 +771,19 @@ export const NotificationPreferenceInput = z.object({
   eventTypes: z.array(z.enum(NOTIFICATION_EVENT_TYPES)).max(10),
   /** empty = all websites */
   websiteIds: z.array(z.uuid()).max(500),
+  /** in-app only: play an alert sound in the web app for notifications at or above soundMinSeverity (omitted = unchanged) */
+  soundEnabled: z.boolean().optional(),
+  soundMinSeverity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]).optional(),
+  /** in-app only: no sound / desktop popups in this local-time window (null = off; omitted = unchanged) */
+  quietHours: QuietHoursInput.nullable().optional(),
 }).strict();
 export const NotificationPreferencesInput = z.object({ preferences: z.array(NotificationPreferenceInput).min(1).max(2) }).strict();
-export interface NotificationPreferenceDto extends z.infer<typeof NotificationPreferenceInput> { isDefault: boolean }
+export interface NotificationPreferenceDto extends Omit<z.infer<typeof NotificationPreferenceInput>, "soundEnabled" | "soundMinSeverity" | "quietHours"> {
+  isDefault: boolean;
+  soundEnabled: boolean;
+  soundMinSeverity: z.infer<typeof NotificationPreferenceInput>["minSeverity"];
+  quietHours: z.infer<typeof QuietHoursInput> | null;
+}
 
 export interface ChangeFeedDto {
   /** opaque cursor for the next poll */

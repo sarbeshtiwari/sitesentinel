@@ -77,15 +77,17 @@ choice, stored per viewer in `localStorage`). Tailwind utilities map to them (`b
 | `--surface-sunken` | `#F1F3F9` | `#0E1424` | `bg-sunken` | Table headers, footers, segmented controls |
 | `--muted` | `#EEF0F6` | `#1A2135` | `bg-muted` | Hover fills, neutral chips |
 | `--foreground` | `#182230` | `#E7EAF2` | `text-foreground` | Body text |
-| `--muted-foreground` | `#667085` | `#9AA4B8` | `text-muted-foreground` | Secondary text |
+| `--muted-foreground` | `#5E6A7E` | `#9AA4B8` | `text-muted-foreground` | Secondary text |
 | `--subtle-foreground` | `#98A2B3` | `#6B7489` | `text-subtle-foreground` | Placeholders, tertiary |
 | `--border` / `--border-strong` | `#E4E7EF` / `#D0D5E1` | `#232B40` / `#2F3850` | `border-border(-strong)` | Dividers / inputs |
-| `--primary` | `= --brand` | brand lightened 18 % | `bg-primary`, `text-primary` | Actions, links, focus |
+| `--primary` | `= --brand` | brand lightened 25 % | `bg-primary`, `text-primary` | Actions, links, focus |
+| `--primary-solid` / `--danger-solid` | `= --primary` / `= --danger` | `--brand` / `#DC2626` | `bg-primary-solid`, `bg-danger-solid` | Button fills behind white text (AA in both themes) |
 | `--primary-soft` | brand 10 % | brand 22 % | `bg-primary-soft` | Selected nav item, icon chips |
 | `--success` | `#16A34A` | `#22C55E` | `text-success` | Healthy, passed, resolved |
 | `--warning` | `#D97706` | `#F59E0B` | `text-warning` | Degraded, needs attention |
 | `--danger` | `#DC2626` | `#F05252` | `text-danger` | Down, failed, destructive |
 | `--info` | `#0891B2` | `#22D3EE` | `text-info` | Informational, admin role chips |
+| `--success-text` … `--info-text` | status mixed with black (70–80 %) | `= status` | `text-success-text` … | Badge labels on soft status fills (AA at 12 px) |
 
 **Status colour rules.** Colour never carries meaning alone — every status also has a text label (Badge,
 HealthBadge, StatusIndicator) or an icon. "Inconclusive", "No data" and "Disabled" are *neutral*, never green: an

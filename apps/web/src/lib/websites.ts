@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { DataEnvelope, WebsiteDetailDto, WebsiteSummaryDto } from "@wim/contracts";
 import type { InstallationState } from "@wim/core";
 import { get } from "./api";
+import { fmtTime, localDay } from "./monitoring";
 
 export const wk = {
   list: (orgId: string) => ["org", orgId, "websites"] as const,
@@ -96,6 +97,7 @@ export function failureText(reason: string | null): string {
 
 export const INVALID_REASON: Record<string, string> = {
   ORIGIN_MISMATCH: "The script ran on a different domain or subdomain than this website. Install it only on this website, or add the other domain as its own website.",
+  ORIGIN_MISSING: "A request arrived without a browser origin (typically a bot, link preview or tool, not a visitor). It was ignored; nothing to fix on your site.",
   WEBSITE_NOT_VERIFIED: "The script ran before ownership was verified. Verify the website; new page loads will then count.",
   REVOKED_KEY: "The page uses a revoked site key. Replace the snippet with the current one.",
   EXPIRED_KEY: "The page uses a previous site key whose grace period ended. Replace the snippet with the current one.",
@@ -105,8 +107,9 @@ export const METHOD_LABEL: Record<string, string> = {
   DNS_TXT: "DNS TXT record", WELL_KNOWN_FILE: "HTML file", HTML_META: "Meta tag", SDK_BEACON: "SDK", ANY: "Any method",
 };
 
-export const fmt = (d: string | null | undefined) => (d ? new Date(d).toLocaleString() : "—");
-export const fmtDate = (d: string | null | undefined) => (d ? new Date(d).toLocaleDateString() : "—");
+// Same labelled format as monitoring data ("YYYY-MM-DD HH:mm <zone>") so every screen shows times alike.
+export const fmt = fmtTime;
+export const fmtDate = (d: string | null | undefined) => (d ? localDay(d) : "—");
 
 export function relative(d: string | null | undefined): string {
   if (!d) return "—";

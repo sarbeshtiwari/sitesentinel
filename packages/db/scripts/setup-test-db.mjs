@@ -21,6 +21,10 @@ const env = { ...process.env, MIGRATION_DATABASE_URL: url };
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const bin = join(root, "node_modules", ".bin");
 execFileSync(join(bin, "prisma"), ["migrate", "deploy"], { cwd: root, env, stdio: ["ignore", "ignore", "inherit"] });
-execFileSync("node", ["scripts/apply-sql.mjs"], { cwd: root, env: { ...env, PATH: `${bin}:${process.env.PATH}` }, stdio: ["ignore", "ignore", "inherit"] });
+// Applied twice: production re-applies the (idempotent) SQL layer on every deploy, so tests and the invariants
+// must see the database a redeploy leaves behind, not only a first install (grants on views drifted that way).
+for (let i = 0; i < 2; i++) {
+  execFileSync("node", ["scripts/apply-sql.mjs"], { cwd: root, env: { ...env, PATH: `${bin}:${process.env.PATH}` }, stdio: ["ignore", "ignore", "inherit"] });
+}
 execFileSync("node", ["scripts/seed.mjs"], { cwd: root, env, stdio: "inherit" });
 console.log(`test database ready: ${testDb}`);

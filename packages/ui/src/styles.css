@@ -15,7 +15,7 @@
   --card: #ffffff;
   --surface-sunken: #f1f3f9;
   --muted: #eef0f6;
-  --muted-foreground: #667085;
+  --muted-foreground: #5e6a7e;
   --subtle-foreground: #98a2b3;
   --border: #e4e7ef;
   --border-strong: #d0d5e1;
@@ -24,6 +24,8 @@
 
   /* actions */
   --primary: var(--brand);
+  /* solid fills behind white text (buttons); equals --primary in light mode, stays at full brand strength in dark */
+  --primary-solid: var(--primary);
   --primary-foreground: #ffffff;
   --primary-soft: color-mix(in srgb, var(--brand) 10%, transparent);
 
@@ -32,7 +34,13 @@
   --warning: #d97706;
   --danger: #dc2626;
   --danger-foreground: #ffffff;
+  --danger-solid: var(--danger);
   --info: #0891b2;
+  /* status text on soft status fills (badges): darkened in light mode so 12 px labels meet WCAG AA (4.5:1) */
+  --success-text: color-mix(in srgb, var(--success) 70%, black);
+  --warning-text: color-mix(in srgb, var(--warning) 70%, black);
+  --danger-text: color-mix(in srgb, var(--danger) 80%, black);
+  --info-text: color-mix(in srgb, var(--info) 75%, black);
 
   /* navigation */
   --sidebar: #ffffff;
@@ -70,12 +78,18 @@
   --border: #232b40;
   --border-strong: #2f3850;
   --input: #2f3850;
-  --primary: color-mix(in srgb, var(--brand) 82%, white);
+  --primary: color-mix(in srgb, var(--brand) 75%, white);
+  --primary-solid: var(--brand);
+  --danger-solid: #dc2626;
   --primary-soft: color-mix(in srgb, var(--brand) 22%, transparent);
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #f05252;
   --info: #22d3ee;
+  --success-text: var(--success);
+  --warning-text: var(--warning);
+  --danger-text: color-mix(in srgb, var(--danger) 85%, white);
+  --info-text: var(--info);
   --sidebar: #0e1424;
   --sidebar-foreground: #a3adc2;
   --sidebar-active: color-mix(in srgb, var(--brand) 24%, transparent);
@@ -97,12 +111,18 @@
     --border: #232b40;
     --border-strong: #2f3850;
     --input: #2f3850;
-    --primary: color-mix(in srgb, var(--brand) 82%, white);
+    --primary: color-mix(in srgb, var(--brand) 75%, white);
+    --primary-solid: var(--brand);
+    --danger-solid: #dc2626;
     --primary-soft: color-mix(in srgb, var(--brand) 22%, transparent);
     --success: #22c55e;
     --warning: #f59e0b;
     --danger: #f05252;
     --info: #22d3ee;
+    --success-text: var(--success);
+    --warning-text: var(--warning);
+    --danger-text: color-mix(in srgb, var(--danger) 85%, white);
+    --info-text: var(--info);
     --sidebar: #0e1424;
     --sidebar-foreground: #a3adc2;
     --sidebar-active: color-mix(in srgb, var(--brand) 24%, transparent);
@@ -135,6 +155,8 @@
   --color-ring: var(--ring);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-solid: var(--primary-solid);
+  --color-danger-solid: var(--danger-solid);
   --color-primary-soft: var(--primary-soft);
   --color-accent: var(--brand-accent);
   --color-navy: var(--navy);
@@ -143,6 +165,10 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-success-text: var(--success-text);
+  --color-warning-text: var(--warning-text);
+  --color-danger-text: var(--danger-text);
+  --color-info-text: var(--info-text);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-active: var(--sidebar-active);

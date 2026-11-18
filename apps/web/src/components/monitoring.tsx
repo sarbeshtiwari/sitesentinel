@@ -66,7 +66,7 @@ export function RangePicker({ value, onChange }: { value: Range; onChange: (r: R
           {err && <span role="alert" className="text-danger">{err}</span>}
         </div>
       )}
-      <span className="text-xs text-subtle-foreground">{zone}</span>
+      <span className="text-xs text-muted-foreground">{zone}</span>
     </div>
   );
 }

@@ -1,14 +1,13 @@
 "use client";
-import { Badge, Button, Card, cn, EmptyState, Input, Table, TBody, TD, TH, THead, TR } from "@wim/ui";
-import { BarChart3, Boxes, FileText, GitCompare, History, MonitorSmartphone, Search, Smartphone, X } from "lucide-react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { Badge, Button, Card, cn, EmptyState, Table, TBody, TD, TH, THead, TR } from "@wim/ui";
+import { BarChart3, Boxes, GitCompare, History, MonitorSmartphone, Search, Smartphone, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import type { DataEnvelope } from "@wim/contracts";
-import { FilterSelect, Hint, LoadMore, QueryState, RangePicker, Section, StackedBars } from "@/components/monitoring";
+import { FilterSelect, Hint, QueryState, RangePicker, Section, StackedBars } from "@/components/monitoring";
 import { get } from "@/lib/api";
-import { fmtMs, fmtTime, mk, presetRange, rangeQs, SCAN_STATUS, useDebounced, type Range } from "@/lib/monitoring";
-import { PerfBadge } from "./performance-tab";
+import { fmtTime, mk, presetRange, rangeQs, SCAN_STATUS, type Range } from "@/lib/monitoring";
 
 const TYPE: Record<string, string> = {
   HEADER: "Header", NAV: "Navigation", FOOTER: "Footer", SEARCH: "Search", FORM: "Form", BUTTON: "Button", LINK: "Call to action", IMAGE: "Image / media",
@@ -18,55 +17,6 @@ const TYPE: Record<string, string> = {
 const EVENT: Record<string, { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
   ADDED: { label: "Added", tone: "success" }, CHANGED: { label: "Changed", tone: "warning" }, REMOVED: { label: "Removed", tone: "danger" }, RESTORED: { label: "Restored", tone: "success" }, VISIBILITY: { label: "Visibility", tone: "warning" },
 };
-
-// ===================================================================================================== pages
-interface PageRow {
-  id: string; url: string; path: string; title: string | null; status: string; source: string; depth: number; lastSeenAt: string | null;
-  monitoring: { browser: boolean; deepScan: boolean; monitoredPageId: string | null };
-  deepScan: { state: string; httpStatus: number | null; checkedAt: string | null; executionId: string } | null; openFindings: number;
-  browser: { lastResultAt: string | null; lcpP75_24h: number | null; lcpSamples_24h: number; lcpStatus: "GOOD" | "NEEDS_IMPROVEMENT" | "POOR" | "INSUFFICIENT_DATA" } | null;
-  components: { present: number; changes7d: number } | null; responsive: { failedViewports: number; viewports: number } | null;
-}
-export function PagesTab({ orgId, websiteId }: { orgId: string; websiteId: string }) {
-  const [search, setSearch] = useState("");
-  const s = useDebounced(search);
-  const q = useInfiniteQuery({
-    queryKey: [...mk.site(orgId, websiteId), "pages", s],
-    queryFn: ({ signal, pageParam }) => get<{ data: PageRow[]; nextCursor: string | null; scope: { browserPath: string; browserMonitoring: boolean; note: string } }>(`/orgs/${orgId}/websites/${websiteId}/pages?${new URLSearchParams({ limit: "50", ...(s ? { search: s } : {}), ...(pageParam ? { cursor: pageParam } : {}) })}`, { signal }),
-    initialPageParam: "" as string, getNextPageParam: (l) => l.nextCursor ?? undefined,
-  });
-  const scope = q.data?.pages[0]?.scope;
-  const rows = q.data?.pages.flatMap((p) => p.data) ?? [];
-  return (
-    <Section title="Pages" icon={<FileText />} flush description={scope ? <>{scope.note} Browser path: <code className="font-mono">{scope.browserPath}</code>{scope.browserMonitoring ? "" : " (browser monitoring is not active)"}.</> : "Pages discovered by deep scans and browser monitoring."}>
-      <div className="border-b border-border px-4 py-3 sm:px-5">
-        <label className="grid max-w-sm gap-1 text-xs font-medium text-muted-foreground">Filter by URL
-          <span className="relative"><Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle-foreground" aria-hidden /><Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="/blog" /></span>
-        </label>
-      </div>
-      <QueryState q={q} skeleton="h-40 m-4">
-        {!rows.length ? <EmptyState icon={<FileText />} title="No pages discovered yet" description="Pages appear from deep scans and from the browser-monitored page." /> : (
-          <>
-            <Table>
-              <THead><TR><TH>Page</TH><TH>Monitoring</TH><TH className="hidden md:table-cell">Deep scan</TH><TH className="hidden lg:table-cell">LCP p75 (24 h)</TH><TH className="hidden lg:table-cell">Components</TH><TH className="hidden xl:table-cell">Responsive</TH></TR></THead>
-              <TBody>{rows.map((p) => (
-                <TR key={p.id}>
-                  <TD className="max-w-72"><span className="break-all font-mono text-xs font-medium">{p.path}</span>{p.title && <div className="truncate text-xs text-muted-foreground">{p.title}</div>}{p.openFindings > 0 && <div className="text-xs text-warning">{p.openFindings} open finding(s)</div>}</TD>
-                  <TD className="text-xs">{p.monitoring.browser ? <Badge tone="brand">Browser</Badge> : null} {p.monitoring.deepScan ? <Badge>Deep scan</Badge> : null}{!p.monitoring.browser && !p.monitoring.deepScan ? <span className="text-muted-foreground">Discovered only</span> : null}</TD>
-                  <TD className="hidden text-xs md:table-cell">{p.deepScan ? <>{p.deepScan.state === "FAILED" ? <Badge tone="danger">{p.deepScan.httpStatus ?? "failed"}</Badge> : p.deepScan.state === "DONE" ? <Badge tone="success">{p.deepScan.httpStatus ?? "OK"}</Badge> : <Badge>{p.deepScan.state.toLowerCase()}</Badge>} <span className="text-muted-foreground">{fmtTime(p.deepScan.checkedAt)}</span></> : "—"}</TD>
-                  <TD className="hidden text-xs lg:table-cell">{p.browser ? <>{fmtMs(p.browser.lcpP75_24h)} <PerfBadge s={p.browser.lcpStatus} /> <span className="text-muted-foreground">({p.browser.lcpSamples_24h})</span></> : "—"}</TD>
-                  <TD className="hidden text-xs lg:table-cell">{p.components ? `${p.components.present}${p.components.changes7d ? ` · ${p.components.changes7d} change(s) in 7 d` : ""}` : "—"}</TD>
-                  <TD className="hidden text-xs xl:table-cell">{p.responsive ? (p.responsive.failedViewports ? <Badge tone="danger">{p.responsive.failedViewports}/{p.responsive.viewports} viewports fail</Badge> : <Badge tone="success">{p.responsive.viewports} viewports OK</Badge>) : "—"}</TD>
-                </TR>
-              ))}</TBody>
-            </Table>
-            <LoadMore q={q} />
-          </>
-        )}
-      </QueryState>
-    </Section>
-  );
-}
 
 // ===================================================================================================== components
 interface Comp { id: string; type: string; label: string | null; status: string; pagePath: string; viewports: string[]; firstSeenAt: string; lastSeenAt: string; removedAt: string | null }

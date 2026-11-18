@@ -1,10 +1,11 @@
 import type { Browser, Page, Request, Response } from "playwright-core";
 import {
-  groupIssues, sameSite, VIEWPORT_PRESETS, type BrowserCheckConfig, type DetectedComponent, type FunctionalResult, type ResourceIssue, type ViewportName, type ViewportObservation,
+  groupIssues, sameSite, scrubDialogMessage, VIEWPORT_PRESETS, type BrowserCheckConfig, type DialogFacts, type OverlayFacts, type DetectedComponent, type FunctionalResult, type ResourceIssue, type ViewportName, type ViewportObservation,
 } from "@wim/core";
 import { guardedGoto, sanitizeUrl } from "@wim/netguard";
 import { collectInPage, INIT_SCRIPT } from "./page-scripts.js";
 import { detectAndInspect, installGuard, resolveNavToggle, runFunctionalTests, type GuardLog } from "./interact.js";
+import { handleOverlays } from "./overlay.js";
 
 /** Gateway refusals reach Chromium as HTTP responses (plain HTTP) carrying this header. */
 const GATEWAY_OUTCOME: Record<string, string> = {
@@ -71,6 +72,19 @@ export async function observeViewport(i: ObserveInput): Promise<ObserveOutput> {
   const onAbort = () => void ctx.close().catch(() => undefined);
   i.signal.addEventListener("abort", onAbort, { once: true });
 
+  // JavaScript dialogs (alert / confirm / prompt / beforeunload). Without a listener Playwright auto-dismisses them
+  // silently; here they are dismissed explicitly (confirm / prompt answered "cancel", never accepted) and recorded.
+  const dialogs: DialogFacts = { count: 0, items: [] };
+  page.on("dialog", (d) => {
+    dialogs.count++;
+    if (dialogs.items.length < 10) dialogs.items.push({ type: d.type(), message: scrubDialogMessage(d.message()) });
+    void d.dismiss().catch(() => undefined);
+  });
+  // while a popup is being closed, what the page does in reaction (requests our guard refused, errors of its consent
+  // script after its call was refused) is a consequence of our action, not of the page load being evaluated
+  let quiet = false;
+  const refused = new WeakSet<Request>();
+
   const exceptions: Array<{ message: string; source: string | null }> = [];
   const consoleErrors: Array<{ message: string; source: string | null }> = [];
   const failed = new Map<string, ResourceIssue>();
@@ -107,20 +121,22 @@ export async function observeViewport(i: ObserveInput): Promise<ObserveOutput> {
   const answered = new WeakSet<Request>(); // requests already counted from their HTTP error response
   page.on("requestfailed", (r) => {
     done(r);
+    if (quiet || refused.has(r)) return;
     if (r.isNavigationRequest() && r.frame() === page.mainFrame()) return; // reported as the navigation outcome
     if (answered.has(r)) return; // e.g. a 404 stylesheet is aborted after its error response: count it once
     bump(failed, r, (r.failure()?.errorText ?? "failed").replace(/^net::/, "").slice(0, 60), null);
   });
   page.on("response", (res) => {
     const r = res.request();
+    if (quiet) return;
     if (r.isNavigationRequest() && r.frame() === page.mainFrame()) return;
     const egress = res.headers()["x-egress-error"];
     if (egress) { answered.add(r); bump(failed, r, `GATEWAY_${egress}`.slice(0, 60), res.status()); }
     else if (res.status() >= 400) { answered.add(r); bump(httpErrors, r, `HTTP_${res.status()}`, res.status()); }
   });
-  page.on("pageerror", (e) => { if (exceptions.length < 200) exceptions.push({ message: `${e.name}: ${e.message}`.slice(0, 500), source: null }); });
+  page.on("pageerror", (e) => { if (!quiet && exceptions.length < 200) exceptions.push({ message: `${e.name}: ${e.message}`.slice(0, 500), source: null }); });
   page.on("console", (m) => {
-    if (m.type() !== "error" || consoleErrors.length >= 200) return;
+    if (quiet || m.type() !== "error" || consoleErrors.length >= 200) return;
     const loc = m.location()?.url;
     consoleErrors.push({ message: m.text().slice(0, 500), source: loc ? hostOf(loc) : null });
   });
@@ -168,12 +184,24 @@ export async function observeViewport(i: ObserveInput): Promise<ObserveOutput> {
   }
   let inPage: ReturnType<typeof normalizeInPage> | null = null;
   let detected: Awaited<ReturnType<typeof detectAndInspect>> | null = null;
+  let overlay: Awaited<ReturnType<typeof handleOverlays>> | null = null;
   if (!navError || navError === "TOO_MANY_REDIRECTS") {
+    // performance, rendering and script facts of the real, untouched load — before any popup is closed
     inPage = normalizeInPage(await page.evaluate(collectInPage).catch(() => null));
     if (!inPage && crashed) navError = "BROWSER_CRASHED";
+    // popups / cookie banners: detected, and closed safely unless the customer switched that off (layout and
+    // functional checks then see the page a visitor sees after closing it)
+    if (inPage && !navError && remaining() > 4000 && !i.signal.aborted) {
+      interacting = true; // nothing requested from here on joins the passive-load baseline
+      quiet = true;
+      try {
+        overlay = await handleOverlays(page, { config: i.config.popups, firstParty, baseline, deadline: i.deadline, onBlocked: (r) => refused.add(r) });
+      } catch { overlay = null; } finally { quiet = false; }
+    }
     // Phase 4F: read-only component detection and responsive inspection (no interaction yet)
     if (inPage && !navError && remaining() > 2000) detected = await detectAndInspect(page, i.config.components.detect).catch(() => null);
   }
+  const overlayFacts: OverlayFacts | null = overlay ? { ...overlay.facts, coveredControls: detected?.coveredByOverlay ?? 0 } : null;
   const observation: ViewportObservation = {
     viewport: i.viewport, width: vp.width, height: vp.height, navError, mainStatus,
     finalUrl: page.url().startsWith("http") ? sanitizeUrl(page.url()) : null, redirects, readiness, durationMs: Date.now() - started,
@@ -191,6 +219,8 @@ export async function observeViewport(i: ObserveInput): Promise<ObserveOutput> {
     network: { failed: [...failed.values()].slice(0, 30), httpErrors: [...httpErrors.values()].slice(0, 30), requests, transferBytes },
     layout: inPage ? { ...inPage.layout, ...(detected?.layout ? { ...detected.layout, overflowPx: inPage.layout.overflowPx, offscreenText: inPage.layout.offscreenText } : {}) } : null,
     perf: inPage ? { ttfbMs: inPage.timing?.ttfbMs ?? null, fcpMs: inPage.fcpMs, lcpMs: inPage.lcpMs, cls: inPage.cls, tbtMs: inPage.tbtMs, longTasks: inPage.longTasks, loadMs: inPage.timing?.loadMs ?? null } : null,
+    overlay: overlayFacts,
+    dialogs,
   };
   let shot: Buffer | null = null;
   // Never capture another site's page (off-site redirect) — evidence must be the customer's own website.
@@ -218,10 +248,12 @@ export async function observeViewport(i: ObserveInput): Promise<ObserveOutput> {
       if (r.result) functional.push(r.result);
     }
     if (wantsFunctional && remaining() > 5000) {
-      functional.push(...await runFunctionalTests(page, { url: i.url, viewport: i.viewport, deadline: i.deadline - 3000, cfg: i.config.functional, components, guard, firstParty }).catch(() => []));
+      functional.push(...await runFunctionalTests(page, { url: i.url, viewport: i.viewport, deadline: i.deadline - 3000, cfg: i.config.functional, components, guard, firstParty, redismiss: overlay?.redismiss }).catch(() => []));
     }
   }
   i.signal.removeEventListener("abort", onAbort);
+  // dialogs opened later (by the functional tests) are included: the object is the observation's own
+  observation.dialogs = dialogs.count ? { count: dialogs.count, items: dialogs.items.slice(0, 10) } : null;
   await ctx.close().catch(() => undefined);
   return { observation, screenshot: shot, offsiteTarget, components, functional, blocked: guard.blocked };
 }
