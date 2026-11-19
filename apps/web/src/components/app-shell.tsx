@@ -170,7 +170,7 @@ export function CustomerShell({ children }: { children: React.ReactNode }) {
   const is = (p: string) => pathname === p || pathname.startsWith(`${p}/`);
   const on = (section: string) => Boolean(orgId) && is(at(section));
   const count = (n: number, tone: "neutral" | "warning" = "neutral") => <CountBadge tone={tone}>{n > 99 ? "99+" : n}</CountBadge>;
-  const notificationsLabel = unread ? `Notifications, ${unread} unread` : undefined;
+  const notificationsLabel = unread ? `Notifications (${unread} new)` : undefined;
   const issuesLabel = openIssues ? `Issues, ${openIssues} open` : undefined;
   const siteList = (websites.data ?? []).slice(0, SIDEBAR_WEBSITES);
 
