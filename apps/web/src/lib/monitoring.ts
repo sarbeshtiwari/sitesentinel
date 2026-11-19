@@ -232,11 +232,17 @@ export function useDebounced<T>(value: T, ms = 300): T {
  */
 /** How often an open (visible) tab asks the API what changed; hidden tabs pause and catch up when shown again. */
 const LIVE_POLL_MS = 5_000;
+/** Routine check results (CHECK / EXECUTION arrive about once a minute per website) refresh the screen at most this often. */
+const ROUTINE_REFRESH_MS = 30_000;
+/** Per-website queries that are expensive and barely move with a single check; they refresh on their own events. */
+const HEAVY_KEYS = new Set(["availability-30d", "pages", "findings", "deep"]);
+const isHeavy = (key: readonly unknown[]) => key.some((k) => typeof k === "string" && HEAVY_KEYS.has(k));
 export function useLiveUpdates(orgId: string | undefined) {
   const qc = useQueryClient();
   const [unread, setUnread] = useState(0);
   const cursor = useRef<string | null>(null);
   const lastUnread = useRef(0);
+  const lastRoutine = useRef(0);
   useEffect(() => {
     if (!orgId) return;
     cursor.current = null;
@@ -258,10 +264,15 @@ export function useLiveUpdates(orgId: string | undefined) {
         setUnread(r.data.unreadNotifications);
         failures = 0;
         if (!first && r.data.changes.length) {
-          // Anything changed in this organisation: refresh every query of it that is on screen (inactive queries
-          // are only marked stale and refetch when shown). Covers dashboards, website pages and tabs, incidents,
-          // history, verification, installation, deep scans, notifications and usage alike.
-          void qc.invalidateQueries({ queryKey: ["org", orgId] });
+          // Status changes (incidents, deep scans, websites, notifications) refresh every on-screen query of the
+          // organisation at once (inactive queries are only marked stale). Routine check results are frequent, so they
+          // refresh at most every ROUTINE_REFRESH_MS and leave the heavy per-website queries alone.
+          const important = r.data.changes.some((c) => c.kind !== "CHECK" && c.kind !== "EXECUTION");
+          if (important) void qc.invalidateQueries({ queryKey: ["org", orgId] });
+          else if (Date.now() - lastRoutine.current >= ROUTINE_REFRESH_MS) {
+            lastRoutine.current = Date.now();
+            void qc.invalidateQueries({ queryKey: ["org", orgId], predicate: (q) => !isHeavy(q.queryKey) });
+          }
         }
       } catch {
         if (stopped) return;
