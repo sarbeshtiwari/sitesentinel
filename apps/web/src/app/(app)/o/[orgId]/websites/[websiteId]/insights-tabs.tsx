@@ -147,7 +147,7 @@ export function ResponsiveTab({ orgId, websiteId }: { orgId: string; websiteId: 
           </div>
         ))}
       </QueryState>
-      <Hint>Per-check details (functional tests, screenshots) are on each browser check. <Link className="text-primary hover:underline" href={`/o/${orgId}/websites/${websiteId}?tab=browser`}>Browser checks</Link> · deep-scan pages: {SCAN_STATUS.COMPLETED.label.toLowerCase()} scans only mark pages removed.</Hint>
+      <Hint>Per-check details (functional tests, screenshots) are on each browser check. <Link className="text-primary hover:underline" href={`/o/${orgId}/websites/${websiteId}?tab=performance&section=browser`}>Browser checks</Link> · deep-scan pages: {SCAN_STATUS.COMPLETED.label.toLowerCase()} scans only mark pages removed.</Hint>
     </div>
   );
 }

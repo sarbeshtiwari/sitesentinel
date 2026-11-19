@@ -1,5 +1,5 @@
 "use client";
-import { Badge, buttonVariants, EmptyState, PageHeader } from "@wim/ui";
+import { buttonVariants, cn, EmptyState, SeverityBadge, StatusPill } from "@wim/ui";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronLeft, ExternalLink, FileText, Gauge, Layers, ListChecks, Wrench } from "lucide-react";
 import Link from "next/link";
@@ -8,7 +8,7 @@ import type { DataEnvelope } from "@wim/contracts";
 import { Hint, KeyValue, QueryState, Section } from "@/components/monitoring";
 import { get } from "@/lib/api";
 import { useOrgId } from "@/lib/hooks";
-import { fmtTime, mk, SEVERITY_TONE } from "@/lib/monitoring";
+import { fmtTime, mk } from "@/lib/monitoring";
 import { findingReason, GROUP_LABEL } from "../../deepscan-tab";
 import { PageStatusBadge, pathOnly, provenance, ScoreBadge, SCORE_FORMULA_TEXT, SEV_ORDER, SeverityChips, skipText, SOURCE, type PageFacts, type Sev } from "../../pages-tab";
 
@@ -41,13 +41,13 @@ function FindingItem({ f, href, resolved }: { f: PageFinding; href: string; reso
   return (
     <li className="grid gap-1.5 px-4 py-3.5 sm:px-5">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={resolved ? "success" : SEVERITY_TONE[f.severity]}>{resolved ? "Fixed" : f.severity}</Badge>
+        {resolved ? <StatusPill tone="success">Fixed</StatusPill> : <SeverityBadge severity={f.severity} />}
         <Link href={href} className="font-medium hover:text-primary">{f.title}</Link>
         <span className="text-xs text-muted-foreground">{GROUP_LABEL[f.group] ?? f.group}</span>
       </div>
       {!resolved && findingReason(f.evidence) && <p className="text-sm font-medium">{findingReason(f.evidence)}</p>}
       {f.description && <p className="text-sm text-muted-foreground">{f.description}</p>}
-      {!resolved && <p className="flex items-start gap-1.5 text-sm"><Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden /><span><span className="font-medium">How to fix: </span>{f.howToFix}</span></p>}
+      {!resolved && <p className="flex items-start gap-1.5 text-sm"><Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-hidden /><span><span className="font-medium">How to fix: </span>{f.howToFix}</span></p>}
       {!resolved && <Evidence e={f.evidence} />}
       <p className="text-xs text-muted-foreground">
         {resolved ? <>Fixed {fmtTime(f.resolvedAt)} · first detected {fmtTime(f.firstDetectedAt)}</> : <>First seen {fmtTime(f.firstDetectedAt)} · last seen {fmtTime(f.lastDetectedAt)} · seen {f.occurrenceCount}×</>}
@@ -72,12 +72,20 @@ export default function PageDetailPage() {
       <QueryState q={q} skeleton="h-96">
         {p && (
           <>
-            <PageHeader eyebrow="Page" title={<span className="break-all font-mono text-xl">{p.path}</span>} description={p.title ?? undefined}
-              actions={<div className="flex flex-wrap items-center gap-2">
-                <ScoreBadge score={p.score.value} band={p.score.band} basis={p.score.basis} />
-                <PageStatusBadge p={p} />
-                {safeUrl && <a href={safeUrl} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline", size: "sm" })}><ExternalLink /> Open page</a>}
-              </div>} />
+            <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-start gap-4">
+                <span className={cn("flex h-16 w-16 shrink-0 items-center justify-center rounded-xl text-2xl font-semibold tabular-nums",
+                  p.score.value === null ? "bg-muted text-muted-foreground" : p.score.band === "GOOD" ? "bg-success-soft text-success-text" : p.score.band === "POOR" ? "bg-danger-soft text-danger-text" : "bg-warning-soft text-warning-text")}
+                  aria-label={p.score.value === null ? "Not scored yet" : `Score ${p.score.value} of 100`}>{p.score.value ?? "—"}</span>
+                <div className="min-w-0">
+                  <p className="text-[13px] text-muted-foreground">Page</p>
+                  <h1 className="break-all font-mono text-lg font-medium leading-snug sm:text-xl">{p.path}</h1>
+                  <p className="mt-1 text-sm text-muted-foreground">{[p.title, p.httpStatus ? `HTTP ${p.httpStatus}` : null, p.lastCheckedAt ? `checked ${fmtTime(p.lastCheckedAt)}` : "not checked yet", p.inSitemap ? "in sitemap" : "not in sitemap", p.firstReferrer ? `linked from ${pathOnly(p.firstReferrer)}` : null].filter(Boolean).join(" · ")}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2"><ScoreBadge score={p.score.value} band={p.score.band} basis={p.score.basis} /><PageStatusBadge p={p} /></div>
+                </div>
+              </div>
+              {safeUrl && <a href={safeUrl} target="_blank" rel="noopener noreferrer" className={cn(buttonVariants({ variant: "secondary" }), "self-start")}><ExternalLink /> Open page<span className="sr-only"> (opens in a new tab)</span></a>}
+            </header>
             <div className="grid gap-5 lg:grid-cols-3">
               <div className="grid content-start gap-5 lg:col-span-2">
                 <Section title={`Open findings (${p.findings.length})`} icon={<ListChecks />} flush
@@ -98,7 +106,7 @@ export default function PageDetailPage() {
                 </Section>
               </div>
               <div className="grid content-start gap-5">
-                <Section title="Score" icon={<Gauge />}>
+                <Section title="How the score is calculated" icon={<Gauge />}>
                   <div className="flex items-baseline gap-2"><span className="text-3xl font-semibold tabular-nums">{p.score.value ?? "—"}</span><span className="text-sm text-muted-foreground">{p.score.value === null ? "not checked yet" : "/ 100"}</span></div>
                   {p.score.basis === "BROKEN" && <p className="mt-1 text-sm text-danger-text">The page doesn&apos;t load{p.httpStatus ? ` (HTTP ${p.httpStatus})` : ""}, so it scores 0.</p>}
                   {p.score.basis === "FINDINGS" && (
@@ -106,7 +114,7 @@ export default function PageDetailPage() {
                       <tbody>
                         {SEV_ORDER.map((s) => (
                           <tr key={s} className="border-b border-border last:border-0">
-                            <td className="py-1"><Badge tone={SEVERITY_TONE[s]}>{s}</Badge></td>
+                            <td className="py-1"><SeverityBadge severity={s} /></td>
                             <td className="py-1 text-right tabular-nums">{p.score.bySeverity[s]} × {p.score.penalties[s]}</td>
                             <td className="py-1 text-right tabular-nums text-muted-foreground">−{p.score.bySeverity[s] * p.score.penalties[s]}</td>
                           </tr>

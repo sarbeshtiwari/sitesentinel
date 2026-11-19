@@ -23,7 +23,7 @@ export default function BrowserExecutionPage() {
   const r = q.data;
   return (
     <>
-      <div className="mb-3"><Link href={`/o/${orgId}/websites/${websiteId}?tab=browser`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" aria-hidden /> Browser monitoring</Link></div>
+      <div className="mb-3"><Link href={`/o/${orgId}/websites/${websiteId}?tab=performance&section=browser`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" aria-hidden /> Browser checks</Link></div>
       <QueryState q={q} skeleton="h-96">
         {r && (
           <>

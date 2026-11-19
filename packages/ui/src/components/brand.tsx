@@ -22,7 +22,7 @@ export function LogoSymbol({ variant = "brand", className, title }: { variant?: 
   const admin = variant === "admin";
   return (
     <svg viewBox="0 0 32 32" className={cn("h-7 w-7 shrink-0", className)} role={title ? "img" : undefined} aria-hidden={title ? undefined : true} aria-label={title}>
-      <path d={TILE} style={{ fill: admin ? "#1d2639" : "var(--brand)" }} stroke={admin ? "rgb(255 255 255 / 0.12)" : "none"} />
+      <path d={TILE} style={{ fill: admin ? "#1b1b20" : "var(--brand)" }} stroke={admin ? "rgb(255 255 255 / 0.12)" : "none"} />
       <path d={EYE} fill="#fff" />
       <circle cx="16" cy="14.4" r="4" style={{ fill: admin ? "var(--brand)" : "#0b1222" }} />
       <circle cx="16" cy="14.4" r="1.7" fill="#22d3ee" />
@@ -35,9 +35,9 @@ export function Logo({ name = "SiteSentinel", variant = "brand", className, suff
   const split = name === "SiteSentinel";
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-2.5", className)}>
-      <LogoSymbol variant={variant} />
-      <span className="truncate text-[17px] leading-none tracking-[-0.02em]">
-        {split ? (<><span className="font-medium">Site</span><span className="font-bold">Sentinel</span></>) : <span className="font-semibold">{name}</span>}
+      <LogoSymbol variant={variant} className="h-6 w-6" />
+      <span className="truncate text-[15px] font-semibold leading-none tracking-[-0.015em]">
+        {split ? (<><span>Site</span><span>Sentinel</span></>) : <span>{name}</span>}
       </span>
       {suffix}
     </span>

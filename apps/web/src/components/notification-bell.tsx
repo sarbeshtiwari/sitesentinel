@@ -19,14 +19,30 @@ const PERMISSION_TEXT: Record<DesktopPermission, string> = {
 // DropdownItem greys its icons; severity colours need the important modifier (literal classes for Tailwind).
 const MENU_ICON: Record<string, string> = { "text-danger": "!text-danger", "text-warning": "!text-warning", "text-info": "!text-info", "text-success": "!text-success" };
 
-/** "Enable desktop notifications" with the current state. Asks for permission only on click. */
-export function DesktopNotificationControl({ className }: { className?: string }) {
+/** "Enable desktop notifications" with the current state. Asks for permission only on click.
+ *  `banner`: the call-to-action strip on the notifications page; shown only while the permission can still be asked. */
+export function DesktopNotificationControl({ className, banner }: { className?: string; banner?: boolean }) {
   const { permission, request } = useDesktopPermission();
   const ask = async () => {
     const p = await request();
     if (p === "granted") toast.success("Desktop notifications enabled");
     else if (p === "denied") toast.error("Desktop notifications were blocked by the browser");
   };
+  if (banner) {
+    if (permission !== "default" && permission !== "denied") return null;
+    return (
+      <div className={cn("flex flex-col gap-3 rounded-lg bg-primary-soft/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between", className)}>
+        <div className="flex min-w-0 items-start gap-2.5">
+          <MonitorSmartphone className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+          <div className="grid gap-0.5">
+            <span className="text-sm font-medium text-primary">{permission === "denied" ? "Desktop notifications are blocked" : "Get alerts even when this tab is in the background"}</span>
+            <span className="text-[13px] text-foreground/80">{permission === "denied" ? PERMISSION_TEXT.denied : "Turn on desktop notifications. They arrive while the app is open in a tab."}</span>
+          </div>
+        </div>
+        {permission === "default" && <Button size="sm" className="self-start sm:self-auto" onClick={ask}><BellRing />Enable desktop notifications</Button>}
+      </div>
+    );
+  }
   return (
     <div className={cn("flex flex-wrap items-center justify-between gap-3", className)}>
       <div className="flex min-w-0 items-start gap-2.5">

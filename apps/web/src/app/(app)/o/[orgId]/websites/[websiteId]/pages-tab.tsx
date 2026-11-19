@@ -1,10 +1,11 @@
 "use client";
-import { Alert, Badge, EmptyState, Input, Pagination, Select, Table, TBody, TD, TH, THead, TR, Tooltip, type BadgeTone } from "@wim/ui";
-import { ArrowDown, ArrowUp, ArrowUpDown, FileText, Search } from "lucide-react";
+import { Alert, Badge, Card, EmptyState, FilterChip, Input, Pagination, Select, Table, TBody, TD, TH, THead, TR, Tooltip, type BadgeTone } from "@wim/ui";
+import { ArrowDown, ArrowUp, ArrowUpDown, FileText, ScanSearch, Search } from "lucide-react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { cn } from "@wim/ui";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { FilterSelect, QueryState, Section } from "@/components/monitoring";
+import { QueryState } from "@/components/monitoring";
 import { get } from "@/lib/api";
 import { fmtMs, fmtTime, mk, useDebounced } from "@/lib/monitoring";
 import { PerfBadge } from "./performance-tab";
@@ -37,7 +38,7 @@ export function ScoreBadge({ score, band, basis }: { score: number | null; band:
   return (
     <Tooltip content={tip}>
       <span tabIndex={0} className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        {score === null ? <Badge>Not checked yet</Badge> : <Badge tone={BAND[band ?? ""]?.tone ?? "neutral"} aria-label={`Score ${score} of 100, ${BAND[band ?? ""]?.label ?? ""}`}><span className="tabular-nums font-semibold">{score}</span><span className="sr-only sm:not-sr-only">· {BAND[band ?? ""]?.label}</span></Badge>}
+        {score === null ? <Badge>Not checked yet</Badge> : <Badge tone={BAND[band ?? ""]?.tone ?? "neutral"} className="min-w-10 justify-center whitespace-nowrap" aria-label={`Score ${score} of 100, ${BAND[band ?? ""]?.label ?? ""}`}><span className="tabular-nums font-semibold">{score}</span><span className="sr-only">· {BAND[band ?? ""]?.label}</span></Badge>}
       </span>
     </Tooltip>
   );
@@ -81,13 +82,13 @@ interface PagesResp {
   scope: { browserPath: string; browserMonitoring: boolean; note: string };
 }
 type SortKey = "path" | "score" | "findings";
-const FILTERS: Array<[string, string]> = [["all", "All pages"], ["with_findings", "With open findings"], ["not_checked", "Not checked yet"], ["failed", "Failed"], ["skipped", "Skipped"]];
+const FILTERS: Array<[string, string, keyof PagesResp["summary"]]> = [["all", "All", "total"], ["with_findings", "With issues", "withFindings"], ["failed", "Broken", "failed"], ["not_checked", "Not checked yet", "notChecked"], ["skipped", "Skipped", "skipped"]];
 const STOP: Record<string, string> = { DURATION: "stopped at the time limit", PAGE_LIMIT: "stopped at the page limit", REQUEST_BUDGET: "used up its request budget", DAILY_QUOTA: "hit the daily page quota", CANCELLED: "was cancelled", INFRASTRUCTURE: "was interrupted by our infrastructure" };
 
 function SortTH({ k, sort, onSort, children, className }: { k: SortKey; sort: { key: SortKey; dir: "asc" | "desc" }; onSort: (k: SortKey) => void; children: React.ReactNode; className?: string }) {
   return (
     <TH className={className} aria-sort={sort.key === k ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
-      <button type="button" className="inline-flex cursor-pointer items-center gap-1 hover:text-foreground" onClick={() => onSort(k)}>
+      <button type="button" className="inline-flex cursor-pointer items-center gap-1 uppercase tracking-[0.07em] hover:text-foreground" onClick={() => onSort(k)}>
         {children}{sort.key === k ? (sort.dir === "asc" ? <ArrowUp className="h-3 w-3" aria-hidden /> : <ArrowDown className="h-3 w-3" aria-hidden />) : <ArrowUpDown className="h-3 w-3 opacity-50" aria-hidden />}
       </button>
     </TH>
@@ -121,17 +122,25 @@ export function PagesTab({ orgId, websiteId }: { orgId: string; websiteId: strin
           {d?.runningScan ? " A scan is running now." : ""}
         </Alert>
       )}
-      <Section title="Pages" icon={<FileText />} flush
-        description={d ? <>Every page we know of: pages checked by deep scans, pages found in your sitemap or through links that haven't been checked yet, and the browser-monitored page (<code className="font-mono">{d.scope.browserPath}</code>{d.scope.browserMonitoring ? "" : ", browser monitoring not active"}).</> : "Pages discovered by deep scans and browser monitoring."}>
-        <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between sm:px-5">
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="grid gap-1 text-xs font-medium text-muted-foreground">Search URL or title
-              <span className="relative"><Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle-foreground" aria-hidden /><Input className="h-9 pl-8 sm:w-56" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="/blog" /></span>
-            </label>
-            <FilterSelect label="Show" value={filter} onChange={setFilter} options={FILTERS} />
+      {d && (
+        <p className="flex items-start gap-2 text-sm text-muted-foreground"><ScanSearch className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span>Every page we know of: pages checked by deep scans, pages found in your sitemap or through links that haven&apos;t been checked yet, and the browser-monitored page (<code className="font-mono">{d.scope.browserPath}</code>{d.scope.browserMonitoring ? "" : ", browser monitoring not active"}).
+            {ls?.finishedAt ? ` Last scan ${fmtTime(ls.finishedAt)}.` : ""}{d.runningScan ? " A scan is running now." : ""}</span></p>
+      )}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <label className="relative block">
+            <span className="sr-only">Search URL or title</span>
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle-foreground" aria-hidden />
+            <Input className="h-9 pl-8 sm:w-64" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search URL or title" />
+          </label>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Show">
+            {FILTERS.map(([v, label, key]) => <FilterChip key={v} selected={filter === v} count={d ? d.summary[key] : undefined} onClick={() => setFilter(v)}>{label}</FilterChip>)}
           </div>
-          {d && <p className="text-sm text-muted-foreground"><span className="font-semibold tabular-nums text-foreground">{d.total}</span> page{d.total === 1 ? "" : "s"}{d.total !== d.summary.total ? ` of ${d.summary.total}` : ""}{d.summary.notChecked ? ` · ${d.summary.notChecked} not checked yet` : ""}</p>}
         </div>
+        {d && <p className="text-sm text-muted-foreground"><span className="font-semibold tabular-nums text-foreground">{d.total}</span> page{d.total === 1 ? "" : "s"}{d.total !== d.summary.total ? ` of ${d.summary.total}` : ""}{d.summary.notChecked ? ` · ${d.summary.notChecked} not checked yet` : ""}</p>}
+      </div>
+      <Card className="overflow-hidden">
         <QueryState q={q} skeleton="h-40 m-4">
           {!rows.length ? (
             d && d.summary.total === 0
@@ -141,8 +150,8 @@ export function PagesTab({ orgId, websiteId }: { orgId: string; websiteId: strin
             <>
               <Table aria-busy={q.isFetching}>
                 <THead><TR>
-                  <SortTH k="path" sort={sort} onSort={toggle}>Page</SortTH>
                   <SortTH k="score" sort={sort} onSort={toggle}>Score</SortTH>
+                  <SortTH k="path" sort={sort} onSort={toggle}>Page</SortTH>
                   <SortTH k="findings" sort={sort} onSort={toggle} className="hidden sm:table-cell">Open findings</SortTH>
                   <TH className="hidden md:table-cell">Status</TH>
                   <TH className="hidden md:table-cell">Monitoring</TH>
@@ -150,12 +159,13 @@ export function PagesTab({ orgId, websiteId }: { orgId: string; websiteId: strin
                 </TR></THead>
                 <TBody>{rows.map((p) => (
                   <TR key={p.id}>
-                    <TD className="max-w-80">
-                      <Link href={`${base}/${p.id}`} className="break-all font-mono text-xs font-medium hover:text-primary">{p.path}</Link>
-                      {p.title && <div className="truncate text-xs text-muted-foreground">{p.title}</div>}
-                      {p.state !== "CHECKED" && <div className="truncate text-xs text-subtle-foreground">{provenance(p)}</div>}
-                    </TD>
                     <TD><ScoreBadge score={p.score} band={p.scoreBand} basis={p.scoreBasis} /></TD>
+                    <TD className="max-w-80">
+                      <Link href={`${base}/${p.id}`} className="break-all font-mono text-[13px] font-medium hover:text-primary">{p.path}</Link>
+                      {p.title && <div className="truncate text-xs text-muted-foreground">{p.title}</div>}
+                      <div className={cn("truncate text-xs", p.source === "CRAWL" && !p.inSitemap ? "text-warning-text" : "text-subtle-foreground")}>{provenance(p)}</div>
+                      <div className="mt-1 md:hidden"><PageStatusBadge p={p} /></div>
+                    </TD>
                     <TD className="hidden text-xs sm:table-cell">
                       {p.openFindings > 0
                         ? <Link href={`${base}/${p.id}`} className="grid gap-1 hover:text-primary"><span className="font-medium">{p.openFindings} open finding{p.openFindings === 1 ? "" : "s"}</span><SeverityChips counts={p.bySeverity} /></Link>
@@ -180,7 +190,7 @@ export function PagesTab({ orgId, websiteId }: { orgId: string; websiteId: strin
             </>
           )}
         </QueryState>
-      </Section>
+      </Card>
     </div>
   );
 }

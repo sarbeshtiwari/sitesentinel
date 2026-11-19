@@ -1,13 +1,14 @@
 "use client";
-import { Alert, Badge, Button, ConfirmDialog, EmptyState, Input, MetricCard, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
+import { Alert, Badge, Button, ConfirmDialog, EmptyState, MetricCard, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, CheckCircle2, FileSearch, History, ListTree, Loader2, Pause, Play, ScanSearch, ShieldAlert, Square, Timer, Unlink } from "lucide-react";
+import { CalendarClock, ChevronDown, FileSearch, History, ListTree, Loader2, Pause, Play, ScanSearch, Square, Timer, Unlink } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { DataEnvelope } from "@wim/contracts";
-import { FilterSelect, Hint, QueryState, Section } from "@/components/monitoring";
+import { Hint, QueryState, Section } from "@/components/monitoring";
 import { errorMessage, get, post } from "@/lib/api";
-import { fmtDuration, fmtTime, mk, SCAN_STATUS, SEVERITY_TONE, useDebounced } from "@/lib/monitoring";
+import { fmtDuration, fmtTime, mk, SCAN_STATUS } from "@/lib/monitoring";
+import { useDeepSummary } from "./website-data";
 
 export interface ScanDto {
   executionId: string; trigger: string; status: string; complete: boolean; stopReason: string | null;
@@ -17,12 +18,6 @@ export interface ScanDto {
 export interface FindingDto {
   id: string; category: string; group: string; severity: string; status: string; subject: string; title: string; evidence: Record<string, unknown>;
   impact: string | null; recommendation: string; detectionMethod: string; automated: boolean; occurrenceCount: number; firstDetectedAt: string; lastDetectedAt: string; resolvedAt: string | null;
-}
-interface SummaryDto {
-  entitled: boolean; enabled: boolean; pausedReason: string | null; resuming?: boolean; nextRunAt: string | null; latestScan: ScanDto | null;
-  /** a scan waiting for the scanner (no scan record yet) */
-  pending?: { executionId: string; status: string; queuedAt: string } | null;
-  openFindings: Array<{ group: string; severity: string; count: number }>; openSitemapBroken?: number; effectiveLimits: { maxPages: number; maxDepth: number; browserPages: number; externalLinks: boolean };
 }
 const HTTP_TEXT: Record<number, string> = { 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 408: "Request Timeout", 410: "Gone", 429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout" };
 const ERROR_TEXT: Record<string, string> = { TIMEOUT: "the request timed out", DNS: "the domain name did not resolve", CONNECTION: "the connection failed", TLS: "the HTTPS certificate was rejected", REDIRECT_LOOP: "redirects loop", TOO_MANY_REDIRECTS: "too many redirects" };
@@ -67,22 +62,18 @@ export function ScanStatusBadge({ s }: { s: Pick<ScanDto, "status" | "complete" 
   return <span className="inline-flex items-center gap-1.5"><Badge tone={st.tone} title={st.help}>{st.label}</Badge>{s.status === "COMPLETED" && !s.complete && <Badge tone="warning" title="Limits stopped part of the site from being checked">Limited coverage</Badge>}</span>;
 }
 
-export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { orgId: string; websiteId: string; canWrite: boolean; entitledReason: string | null }) {
+
+/**
+ * Deep scan controls and the latest scan, shown compactly at the top of the Issues tab (findings themselves are in the
+ * merged issue list below it). Start / cancel / pause / resume, the queued state, latest-scan cards and the scan history.
+ */
+export function DeepScanPanel({ orgId, websiteId, canWrite, entitledReason, defaultOpenHistory = false }: { orgId: string; websiteId: string; canWrite: boolean; entitledReason: string | null; defaultOpenHistory?: boolean }) {
   const qc = useQueryClient();
   const base = `/orgs/${orgId}/websites/${websiteId}/deep-scan`;
   // A requested scan exists only as a queued job until the scanner picks it up: poll quickly until it shows up.
   const [pending, setPending] = useState<{ executionId: string; since: number } | null>(null);
-  const sum = useQuery({
-    queryKey: mk.deep(orgId, websiteId), queryFn: ({ signal }) => get<DataEnvelope<SummaryDto>>(base, { signal }).then((r) => r.data),
-    refetchInterval: (q) => (pending || q.state.data?.pending || q.state.data?.resuming ? 2000 : q.state.data?.latestScan?.status === "RUNNING" ? 3000 : false),
-  });
+  const sum = useDeepSummary(orgId, websiteId, (q) => (pending || q.state.data?.pending || q.state.data?.resuming ? 2000 : q.state.data?.latestScan?.status === "RUNNING" ? 3000 : false));
   const scans = useQuery({ queryKey: [...mk.deep(orgId, websiteId), "scans"], queryFn: ({ signal }) => get<DataEnvelope<ScanDto[]>>(`${base}/scans?limit=20`, { signal }).then((r) => r.data) });
-  const [f, setF] = useState({ status: "OPEN", group: "", severity: "", url: "" });
-  const url = useDebounced(f.url);
-  const findings = useQuery({
-    queryKey: [...mk.deep(orgId, websiteId), "findings", { ...f, url }],
-    queryFn: ({ signal }) => get<DataEnvelope<FindingDto[]>>(`${base}/findings?${new URLSearchParams({ status: f.status, limit: "200", ...(f.group ? { group: f.group } : {}), ...(f.severity ? { severity: f.severity } : {}), ...(url ? { url } : {}) })}`, { signal }).then((r) => r.data),
-  });
   const [confirm, setConfirm] = useState<null | "cancel">(null);
   const [busy, setBusy] = useState<null | "start" | "schedule" | "cancel">(null);
   const act = async <T,>(kind: NonNullable<typeof busy>, fn: () => Promise<T>, ok: string): Promise<T | undefined> => {
@@ -112,7 +103,7 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
   const pagePath = `/o/${orgId}/websites/${websiteId}/deep-scan`;
 
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-4">
       <QueryState q={sum}>
         {s && !s.entitled && !scans.data?.length ? (
           <Section title="Deep scans" icon={<ScanSearch />}>
@@ -146,7 +137,7 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
                   {slow ? "The scanner hasn't picked it up. The deep-scan worker may not be running; you can cancel the queued scan and start a new one once it is." : "This usually takes a few seconds; the page updates on its own."}
                 </Alert>
               )}
-              {!latest ? <EmptyState icon={<ScanSearch />} title="No scan has run yet." description={canWrite && s.enabled ? "Start a scan now, or wait for the next scheduled one." : undefined} /> : (
+              {!latest ? <EmptyState className="border-0 py-6" icon={<ScanSearch />} title="No scan has run yet." description={canWrite && s.enabled ? "Start a scan now, or wait for the next scheduled one." : undefined} /> : (
                 <div className="grid gap-4">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-sunken/50 px-3.5 py-2.5 text-sm">
                     {running ? <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden /> : <CalendarClock className="h-4 w-4 text-muted-foreground" aria-hidden />}
@@ -160,59 +151,35 @@ export function DeepScanTab({ orgId, websiteId, canWrite, entitledReason }: { or
                     <MetricCard label="SEO / structure" icon={<ListTree />} tone={count("seo") + count("structure") + count("sitemap") - sitemapBroken ? "warning" : "neutral"} value={count("seo") + count("structure") + count("sitemap") - sitemapBroken} hint={`${count("accessibility")} accessibility (automated)`} />
                     <MetricCard label="Duration" icon={<Timer />} tone="info" value={latest.finishedAt && latest.stopReason !== "ABANDONED" ? fmtDuration(Math.round((new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) / 1000)) : "—"} hint={latest.stopReason === "ABANDONED" ? "The scan stopped without finishing" : `${latest.requests} requests · ${latest.coverage.resourcesChecked} resources`} />
                   </div>
-                  {completed && <Hint>Last completed scan: <Link className="text-foreground hover:text-primary" href={`${pagePath}/scans/${completed.executionId}`}>{fmtTime(completed.startedAt)}</Link>. Limits: up to {s.effectiveLimits.maxPages} pages, depth {s.effectiveLimits.maxDepth}{s.effectiveLimits.browserPages ? ", browser-assisted discovery" : ""}{s.effectiveLimits.externalLinks ? ", external links" : ""}. <Link className="text-primary hover:underline" href={`/o/${orgId}/usage`}>Usage against quota</Link></Hint>}
+                  {completed && <Hint>Last completed scan: <Link className="text-foreground hover:text-primary" href={`${pagePath}/scans/${completed.executionId}`}>{fmtTime(completed.startedAt)}</Link>. Limits: up to {s.effectiveLimits.maxPages} pages, depth {s.effectiveLimits.maxDepth}{s.effectiveLimits.browserPages ? ", browser-assisted discovery" : ""}{s.effectiveLimits.externalLinks ? ", external links" : ""}. <Link className="text-primary hover:underline" href={`/o/${orgId}/usage`}>Usage against quota</Link> · <Link className="text-primary hover:underline" href={`/o/${orgId}/websites/${websiteId}?tab=settings&section=monitoring`}>Scan settings</Link></Hint>}
                 </div>
               )}
-            </Section>
-            <Section title="Findings" icon={<ShieldAlert />} flush>
-              <div className="border-b border-border px-4 py-3 sm:px-5">
-              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-end [&_select]:min-w-0 sm:[&_select]:min-w-36">
-                <FilterSelect label="Status" value={f.status} onChange={(v) => setF({ ...f, status: v })} options={[["OPEN", "Open"], ["RESOLVED", "Resolved"], ["ALL", "All"]]} />
-                <FilterSelect label="Category" value={f.group} onChange={(v) => setF({ ...f, group: v })} options={[["", "All"], ...Object.entries(GROUP_LABEL)]} />
-                <FilterSelect label="Severity" value={f.severity} onChange={(v) => setF({ ...f, severity: v })} options={[["", "All"], ["CRITICAL", "Critical"], ["HIGH", "High"], ["MEDIUM", "Medium"], ["LOW", "Low"], ["INFO", "Info"]]} />
-                <label className="grid gap-1 text-xs font-medium text-muted-foreground">URL contains<Input className="h-9 sm:w-44" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="/blog" /></label>
-              </div>
-              </div>
-              <QueryState q={findings} skeleton="h-40 m-4">
-                {!findings.data?.length ? <p className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground sm:px-5"><CheckCircle2 className="h-4 w-4 text-success" aria-hidden />No findings match.</p> : (
-                  <Table>
-                    <THead><TR><TH>Finding</TH><TH>Severity</TH><TH className="hidden md:table-cell">Where</TH><TH className="hidden lg:table-cell">Seen</TH><TH>Status</TH></TR></THead>
-                    <TBody>
-                      {findings.data.map((x) => (
-                        <TR key={x.id}>
-                          <TD className="max-w-96"><Link className="font-medium hover:text-primary" href={`${pagePath}/findings/${x.id}`}>{x.title}</Link><div className="text-xs text-muted-foreground">{GROUP_LABEL[x.group] ?? x.group}</div>{(() => { const why = findingReason(x.evidence); return why ? <div className="mt-0.5 text-xs text-foreground/80">{why}</div> : null; })()}</TD>
-                          <TD><Badge tone={SEVERITY_TONE[x.severity]}>{x.severity}</Badge></TD>
-                          <TD className="hidden max-w-72 truncate font-mono text-xs md:table-cell">{x.subject}</TD>
-                          <TD className="hidden text-xs text-muted-foreground lg:table-cell">{x.occurrenceCount}× · last {fmtTime(x.lastDetectedAt)}</TD>
-                          <TD><Badge tone={x.status === "OPEN" ? "warning" : "success"}>{x.status === "OPEN" ? "Open" : "Resolved"}</Badge></TD>
-                        </TR>
-                      ))}
-                    </TBody>
-                  </Table>
-                )}
-              </QueryState>
-            </Section>
-            <Section title="Scan history" icon={<History />} flush>
-              <QueryState q={scans} skeleton="h-32 m-4">
-                {!scans.data?.length ? <p className="px-4 py-6 text-sm text-muted-foreground sm:px-5">No scans yet.</p> : (
-                  <>
-                    <Table>
-                      <THead><TR><TH>Started</TH><TH>Status</TH><TH className="hidden md:table-cell">Pages checked</TH><TH className="hidden md:table-cell">Findings</TH><TH className="hidden lg:table-cell">Trigger</TH></TR></THead>
-                      <TBody>
-                        {scans.data.map((x) => (
-                          <TR key={x.executionId}>
-                            <TD className="whitespace-nowrap text-xs"><Link className="font-medium hover:text-primary" href={`${pagePath}/scans/${x.executionId}`}>{fmtTime(x.startedAt)}</Link></TD>
-                            <TD><ScanStatusBadge s={x} /></TD>
-                            <TD className="hidden tabular-nums md:table-cell">{x.coverage.pagesChecked} / {x.coverage.pagesDiscovered}</TD>
-                            <TD className="hidden text-xs tabular-nums md:table-cell"><span className="text-danger">+{x.findingsOpened}</span> <span className="text-muted-foreground">·</span> <span className="text-success">−{x.findingsResolved}</span></TD>
-                            <TD className="hidden text-xs lg:table-cell">{x.trigger === "MANUAL" ? "Manual" : "Scheduled"}</TD>
-                          </TR>
-                        ))}
-                      </TBody>
-                    </Table>
-                  </>
-                )}
-              </QueryState>
+              <details className="group mt-4 rounded-lg border border-border" open={defaultOpenHistory || undefined}>
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-2.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                  <span className="inline-flex items-center gap-2"><History className="h-4 w-4 text-muted-foreground" aria-hidden />Scan history{scans.data ? <span className="text-xs font-normal tabular-nums text-muted-foreground">{scans.data.length}</span> : null}</span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden />
+                </summary>
+                <div className="border-t border-border">
+                  <QueryState q={scans} skeleton="h-32 m-4">
+                    {!scans.data?.length ? <p className="px-4 py-6 text-sm text-muted-foreground">No scans yet.</p> : (
+                      <Table>
+                        <THead><TR><TH>Started</TH><TH>Status</TH><TH className="hidden md:table-cell">Pages checked</TH><TH className="hidden md:table-cell">Findings</TH><TH className="hidden lg:table-cell">Trigger</TH></TR></THead>
+                        <TBody>
+                          {scans.data.map((x) => (
+                            <TR key={x.executionId}>
+                              <TD className="whitespace-nowrap text-xs"><Link className="font-medium hover:text-primary" href={`${pagePath}/scans/${x.executionId}`}>{fmtTime(x.startedAt)}</Link></TD>
+                              <TD><ScanStatusBadge s={x} /></TD>
+                              <TD className="hidden tabular-nums md:table-cell">{x.coverage.pagesChecked} / {x.coverage.pagesDiscovered}</TD>
+                              <TD className="hidden text-xs tabular-nums md:table-cell"><span className="text-danger">+{x.findingsOpened}</span> <span className="text-muted-foreground">·</span> <span className="text-success">−{x.findingsResolved}</span></TD>
+                              <TD className="hidden text-xs lg:table-cell">{x.trigger === "MANUAL" ? "Manual" : "Scheduled"}</TD>
+                            </TR>
+                          ))}
+                        </TBody>
+                      </Table>
+                    )}
+                  </QueryState>
+                </div>
+              </details>
             </Section>
           </>
         )}
