@@ -48,7 +48,7 @@ export default function FindingPage() {
     try { await navigator.clipboard.writeText(f.subject); toast.success("URL copied"); } catch { toast.error("Couldn't copy — select the text and copy it manually"); }
   };
   return (
-    <div className="pb-20 sm:pb-0">
+    <div className="pb-[calc(4.5rem+3.5rem+env(safe-area-inset-bottom))] sm:pb-0">
       <div className="mb-3"><Link href={issuesHref} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" aria-hidden /> Issues</Link></div>
       <QueryState q={q} skeleton="h-96">
         {f && (

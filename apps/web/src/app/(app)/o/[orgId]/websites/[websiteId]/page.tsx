@@ -13,6 +13,7 @@ import { IssuesTab } from "./issues-tab";
 import { PagesTab } from "./pages-tab";
 import { PerformanceTabs } from "./performance-tabs";
 import { SettingsTabs } from "./settings-tabs";
+import { SetupWizard, type SetupStep } from "../new/setup-steps";
 import {
   cleanDays, healthSentence, HEALTH_PILL, resolveTab, tabHref, usePagesTotal, useAvailability30d, useWebsiteProblems, websiteHealth, type Tab,
 } from "./website-data";
@@ -52,6 +53,11 @@ export default function WebsiteDetailPage() {
     );
   }
   const w = site.data;
+  // Add website wizard, steps 2–4 (verify → install → alerts) for a website just created in step 1.
+  const setup = params.get("setup");
+  if ((setup === "verify" || setup === "install" || setup === "alerts") && can("website:write")) {
+    return <SetupWizard w={w} orgId={orgId} step={setup} onStep={(s: SetupStep) => router.replace(`/o/${orgId}/websites/${w.id}?tab=${s === "verify" ? "verification" : "installation"}&setup=${s}`, { scroll: false })} />;
+  }
   const m = overview.data?.websites.find((x) => x.id === w.id);
   const ent = sched.data?.entitlements;
   const verified = w.verification === "VERIFIED";

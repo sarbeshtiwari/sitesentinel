@@ -1,15 +1,18 @@
 "use client";
-import { Badge, Card, cn, EmptyState, FilterBar, PageHeader, Table, TBody, TD, TH, THead, TR } from "@wim/ui";
+import { Card, cn, EmptyState, FilterChip, PageHeader, SeverityBadge, StatusPill, Table, TBody, TD, TH, THead, TR } from "@wim/ui";
 import { CheckCircle2, SearchX } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
-import { Dot, FilterSelect, LoadMore, QueryState } from "@/components/monitoring";
+import { LoadMore, QueryState } from "@/components/monitoring";
+import { ChipDivider, ChipRow, ChipSelect } from "@/components/org-ui";
 import { useOrg } from "@/lib/hooks";
-import { fmtDuration, fmtTime, INCIDENT_STATUS, presetRange, SEVERITY_TONE, SOURCE_LABEL, useIncidents } from "@/lib/monitoring";
+import { fmtDuration, fmtTime, INCIDENT_STATUS, presetRange, SOURCE_LABEL, useIncidents } from "@/lib/monitoring";
 import { useWebsites } from "@/lib/websites";
+import { AREA_LABEL, incidentArea } from "../websites/[websiteId]/website-data";
 
-const STATUSES: Array<[string, string]> = [["ACTIVE", "Active (open, acknowledged, reopened)"], ["OPEN", "Open"], ["ACKNOWLEDGED", "Acknowledged"], ["REOPENED", "Reopened"], ["RESOLVED", "Resolved"], ["ALL", "All"]];
+const STATUSES: Array<[string, string]> = [["ACTIVE", "Active"], ["OPEN", "Open"], ["ACKNOWLEDGED", "Acknowledged"], ["REOPENED", "Reopened"], ["RESOLVED", "Resolved"], ["ALL", "All"]];
+const STATUS_HELP = "Active = open, acknowledged or reopened";
 
 export default function IncidentsPage() {
   const { orgId } = useOrg();
@@ -32,14 +35,17 @@ export default function IncidentsPage() {
 
   return (
     <>
-      <PageHeader title="Incidents" description="Problems detected by HTTP, browser and deep-scan monitoring, grouped into incidents. Times in your time zone." />
-      <FilterBar>
-        <FilterSelect label="Status" value={f.status} onChange={(v) => set("status", v)} options={STATUSES} />
-        <FilterSelect label="Severity" value={f.severity} onChange={(v) => set("severity", v)} options={[["", "All"], ["CRITICAL", "Critical"], ["HIGH", "High"], ["MEDIUM", "Medium"], ["LOW", "Low"], ["INFO", "Info"]]} />
-        <FilterSelect label="Source" value={f.source} onChange={(v) => set("source", v)} options={[["", "All"], ["HTTP", "HTTP availability"], ["BROWSER", "Browser"], ["DEEP_SCAN", "Deep scan"]]} />
-        <FilterSelect label="Website" value={f.websiteId} onChange={(v) => set("websiteId", v)} options={[["", "All websites"], ...(sites.data ?? []).map((w) => [w.id, w.name] as [string, string])]} />
-        <FilterSelect label="Active during" value={f.since} onChange={(v) => set("since", v)} options={[["", "Any time"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]]} />
-      </FilterBar>
+      <PageHeader title="Issues" description="Problems detected by HTTP, browser and deep-scan monitoring, grouped into incidents across your websites. Deep-scan findings of each page are on the website's Issues tab. Times in your time zone." />
+      <ChipRow label="Filter issues">
+        <div role="radiogroup" aria-label="Status" title={STATUS_HELP} className="flex flex-wrap gap-1.5">
+          {STATUSES.map(([v, l]) => <FilterChip key={v} role="radio" aria-checked={f.status === v} aria-pressed={undefined} selected={f.status === v} onClick={() => set("status", v === "ACTIVE" ? "" : v)}>{l}</FilterChip>)}
+        </div>
+        <ChipDivider />
+        <ChipSelect label="Website" value={f.websiteId} onChange={(v) => set("websiteId", v)} options={[["", "All websites"], ...(sites.data ?? []).map((w) => [w.id, w.name] as [string, string])]} />
+        <ChipSelect label="Area (detected by)" value={f.source} onChange={(v) => set("source", v)} options={[["", "All areas"], ["HTTP", "Availability (HTTP)"], ["BROWSER", "Browser checks"], ["DEEP_SCAN", "Deep scan"]]} />
+        <ChipSelect label="Severity" value={f.severity} onChange={(v) => set("severity", v)} options={[["", "Any severity"], ["CRITICAL", "Critical"], ["HIGH", "High"], ["MEDIUM", "Medium"], ["LOW", "Low"], ["INFO", "Info"]]} />
+        <ChipSelect label="Active during" value={f.since} onChange={(v) => set("since", v)} options={[["", "Any time"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"]]} />
+      </ChipRow>
       <QueryState q={q}>
         {!rows.length ? (
           // "Nothing is failing" is only true when no other filter narrows the active list.
@@ -47,36 +53,33 @@ export default function IncidentsPage() {
             ? <EmptyState icon={<CheckCircle2 />} title="No active incidents" description="Nothing is failing right now. Incidents open automatically when monitoring confirms a problem, and recover automatically." />
             : <EmptyState icon={<SearchX />} title="No incidents match" description="Try other filters." />
         ) : (
-          <Card className="overflow-hidden">
+          <>
             {/* Cards on small screens */}
-            <ul className="divide-y divide-border md:hidden">
+            <ul className="grid gap-2.5 md:hidden">
               {rows.map((i) => {
                 const st = INCIDENT_STATUS[i.status] ?? { label: i.status, tone: "neutral" as const };
                 const active = i.status !== "RESOLVED" && i.status !== "IGNORED";
                 return (
                   <li key={i.id}>
-                    <Link href={`/o/${orgId}/incidents/${i.id}`} className="flex items-start gap-3 px-4 py-3 hover:bg-sunken/70">
-                      <span className="mt-1.5"><Dot tone={active ? SEVERITY_TONE[i.severity] ?? "neutral" : "neutral"} /></span>
-                      <span className="min-w-0 flex-1">
-                        <span className={cn("block text-sm", active ? "font-medium" : "text-muted-foreground")}>INC-{i.number} · {i.title}</span>
-                        <span className="block truncate text-xs text-muted-foreground">{i.websiteName}{i.source ? ` · ${SOURCE_LABEL[i.source] ?? i.source}` : ""}</span>
-                        <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <Badge tone={st.tone}>{st.label}</Badge>
-                          <Badge tone={active ? SEVERITY_TONE[i.severity] : "neutral"}>{i.severity}</Badge>
-                          <span className="text-xs text-muted-foreground">since {fmtTime(i.firstDetectedAt)} · <span className="tabular-nums">{i.occurrenceCount}</span> occurrences</span>
-                        </span>
-                      </span>
-                    </Link>
+                    <Card className="relative px-4 py-3.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <SeverityBadge severity={i.severity} />
+                        <span className="text-xs tabular-nums text-muted-foreground">{fmtDuration(i.durationSec)}{active ? " so far" : ""}</span>
+                      </div>
+                      <Link href={`/o/${orgId}/incidents/${i.id}`} className={cn("mt-1.5 block font-semibold after:absolute after:inset-0", !active && "font-medium text-muted-foreground")}><span className="sr-only">INC-{i.number} · </span>{i.title}</Link>
+                      <p className="mt-0.5 truncate text-[13px] text-muted-foreground">{i.websiteName} · {AREA_LABEL[incidentArea(i)]}</p>
+                      <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><StatusPill tone={st.tone}>{st.label}</StatusPill><span>INC-{i.number} · {i.occurrenceCount} occurrences</span></p>
+                    </Card>
                   </li>
                 );
               })}
             </ul>
             {/* Table from md up */}
-            <div className="hidden md:block">
+            <Card className="hidden overflow-hidden md:block">
               <Table>
                 <THead><TR>
-                  <TH>Incident</TH><TH>Status</TH><TH>Severity</TH><TH className="hidden md:table-cell">Source</TH>
-                  <TH className="hidden lg:table-cell">First detected</TH><TH className="hidden lg:table-cell">Last detected</TH><TH className="hidden text-right md:table-cell">Occurrences</TH><TH className="hidden xl:table-cell">Duration</TH>
+                  <TH>Issue</TH><TH>Severity</TH><TH className="hidden lg:table-cell">Website</TH><TH>Started</TH><TH className="hidden xl:table-cell">Last detected</TH>
+                  <TH className="hidden text-right xl:table-cell">Occurrences</TH><TH>Duration</TH><TH>Status</TH>
                 </TR></THead>
                 <TBody>
                   {rows.map((i) => {
@@ -85,29 +88,27 @@ export default function IncidentsPage() {
                     return (
                       <TR key={i.id} className={active ? "" : "text-muted-foreground"}>
                         <TD className="max-w-md">
-                          <div className="flex items-start gap-2.5">
-                            <span className="mt-1.5"><Dot tone={active ? SEVERITY_TONE[i.severity] ?? "neutral" : "neutral"} /></span>
-                            <div className="min-w-0">
-                              <Link href={`/o/${orgId}/incidents/${i.id}`} className={cn("hover:text-primary", active ? "font-medium text-foreground" : "font-normal")}>INC-{i.number} · {i.title}</Link>
-                              <div className="truncate text-xs text-muted-foreground">{i.websiteName}</div>
-                            </div>
-                          </div>
+                          <Link href={`/o/${orgId}/incidents/${i.id}`} className={cn("hover:text-primary", active ? "font-medium text-foreground" : "font-normal")}><span className="sr-only">INC-{i.number} · </span>{i.title}</Link>
+                          <div className="truncate text-xs text-muted-foreground">{AREA_LABEL[incidentArea(i)]} · {SOURCE_LABEL[i.source ?? ""] ?? i.source} · INC-{i.number}<span className="lg:hidden"> · {i.websiteName}</span></div>
                         </TD>
-                        <TD><Badge tone={st.tone}>{st.label}</Badge></TD>
-                        <TD><Badge tone={active ? SEVERITY_TONE[i.severity] : "neutral"}>{i.severity}</Badge></TD>
-                        <TD className="hidden whitespace-nowrap text-xs md:table-cell">{SOURCE_LABEL[i.source ?? ""] ?? i.source}</TD>
-                        <TD className="hidden whitespace-nowrap text-xs tabular-nums lg:table-cell">{fmtTime(i.firstDetectedAt)}</TD>
-                        <TD className="hidden whitespace-nowrap text-xs tabular-nums lg:table-cell">{fmtTime(i.lastDetectedAt)}</TD>
-                        <TD className="hidden text-right tabular-nums md:table-cell">{i.occurrenceCount}</TD>
-                        <TD className="hidden whitespace-nowrap text-xs xl:table-cell">{fmtDuration((i as { durationSec?: number }).durationSec)}{active ? " (ongoing)" : ""}</TD>
+                        <TD><SeverityBadge severity={i.severity} /></TD>
+                        <TD className="hidden max-w-48 truncate lg:table-cell">{i.websiteName}</TD>
+                        <TD className="whitespace-nowrap text-xs tabular-nums">{fmtTime(i.firstDetectedAt)}</TD>
+                        <TD className="hidden whitespace-nowrap text-xs tabular-nums xl:table-cell">{fmtTime(i.lastDetectedAt)}</TD>
+                        <TD className="hidden text-right tabular-nums xl:table-cell">{i.occurrenceCount}</TD>
+                        <TD className="whitespace-nowrap text-xs">{fmtDuration(i.durationSec)}{active ? " (ongoing)" : ""}</TD>
+                        <TD><StatusPill tone={st.tone}>{st.label}</StatusPill></TD>
                       </TR>
                     );
                   })}
                 </TBody>
               </Table>
+            </Card>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>{rows.length} incident{rows.length === 1 ? "" : "s"} loaded{q.hasNextPage ? " · more available" : ""}</span>
             </div>
             <LoadMore q={q} />
-          </Card>
+          </>
         )}
       </QueryState>
     </>

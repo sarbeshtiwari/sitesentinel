@@ -4,8 +4,8 @@
  * problems (incidents of this website + deep-scan findings grouped by problem type) and the one health state.
  * Everything here is derived from existing API responses; nothing is invented.
  */
-import { useQuery } from "@tanstack/react-query";
-import type { DataEnvelope, HttpAnalyticsDto, IncidentSummaryDto, WebsiteDetailDto, WebsiteHealthDto } from "@wim/contracts";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import type { DataEnvelope, HttpAnalyticsDto, IncidentSummaryDto, WebsiteHealthDto } from "@wim/contracts";
 import type { BadgeTone } from "@wim/ui";
 import { get } from "@/lib/api";
 import { mk } from "@/lib/monitoring";
@@ -62,27 +62,39 @@ export function useDeepSummary(orgId: string, websiteId: string, refetchInterval
 }
 
 /** 30 days of HTTP availability, one bucket per day (the API picks daily buckets for ranges over 14 days). */
-export function useAvailability30d(orgId: string, websiteId: string) {
+function availability30dOptions(orgId: string, websiteId: string) {
   // whole minutes: the key stays stable between renders
   const to = new Date(Math.ceil(Date.now() / 600_000) * 600_000);
   const from = new Date(to.getTime() - 30 * 86_400_000);
   const range = { from: from.toISOString(), to: to.toISOString() };
-  return useQuery({
+  return {
     queryKey: [...mk.site(orgId, websiteId), "availability-30d", range.from],
-    queryFn: ({ signal }) => get<DataEnvelope<HttpAnalyticsDto>>(`/orgs/${orgId}/websites/${websiteId}/monitoring/http/analytics?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`, { signal }).then((r) => r.data),
+    queryFn: ({ signal }: { signal: AbortSignal }) => get<DataEnvelope<HttpAnalyticsDto>>(`/orgs/${orgId}/websites/${websiteId}/monitoring/http/analytics?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`, { signal }).then((r) => r.data),
     enabled: Boolean(orgId && websiteId),
-    placeholderData: (p) => p,
-  });
+  };
+}
+export function useAvailability30d(orgId: string, websiteId: string) {
+  return useQuery({ ...availability30dOptions(orgId, websiteId), placeholderData: (p: HttpAnalyticsDto | undefined) => p });
+}
+/** The same 30-day availability for several websites (shared cache with the website pages). Verified websites only. */
+export function useAvailability30dMany(orgId: string, websiteIds: string[]) {
+  return useQueries({ queries: websiteIds.map((id) => availability30dOptions(orgId, id)) });
 }
 
 /** Total of the page inventory, with the same query key the Pages tab uses for its first page (shared cache). */
-export function usePagesTotal(orgId: string, websiteId: string) {
+function pagesTotalOptions(orgId: string, websiteId: string) {
   const qs = new URLSearchParams({ page: "1", pageSize: "25", sort: "path:asc", filter: "all" });
-  return useQuery({
+  return {
     queryKey: [...mk.site(orgId, websiteId), "pages", qs.toString()],
-    queryFn: ({ signal }) => get<{ total: number; summary: { total: number } }>(`/orgs/${orgId}/websites/${websiteId}/pages?${qs}`, { signal }),
+    queryFn: ({ signal }: { signal: AbortSignal }) => get<{ total: number; summary: { total: number } }>(`/orgs/${orgId}/websites/${websiteId}/pages?${qs}`, { signal }),
     enabled: Boolean(orgId && websiteId),
-  });
+  };
+}
+export function usePagesTotal(orgId: string, websiteId: string) {
+  return useQuery(pagesTotalOptions(orgId, websiteId));
+}
+export function usePagesTotalMany(orgId: string, websiteIds: string[]) {
+  return useQueries({ queries: websiteIds.map((id) => pagesTotalOptions(orgId, id)) });
 }
 
 // ---------------------------------------------------------------- problems (incidents + grouped findings)
@@ -93,7 +105,7 @@ export const AREA_LABEL = {
 } as const;
 export type Area = keyof typeof AREA_LABEL;
 const GROUP_AREA: Record<string, Area> = { broken_pages: "broken", broken_resources: "broken", sitemap: "sitemap", seo: "seo", structure: "seo", accessibility: "accessibility", forms: "forms" };
-function incidentArea(i: IncidentSummaryDto): Area {
+export function incidentArea(i: Pick<IncidentSummaryDto, "checkKey" | "category">): Area {
   if (i.checkKey.startsWith("deepscan.broken")) return "broken";
   switch (i.category) {
     case "SSL": return "certificate";
@@ -160,24 +172,50 @@ export const byImpact = (a: Problem, b: Problem) =>
   (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || (a.kind === b.kind ? 0 : a.kind === "incident" ? -1 : 1) || b.findings.length - a.findings.length || b.lastSeen.localeCompare(a.lastSeen);
 export const byNewest = (a: Problem, b: Problem) => (b.resolvedAt ?? b.lastSeen).localeCompare(a.resolvedAt ?? a.lastSeen);
 
-/** Incidents of this website and deep-scan findings, open or fixed. */
-export function useWebsiteProblems(orgId: string, websiteId: string, status: "OPEN" | "FIXED", opts: { url?: string; severity?: string } = {}) {
-  const incidents = useQuery({
+type ProblemOpts = { url?: string; severity?: string };
+function problemIncidentsOptions(orgId: string, websiteId: string, status: "OPEN" | "FIXED") {
+  return {
     queryKey: [...mk.incidents(orgId, { websiteId, status: status === "OPEN" ? "ACTIVE" : "RESOLVED", scope: "website-issues" })],
-    queryFn: ({ signal }) => get<{ data: IncidentSummaryDto[] }>(`/orgs/${orgId}/incidents?${new URLSearchParams({ websiteId, status: status === "OPEN" ? "ACTIVE" : "RESOLVED", limit: "100" })}`, { signal }).then((r) => r.data),
+    queryFn: ({ signal }: { signal: AbortSignal }) => get<{ data: IncidentSummaryDto[] }>(`/orgs/${orgId}/incidents?${new URLSearchParams({ websiteId, status: status === "OPEN" ? "ACTIVE" : "RESOLVED", limit: "100" })}`, { signal }).then((r) => r.data),
     enabled: Boolean(orgId && websiteId),
-  });
-  const findings = useQuery({
+  };
+}
+function problemFindingsOptions(orgId: string, websiteId: string, status: "OPEN" | "FIXED", opts: ProblemOpts = {}) {
+  return {
     queryKey: [...mk.deep(orgId, websiteId), "findings", { status: status === "OPEN" ? "OPEN" : "RESOLVED", group: "", severity: opts.severity ?? "", url: opts.url ?? "" }],
-    queryFn: ({ signal }) => get<DataEnvelope<FindingDto[]>>(`/orgs/${orgId}/websites/${websiteId}/deep-scan/findings?${new URLSearchParams({ status: status === "OPEN" ? "OPEN" : "RESOLVED", limit: "500", ...(opts.severity ? { severity: opts.severity } : {}), ...(opts.url ? { url: opts.url } : {}) })}`, { signal }).then((r) => r.data),
+    queryFn: ({ signal }: { signal: AbortSignal }) => get<DataEnvelope<FindingDto[]>>(`/orgs/${orgId}/websites/${websiteId}/deep-scan/findings?${new URLSearchParams({ status: status === "OPEN" ? "OPEN" : "RESOLVED", limit: "500", ...(opts.severity ? { severity: opts.severity } : {}), ...(opts.url ? { url: opts.url } : {}) })}`, { signal }).then((r) => r.data),
     enabled: Boolean(orgId && websiteId),
-  });
-  const list = [
-    ...(opts.url ? [] : (incidents.data ?? []).filter((i) => !opts.severity || i.severity === opts.severity).map(incidentProblem)),
-    ...findingProblems(findings.data ?? []),
+  };
+}
+function mergeProblems(incidents: IncidentSummaryDto[] | undefined, findings: FindingDto[] | undefined, opts: ProblemOpts = {}) {
+  return [
+    ...(opts.url ? [] : (incidents ?? []).filter((i) => !opts.severity || i.severity === opts.severity).map(incidentProblem)),
+    ...findingProblems(findings ?? []),
   ].sort(byImpact);
+}
+
+/** Incidents of this website and deep-scan findings, open or fixed. */
+export function useWebsiteProblems(orgId: string, websiteId: string, status: "OPEN" | "FIXED", opts: ProblemOpts = {}) {
+  const incidents = useQuery(problemIncidentsOptions(orgId, websiteId, status));
+  const findings = useQuery(problemFindingsOptions(orgId, websiteId, status, opts));
+  const list = mergeProblems(incidents.data, findings.data, opts);
   return { incidents, findings, list, isLoading: incidents.isLoading || findings.isLoading, isError: incidents.isError && findings.isError, error: incidents.error ?? findings.error, refetch: () => { void incidents.refetch(); void findings.refetch(); } };
 }
+
+/** Open problems of several websites at once (same queries and cache as each website's Issues tab). */
+export function useOrgProblems(orgId: string, websiteIds: string[]) {
+  const incidents = useQueries({ queries: websiteIds.map((id) => problemIncidentsOptions(orgId, id, "OPEN")) });
+  const findings = useQueries({ queries: websiteIds.map((id) => problemFindingsOptions(orgId, id, "OPEN")) });
+  const byWebsite = new Map<string, { list: Problem[]; isLoading: boolean }>();
+  websiteIds.forEach((id, n) => byWebsite.set(id, {
+    list: mergeProblems(incidents[n]?.data, findings[n]?.data),
+    isLoading: Boolean(incidents[n]?.isLoading || findings[n]?.isLoading),
+  }));
+  return { byWebsite, isLoading: [...byWebsite.values()].some((v) => v.isLoading) };
+}
+
+/** Problems that need a person: any incident, or a finding of medium severity or worse. */
+export const isSerious = (p: Problem) => p.kind === "incident" || (SEV_RANK[p.severity] ?? 9) <= SEV_RANK.MEDIUM!;
 
 // ---------------------------------------------------------------- one health state
 export type HealthKey = "HEALTHY" | "ATTENTION" | "DOWN" | "SETUP" | "PAUSED";
@@ -187,13 +225,14 @@ export const HEALTH_PILL: Record<HealthKey, { label: string; tone: BadgeTone }> 
 };
 
 /** Worst real signal wins: paused / not set up first, then down, then anything that needs a person. */
-export function websiteHealth(w: WebsiteDetailDto, m: WebsiteHealthDto | undefined, open: Problem[]): HealthKey {
+type HealthSite = { status: string; verification: string; displayHost: string };
+export function websiteHealth(w: HealthSite, m: WebsiteHealthDto | undefined, open: Problem[]): HealthKey {
   if (w.status === "PAUSED" || w.status === "SUSPENDED") return "PAUSED";
   if (w.status === "LAPSED") return "ATTENTION";
   if (w.verification !== "VERIFIED") return "SETUP";
   if (m?.health === "DOWN") return "DOWN";
   if (m?.health === "DISABLED") return "PAUSED";
-  const serious = open.some((p) => p.kind === "incident" || (SEV_RANK[p.severity] ?? 9) <= SEV_RANK.MEDIUM!);
+  const serious = open.some(isSerious);
   if (serious || m?.health === "DEGRADED" || (m?.activeIncidents ?? 0) > 0) return "ATTENTION";
   if (!m || m.health === "NO_DATA" || m.health === "NOT_VERIFIED") return "SETUP";
   if (m.health === "INCONCLUSIVE") return "ATTENTION";
@@ -221,7 +260,7 @@ export function problemPhrase(p: Problem) {
 }
 
 /** One plain sentence from real data, e.g. "Online for 12 days straight. 2 things need you: …". */
-export function healthSentence(h: HealthKey, w: WebsiteDetailDto, open: Problem[], days: number, hasChecks: boolean): string {
+export function healthSentence(h: HealthKey, w: HealthSite, open: Problem[], days: number, hasChecks: boolean): string {
   if (h === "PAUSED") return w.status === "SUSPENDED" ? "Monitoring is suspended by the platform. History is kept." : "Monitoring is paused. History is kept; nothing is checked until you resume.";
   if (w.status === "LAPSED") return "Monitoring is paused because ownership verification lapsed. Restore verification to resume.";
   if (w.verification !== "VERIFIED") return `Verify that you control ${w.displayHost} to start monitoring.`;
