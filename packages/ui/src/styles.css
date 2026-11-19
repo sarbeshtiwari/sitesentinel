@@ -1,63 +1,83 @@
 /*
  * SiteSentinel design tokens — the single source of truth for colour, type, spacing, radius, elevation and motion.
- * Documented in docs/UI_UX_DESIGN_SYSTEM.md. --brand can be overridden at runtime from branding.primaryColor
- * (validated hex, public config); every primary-tinted surface derives from it via color-mix.
+ * Source design: design/sitesentinel.pen (exported to design/reference, "00 Foundations"). Documented in
+ * docs/UI_UX_DESIGN_SYSTEM.md. --brand can be overridden at runtime from branding.primaryColor (validated hex,
+ * public config); brand-tinted surfaces derive from it via color-mix.
+ *
+ * Rules: neutral ink for primary actions, brand indigo only for links, upgrade and brand accents; colour carries
+ * status only (green fine, amber needs attention, red broken). Every text pairing below meets WCAG AA (4.5:1).
  */
 :root {
   /* brand */
-  --brand: #4f46e5;
-  --brand-accent: #06b6d4;
-  --navy: #101828;
+  --brand: #4338ca;
+  --brand-accent: #6366f1;
+  --navy: #16161a; /* tooltips and dark panels (name kept for compatibility) */
+
+  /* ink: primary buttons, active pagination, selected chips */
+  --ink: #16161a;
+  --ink-foreground: #ffffff;
 
   /* surfaces */
-  --background: #f7f8fc;
-  --foreground: #182230;
+  --background: #f6f6f3;
+  --foreground: #16161a;
   --card: #ffffff;
-  --surface-sunken: #f1f3f9;
-  --muted: #eef0f6;
-  --muted-foreground: #5e6a7e;
-  --subtle-foreground: #98a2b3;
-  --border: #e4e7ef;
-  --border-strong: #d0d5e1;
-  --input: #d0d5e1;
+  --surface-sunken: #f3f3ef;
+  --muted: #efeeea;
+  --muted-foreground: #6b6b73; /* 4.9:1 on bg, 5.3:1 on white, 4.6:1 on muted */
+  --subtle-foreground: #707078; /* meta text: 4.5:1 on bg, 4.9:1 on white (the design's #9a9aa2 fails AA for text) */
+  --faint: #9a9aa2; /* decorative only (chevrons, dividers, neutral dots) — never for text */
+  --border: #e6e4de;
+  --border-strong: #d6d4cd;
+  --input: #d9d7d0;
   --ring: var(--brand);
 
   /* actions */
-  --primary: var(--brand);
-  /* solid fills behind white text (buttons); equals --primary in light mode, stays at full brand strength in dark */
-  --primary-solid: var(--primary);
+  --primary: var(--brand); /* links, brand text, focus */
+  /* solid brand fill behind white text (upgrade / brand buttons) */
+  --primary-solid: var(--brand);
   --primary-foreground: #ffffff;
-  --primary-soft: color-mix(in srgb, var(--brand) 10%, transparent);
+  --primary-soft: color-mix(in srgb, var(--brand) 9%, #ffffff); /* #eef0ff for the default brand */
 
-  /* status — every status pairs a strong tone with a soft background; never colour alone (icons/labels too) */
-  --success: #16a34a;
-  --warning: #d97706;
-  --danger: #dc2626;
+  /* status — strong tone + soft fill; never colour alone (icons/labels too) */
+  --success: #15803d;
+  --warning: #b45309;
+  --danger: #b91c1c;
   --danger-foreground: #ffffff;
   --danger-solid: var(--danger);
-  --info: #0891b2;
-  /* status text on soft status fills (badges): darkened in light mode so 12 px labels meet WCAG AA (4.5:1) */
-  --success-text: color-mix(in srgb, var(--success) 70%, black);
-  --warning-text: color-mix(in srgb, var(--warning) 70%, black);
-  --danger-text: color-mix(in srgb, var(--danger) 80%, black);
-  --info-text: color-mix(in srgb, var(--info) 75%, black);
+  --info: var(--brand);
+  --success-soft: #e8f6ec;
+  --warning-soft: #fdf3e3;
+  --danger-soft: #fdecec;
+  --info-soft: var(--primary-soft);
+  /* status text on soft status fills (badges): darkened so 12 px labels keep ≥ 5:1 */
+  --success-text: #13703a;
+  --warning-text: #9a4508;
+  --danger-text: #b91c1c;
+  --info-text: var(--brand);
+  /* aliases for third-party widgets that define variables with the same names (sonner) */
+  --status-success-text: var(--success-text);
+  --status-warning-text: var(--warning-text);
+  --status-info-text: var(--info-text);
 
   /* navigation */
-  --sidebar: #ffffff;
-  --sidebar-foreground: #475467;
-  --sidebar-active: color-mix(in srgb, var(--brand) 9%, transparent);
+  --sidebar: #f6f6f3;
+  --sidebar-foreground: #4f4f57;
+  --sidebar-strong: #16161a;
+  --sidebar-line: #e6e4de;
+  --sidebar-hover: #efeeea;
+  --sidebar-active: #ffffff;
 
-  /* radius */
+  /* radius: chips 6, buttons/inputs 8, cards 12, pills full */
   --radius-sm: 0.375rem;
   --radius: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
 
-  /* elevation */
-  --shadow-xs: 0 1px 2px rgb(16 24 40 / 0.05);
-  --shadow-sm: 0 1px 3px rgb(16 24 40 / 0.07), 0 1px 2px rgb(16 24 40 / 0.04);
-  --shadow-md: 0 6px 16px -4px rgb(16 24 40 / 0.1), 0 2px 4px -2px rgb(16 24 40 / 0.05);
-  --shadow-lg: 0 16px 36px -8px rgb(16 24 40 / 0.18), 0 4px 8px -4px rgb(16 24 40 / 0.06);
+  /* elevation: flat by default, shadows only on floating layers */
+  --shadow-xs: 0 1px 1px rgb(22 22 26 / 0.03);
+  --shadow-sm: 0 1px 3px rgb(22 22 26 / 0.06), 0 1px 2px rgb(22 22 26 / 0.03);
+  --shadow-md: 0 6px 16px -4px rgb(22 22 26 / 0.1), 0 2px 4px -2px rgb(22 22 26 / 0.05);
+  --shadow-lg: 0 16px 36px -8px rgb(22 22 26 / 0.18), 0 4px 8px -4px rgb(22 22 26 / 0.06);
 
   /* motion */
   --ease: cubic-bezier(0.2, 0, 0, 1);
@@ -66,33 +86,43 @@
   color-scheme: light;
 }
 
-/* Dark theme: applied explicitly or by system preference when no explicit choice was made. */
+/* Dark theme: applied explicitly or by system preference when no explicit choice was made (same values twice). */
 :root[data-theme="dark"] {
-  --background: #0b1020;
-  --foreground: #e7eaf2;
-  --card: #121829;
-  --surface-sunken: #0e1424;
-  --muted: #1a2135;
-  --muted-foreground: #9aa4b8;
-  --subtle-foreground: #6b7489;
-  --border: #232b40;
-  --border-strong: #2f3850;
-  --input: #2f3850;
-  --primary: color-mix(in srgb, var(--brand) 75%, white);
-  --primary-solid: var(--brand);
-  --danger-solid: #dc2626;
-  --primary-soft: color-mix(in srgb, var(--brand) 22%, transparent);
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #f05252;
-  --info: #22d3ee;
+  --navy: #26262c;
+  --ink: #ededf0;
+  --ink-foreground: #16161a;
+  --background: #0f0f12;
+  --foreground: #ededf0;
+  --card: #17171b;
+  --surface-sunken: #131316;
+  --muted: #1f1f24;
+  --muted-foreground: #a1a1aa;
+  --subtle-foreground: #8e8e98;
+  --faint: #5c5c66;
+  --border: #2a2a31;
+  --border-strong: #37373f;
+  --input: #37373f;
+  --primary: color-mix(in srgb, var(--brand) 55%, white);
+  --primary-solid: color-mix(in srgb, var(--brand) 88%, white);
+  --primary-soft: color-mix(in srgb, var(--brand) 16%, transparent);
+  --danger-solid: #c42b2b;
+  --success: #3fb868;
+  --warning: #f0a13a;
+  --danger: #f26b6b;
+  --info: var(--primary);
+  --success-soft: color-mix(in srgb, #3fb868 14%, transparent);
+  --warning-soft: color-mix(in srgb, #f0a13a 14%, transparent);
+  --danger-soft: color-mix(in srgb, #f26b6b 14%, transparent);
   --success-text: var(--success);
   --warning-text: var(--warning);
   --danger-text: color-mix(in srgb, var(--danger) 85%, white);
-  --info-text: var(--info);
-  --sidebar: #0e1424;
-  --sidebar-foreground: #a3adc2;
-  --sidebar-active: color-mix(in srgb, var(--brand) 24%, transparent);
+  --info-text: var(--primary);
+  --sidebar: #0f0f12;
+  --sidebar-foreground: #a1a1aa;
+  --sidebar-strong: #ededf0;
+  --sidebar-line: #2a2a31;
+  --sidebar-hover: #1b1b20;
+  --sidebar-active: #1f1f24;
   --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.45);
   --shadow-md: 0 8px 20px -6px rgb(0 0 0 / 0.55);
@@ -101,31 +131,41 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --background: #0b1020;
-    --foreground: #e7eaf2;
-    --card: #121829;
-    --surface-sunken: #0e1424;
-    --muted: #1a2135;
-    --muted-foreground: #9aa4b8;
-    --subtle-foreground: #6b7489;
-    --border: #232b40;
-    --border-strong: #2f3850;
-    --input: #2f3850;
-    --primary: color-mix(in srgb, var(--brand) 75%, white);
-    --primary-solid: var(--brand);
-    --danger-solid: #dc2626;
-    --primary-soft: color-mix(in srgb, var(--brand) 22%, transparent);
-    --success: #22c55e;
-    --warning: #f59e0b;
-    --danger: #f05252;
-    --info: #22d3ee;
+    --navy: #26262c;
+    --ink: #ededf0;
+    --ink-foreground: #16161a;
+    --background: #0f0f12;
+    --foreground: #ededf0;
+    --card: #17171b;
+    --surface-sunken: #131316;
+    --muted: #1f1f24;
+    --muted-foreground: #a1a1aa;
+    --subtle-foreground: #8e8e98;
+    --faint: #5c5c66;
+    --border: #2a2a31;
+    --border-strong: #37373f;
+    --input: #37373f;
+    --primary: color-mix(in srgb, var(--brand) 55%, white);
+    --primary-solid: color-mix(in srgb, var(--brand) 88%, white);
+    --primary-soft: color-mix(in srgb, var(--brand) 16%, transparent);
+    --danger-solid: #c42b2b;
+    --success: #3fb868;
+    --warning: #f0a13a;
+    --danger: #f26b6b;
+    --info: var(--primary);
+    --success-soft: color-mix(in srgb, #3fb868 14%, transparent);
+    --warning-soft: color-mix(in srgb, #f0a13a 14%, transparent);
+    --danger-soft: color-mix(in srgb, #f26b6b 14%, transparent);
     --success-text: var(--success);
     --warning-text: var(--warning);
     --danger-text: color-mix(in srgb, var(--danger) 85%, white);
-    --info-text: var(--info);
-    --sidebar: #0e1424;
-    --sidebar-foreground: #a3adc2;
-    --sidebar-active: color-mix(in srgb, var(--brand) 24%, transparent);
+    --info-text: var(--primary);
+    --sidebar: #0f0f12;
+    --sidebar-foreground: #a1a1aa;
+    --sidebar-strong: #ededf0;
+    --sidebar-line: #2a2a31;
+    --sidebar-hover: #1b1b20;
+    --sidebar-active: #1f1f24;
     --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
     --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.45);
     --shadow-md: 0 8px 20px -6px rgb(0 0 0 / 0.55);
@@ -134,11 +174,14 @@
   }
 }
 
-/* Super Admin control plane: a navy chrome distinguishes it from the customer app at a glance. */
+/* Super Admin control plane: a dark chrome distinguishes it from the customer app at a glance (both themes). */
 [data-surface="admin"] {
-  --sidebar: #101828;
-  --sidebar-foreground: #a7b0c4;
-  --sidebar-active: rgb(255 255 255 / 0.08);
+  --sidebar: #111114;
+  --sidebar-foreground: #9898a3;
+  --sidebar-strong: #ededf0;
+  --sidebar-line: #2a2a31;
+  --sidebar-hover: #1b1b20;
+  --sidebar-active: #1b1b20;
 }
 
 @theme inline {
@@ -172,6 +215,16 @@
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-strong: var(--sidebar-strong);
+  --color-sidebar-line: var(--sidebar-line);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-ink: var(--ink);
+  --color-ink-foreground: var(--ink-foreground);
+  --color-faint: var(--faint);
+  --color-success-soft: var(--success-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger-soft: var(--danger-soft);
+  --color-info-soft: var(--info-soft);
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius);
   --radius-lg: var(--radius-lg);
@@ -189,6 +242,8 @@
 html, body { background: var(--background); color: var(--foreground); }
 body {
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
   font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -196,7 +251,7 @@ body {
 }
 :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 ::selection { background: color-mix(in srgb, var(--brand) 22%, transparent); }
-dialog::backdrop { background: rgb(16 24 40 / 0.5); backdrop-filter: blur(2px); }
+dialog::backdrop { background: rgb(22 22 26 / 0.45); backdrop-filter: blur(2px); }
 .tabular, [data-numeric] { font-variant-numeric: tabular-nums; }
 
 /* Motion is functional only (state changes); removed entirely for users who ask for less. */
@@ -207,4 +262,25 @@ dialog::backdrop { background: rgb(16 24 40 / 0.5); backdrop-filter: blur(2px); 
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* sonner toasts (action feedback) follow the tokens: neutral surface, soft status fills, 12 px radius. */
+:root [data-sonner-toaster][data-sonner-theme] {
+  --normal-bg: var(--card);
+  --normal-border: var(--border);
+  --normal-text: var(--foreground);
+  --success-bg: var(--success-soft);
+  --success-border: color-mix(in srgb, var(--success) 22%, transparent);
+  --success-text: var(--status-success-text);
+  --error-bg: var(--danger-soft);
+  --error-border: color-mix(in srgb, var(--danger) 22%, transparent);
+  --error-text: var(--danger-text);
+  --warning-bg: var(--warning-soft);
+  --warning-border: color-mix(in srgb, var(--warning) 24%, transparent);
+  --warning-text: var(--status-warning-text);
+  --info-bg: var(--info-soft);
+  --info-border: color-mix(in srgb, var(--brand) 20%, transparent);
+  --info-text: var(--status-info-text);
+  --border-radius: 12px;
+  font-family: var(--font-sans);
 }

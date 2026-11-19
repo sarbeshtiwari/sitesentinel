@@ -37,7 +37,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const sidebar = (
     <nav aria-label="Admin" className="flex h-full flex-col overflow-y-auto">
       <SidebarBrand href="/overview" LinkComponent={Link} collapsedChildren={<LogoSymbol variant="admin" title="Admin console" />}>
-        <span className="text-white"><Logo variant="admin" name={brand.name ?? "SiteSentinel"} suffix={<Badge className="bg-white/10 text-[10px] uppercase tracking-wider text-cyan-200 ring-white/15">Admin</Badge>} /></span>
+        <span className="text-white"><Logo variant="admin" name={brand.name ?? "SiteSentinel"} suffix={<Badge className="rounded-[5px] bg-[#4338ca]/35 px-1.5 text-[9.5px] uppercase tracking-wider text-[#c7c9ff]">Admin</Badge>} /></span>
       </SidebarBrand>
       <SidebarSection>
         {me.can("admin:overview:read") && <SidebarItem LinkComponent={Link} href="/overview" icon={<LayoutDashboard />} active={is("/overview")}>Overview</SidebarItem>}

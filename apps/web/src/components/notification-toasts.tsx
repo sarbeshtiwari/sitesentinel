@@ -50,25 +50,25 @@ function Toast({ t, onOpen }: { t: ToastItem; onOpen: (n: NotificationDto) => vo
       onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPaused(false); }}
       className={cn(
-        "pointer-events-auto relative flex w-full overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-lg transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+        "pointer-events-auto relative flex w-full overflow-hidden rounded-lg bg-[#16161a] text-white shadow-lg ring-1 ring-white/10 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
         shown ? "translate-y-0 opacity-100" : "-translate-y-1 opacity-0",
       )}
     >
       <span aria-hidden className={cn("w-1 shrink-0", s.bar)} />
-      <button type="button" onClick={() => onOpen(n)} className="flex min-w-0 flex-1 items-start gap-3 py-3 pl-3 pr-1 text-left hover:bg-muted/50 focus-visible:outline-offset-[-2px]">
-        <Icon className={cn("mt-0.5 h-5 w-5 shrink-0", s.icon_)} aria-hidden />
+      <button type="button" onClick={() => onOpen(n)} className="flex min-w-0 flex-1 items-start gap-3 py-3 pl-3 pr-1 text-left hover:bg-white/[0.04] focus-visible:outline-offset-[-2px]">
+        <Icon className="mt-0.5 h-[18px] w-[18px] shrink-0 text-white/75" aria-hidden />
         <span className="grid min-w-0 gap-0.5">
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-2 text-xs text-[#a1a1aa]">
             <span className="font-medium">{s.label}{t.test ? " · Test" : ""}</span>
             {n.websiteName && <><span aria-hidden>·</span><span className="truncate">{n.websiteName}</span></>}
             <span aria-hidden>·</span><time dateTime={n.createdAt} className="shrink-0 tabular-nums">{shortTime(n.createdAt)}</time>
           </span>
           <span className="text-sm font-semibold leading-snug">{truncate(n.title, 120)}</span>
-          {n.body && <span className="line-clamp-2 text-sm text-muted-foreground">{truncate(n.body, 200)}</span>}
+          {n.body && <span className="line-clamp-2 text-[13px] text-[#c4c4cc]">{truncate(n.body, 200)}</span>}
         </span>
       </button>
       <button type="button" onClick={() => toastStore.dismiss(n.id)} aria-label={`Dismiss notification: ${truncate(n.title, 60)}`}
-        className="m-1.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+        className="m-1.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#a1a1aa] hover:bg-white/10 hover:text-white">
         <X className="h-4 w-4" aria-hidden />
       </button>
     </li>
@@ -101,7 +101,7 @@ export function NotificationToasts({ orgId }: { orgId: string | undefined }) {
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{polite}</div>
       <div role="alert" aria-live="assertive" aria-atomic="true" className="sr-only">{assertive}</div>
       {orgId && visible.length > 0 && (
-        <section aria-label="New notifications" className="pointer-events-none fixed inset-x-4 bottom-4 z-[70] sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-16 sm:w-96">
+        <section aria-label="New notifications" className="pointer-events-none fixed inset-x-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-[70] sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-16 sm:w-96">
           <ol className="flex flex-col-reverse gap-2 sm:flex-col">
             {visible.map((t) => <Toast key={t.key} t={t} onOpen={open} />)}
           </ol>
