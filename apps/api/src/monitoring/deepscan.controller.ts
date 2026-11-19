@@ -58,6 +58,8 @@ export class DeepScanService {
       const latest = await tx.deepScan.findFirst({ where: { websiteId }, orderBy: { startedAt: "desc" } });
       const open = await tx.$queryRaw<Array<{ group_key: string; severity: string; n: bigint }>>`
         SELECT group_key, severity, count(*) AS n FROM scan_findings WHERE website_id = ${websiteId}::uuid AND status = 'OPEN' GROUP BY 1, 2`;
+      const [{ sitemapBroken }] = await tx.$queryRaw<Array<{ sitemapBroken: number }>>`
+        SELECT count(*)::int AS "sitemapBroken" FROM scan_findings WHERE website_id = ${websiteId}::uuid AND status = 'OPEN' AND category = 'SITEMAP_URL_BROKEN'`;
       // A requested/scheduled scan exists only as an execution until the scanner picks it up (then it gets a scan row).
       const [pending] = await tx.$queryRaw<Array<{ id: string; status: string; queued_at: Date }>>`
         SELECT e.id, e.status::text AS status, e.queued_at FROM monitoring_executions e
@@ -81,6 +83,8 @@ export class DeepScanService {
         effectiveLimits: effectiveScanLimits(limits.deepscan, cfg, { maxPages: cfgRow?.maxPages, maxDepth: cfgRow?.maxDepth }),
         latestScan: latest ? this.scanDto(latest) : null,
         openFindings: open.map((r) => ({ group: r.group_key, severity: r.severity, count: Number(r.n) })),
+        /** broken URLs listed only in the sitemap (group "sitemap"), shown with broken pages */
+        openSitemapBroken: sitemapBroken,
         measurement: "AUTOMATED_CHECKS",
       };
     });
