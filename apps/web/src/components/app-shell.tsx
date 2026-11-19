@@ -49,7 +49,7 @@ const LABELS: Record<string, string> = {
   overview: "Home", websites: "Websites", new: "Add website", transfers: "Transfers", incidents: "Issues", history: "History",
   notifications: "Notifications", preferences: "Preferences", usage: "Usage & limits", settings: "Settings", general: "General",
   team: "Team", roles: "Roles", audit: "Audit log", billing: "Billing", account: "Account", profile: "Profile", security: "Security", onboarding: "Get started",
-  "api-monitoring": "API monitoring", browser: "Browser run", "deep-scan": "Deep scan", scans: "Scans", findings: "Findings",
+  "api-monitoring": "API monitoring", analytics: "Analytics", browser: "Browser run", "deep-scan": "Deep scan", scans: "Scans", findings: "Findings",
 };
 // Website sub-paths without an index page → the website tab that lists them.
 const WEBSITE_TAB_SEGMENT: Record<string, string> = { browser: "performance&section=browser", "deep-scan": "issues&section=deep-scan", pages: "pages" };

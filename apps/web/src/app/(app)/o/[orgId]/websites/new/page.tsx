@@ -1,8 +1,8 @@
 "use client";
-import { Alert, Badge, Button, buttonVariants, Card, CardContent, CardFooter, FormField, Input, PageHeader, Select, Textarea, toast } from "@wim/ui";
+import { Alert, Badge, Button, buttonVariants, Card, CardContent, CardFooter, FormField, Input, Select, Textarea, toast } from "@wim/ui";
 import { CreateWebsiteInput, type DataEnvelope, type WebsiteDetailDto, type WebsitePreviewDto } from "@wim/contracts";
 import { useQueryClient } from "@tanstack/react-query";
-import { Activity, ChevronLeft, Code2, Globe, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Activity, Code2, Globe, ShieldCheck, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -10,6 +10,7 @@ import { ApiError, errorMessage, post } from "@/lib/api";
 import { applyServerErrors, useZodForm } from "@/lib/form";
 import { useOrg } from "@/lib/hooks";
 import { CATEGORIES, wk } from "@/lib/websites";
+import { WizardHeader } from "./setup-steps";
 
 const AVAILABILITY: Record<WebsitePreviewDto["availability"], { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
   AVAILABLE: { label: "Available", tone: "success" },
@@ -64,7 +65,8 @@ export default function NewWebsitePage() {
       const r = await post<DataEnvelope<WebsiteDetailDto>>(`/orgs/${orgId}/websites`, v);
       await qc.invalidateQueries({ queryKey: wk.list(orgId) });
       toast.success(`${r.data.displayHost} added`);
-      router.push(`/o/${orgId}/websites/${r.data.id}?tab=${r.data.verification === "VERIFIED" ? "installation" : "verification"}`);
+      // Steps 2–4 of the wizard run on the new website's URL (`setup=`), so a reload or a later visit resumes there.
+      router.push(`/o/${orgId}/websites/${r.data.id}?tab=${r.data.verification === "VERIFIED" ? "installation&setup=install" : "verification&setup=verify"}`);
     } catch (e) {
       if (applyServerErrors(form, e)) return;
       const websiteId = e instanceof ApiError ? (e.details?.websiteId as string | undefined) : undefined;
@@ -77,8 +79,11 @@ export default function NewWebsitePage() {
 
   return (
     <>
-      <div className="mb-3"><Link href={`/o/${orgId}/websites`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="h-4 w-4" aria-hidden /> Websites</Link></div>
-      <PageHeader title="Add website" description="We'll normalize the address and reserve it for your organization while you verify ownership (72 hours)." />
+      <WizardHeader orgId={orgId} current={0} />
+      <div className="mb-6 grid gap-1">
+        <h1 className="text-[24px] font-medium leading-tight tracking-[-0.02em] sm:text-[28px]">Add website</h1>
+        <p className="max-w-2xl text-sm text-muted-foreground">We&apos;ll normalize the address and reserve it for your organization while you verify ownership (72 hours).</p>
+      </div>
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,42rem)_minmax(0,1fr)]">
       <Card className="overflow-hidden">
         <form onSubmit={onSubmit} noValidate>

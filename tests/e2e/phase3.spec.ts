@@ -106,6 +106,8 @@ test("customer: add website → verify via DNS → install SDK → installation 
   await expect(page.getByText("Verified", { exact: true }).first()).toBeVisible();
 
   // ---- install the SDK: serve a page containing the exact snippet from the UI
+  // The Add website wizard (steps verify → install → alerts) runs on the website URL with ?setup=; leave it for the website page.
+  await page.goto(page.url().replace(/\?.*$/, ""));
   await openScriptSettings(page); // website Settings → Monitoring script (was the Installation tab)
   const snippet = (await page.getByTestId("install-snippet").textContent())!.trim();
   expect(snippet).toContain("data-site-key=\"pk_");
