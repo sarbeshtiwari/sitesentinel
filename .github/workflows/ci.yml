@@ -49,7 +49,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Database roles and extensions (what infra/postgres/init does locally)
         run: |
-          sudo apt-get install -y postgresql-client >/dev/null
+          # Ubuntu mirrors occasionally answer 503; retry instead of failing the whole pipeline (#12)
+          for i in 1 2 3; do
+            sudo apt-get update -qq && sudo apt-get install -y --fix-missing postgresql-client >/dev/null && break
+            [ "$i" = 3 ] && { echo "apt-get failed 3 times"; exit 1; }
+            echo "apt-get attempt $i failed; retrying in $((i * 15)) s"; sleep $((i * 15))
+          done
           PGPASSWORD=wim_owner_dev_password psql -h 127.0.0.1 -p 55432 -U wim_owner -d wim -v ON_ERROR_STOP=1 -f infra/postgres/init/001_roles_extensions.sql
           PGPASSWORD=wim_owner_dev_password psql -h 127.0.0.1 -p 55432 -U wim_owner -d wim -v ON_ERROR_STOP=1 -f infra/postgres/init/002_scanner_role.sql
       - name: Redis password (service containers cannot pass server args)
