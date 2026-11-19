@@ -107,9 +107,13 @@ export class DashboardService {
         SELECT DISTINCT ON (website_id) website_id, recorded_at AS at, outcome FROM execution_results
          WHERE website_id = ANY(${ids}::uuid[]) AND tier = 'T2_RENDER' ORDER BY website_id, window_start DESC`;
       const deep = await tx.$queryRaw<Array<{ website_id: string; status: string; complete: boolean; finished_at: Date | null; completed_at: Date | null }>>`
-        SELECT DISTINCT ON (website_id) website_id, status, complete, finished_at,
-               (SELECT max(finished_at) FROM deep_scans d2 WHERE d2.website_id = d.website_id AND d2.status = 'COMPLETED') AS completed_at
-          FROM deep_scans d WHERE website_id = ANY(${ids}::uuid[]) ORDER BY website_id, started_at DESC`;
+        WITH latest AS (
+          SELECT DISTINCT ON (website_id) website_id, status, complete, finished_at
+            FROM deep_scans WHERE website_id = ANY(${ids}::uuid[]) ORDER BY website_id, started_at DESC),
+        done AS ( -- once per website, not per scan row (#20)
+          SELECT website_id, max(finished_at) AS completed_at FROM deep_scans
+           WHERE website_id = ANY(${ids}::uuid[]) AND status = 'COMPLETED' GROUP BY website_id)
+        SELECT l.website_id, l.status, l.complete, l.finished_at, d.completed_at FROM latest l LEFT JOIN done d USING (website_id)`;
       const findings = await tx.$queryRaw<Array<{ website_id: string; n: bigint }>>`
         SELECT website_id, count(*) AS n FROM scan_findings WHERE website_id = ANY(${ids}::uuid[]) AND status = 'OPEN' GROUP BY 1`;
       const incidents = await tx.$queryRaw<Array<{ website_id: string; check_key: string; status: string }>>`
