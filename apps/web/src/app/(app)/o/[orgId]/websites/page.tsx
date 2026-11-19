@@ -14,9 +14,9 @@ function RowActions({ w, base, write }: { w: WebsiteSummaryDto; base: string; wr
   return (
     <DropdownMenu label={`Actions for ${w.name}`} triggerClassName={buttonVariants({ variant: "ghost", size: "icon" })} trigger={<MoreHorizontal className="h-4 w-4" aria-hidden />}>
       <DropdownItem onClick={() => router.push(`${base}/${w.id}`)}>Overview</DropdownItem>
-      <DropdownItem onClick={() => router.push(`${base}/${w.id}?tab=verification`)}>Verification</DropdownItem>
-      <DropdownItem onClick={() => router.push(`${base}/${w.id}?tab=installation`)}>Installation</DropdownItem>
-      {write && <DropdownItem onClick={() => router.push(`${base}/${w.id}?tab=settings`)}>Settings</DropdownItem>}
+      <DropdownItem onClick={() => router.push(`${base}/${w.id}?tab=settings&section=ownership`)}>Verification</DropdownItem>
+      <DropdownItem onClick={() => router.push(`${base}/${w.id}?tab=settings&section=script`)}>Installation</DropdownItem>
+      {write && <DropdownItem onClick={() => router.push(`${base}/${w.id}?tab=settings&section=general`)}>Settings</DropdownItem>}
     </DropdownMenu>
   );
 }

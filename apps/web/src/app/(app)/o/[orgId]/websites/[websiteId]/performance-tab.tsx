@@ -14,6 +14,8 @@ const STATUS: Record<PerfStatus, { label: string; tone: Tone }> = {
   GOOD: { label: "Good", tone: "success" }, NEEDS_IMPROVEMENT: { label: "Needs improvement", tone: "warning" }, POOR: { label: "Poor", tone: "danger" }, INSUFFICIENT_DATA: { label: "Insufficient data", tone: "neutral" },
 };
 const LABEL: Record<string, string> = { fcp: "FCP", lcp: "LCP", cls: "CLS", tbt: "TBT", ttfb: "TTFB", load: "Load" };
+/** Plain-language names first; the metric's abbreviation stays next to it. */
+export const PLAIN: Record<string, string> = { lcp: "Main content appears", fcp: "First thing appears", cls: "Layout jumps", tbt: "Page busy", ttfb: "Server answer", load: "Fully loaded" };
 const NAME: Record<string, string> = { fcp: "First Contentful Paint", lcp: "Largest Contentful Paint", cls: "Cumulative Layout Shift", tbt: "Total Blocking Time", ttfb: "Time to First Byte", load: "Page load" };
 const fmtV = (m: string, v: number | null | undefined) => (v == null ? "—" : m === "cls" ? v.toFixed(3) : fmtMs(v));
 export const PerfBadge = ({ s }: { s: PerfStatus }) => <Badge tone={STATUS[s]?.tone ?? "neutral"}>{STATUS[s]?.label ?? s}</Badge>;
@@ -30,7 +32,7 @@ export function SyntheticNote() {
   );
 }
 
-export function PerformanceTab({ orgId, websiteId, canWrite }: { orgId: string; websiteId: string; canWrite: boolean }) {
+export function PerformanceTab({ orgId, websiteId, canWrite, children }: { orgId: string; websiteId: string; canWrite: boolean; children?: React.ReactNode }) {
   const [range, setRange] = useState<Range>(() => presetRange("7d"));
   const [viewport, setViewport] = useState("");
   const [metric, setMetric] = useState("lcp");
@@ -56,16 +58,17 @@ export function PerformanceTab({ orgId, websiteId, canWrite }: { orgId: string; 
           <div className="grid gap-3">
             {s.quality.recordedChecks === 0 && <Hint>No browser checks in this range — nothing to show. Performance comes from browser monitoring of the configured page.</Hint>}
             {s.quality.inconclusiveChecks > 0 && <Hint>{s.quality.inconclusiveChecks} of {s.quality.recordedChecks} checks were inconclusive (our infrastructure) and contribute no measurements.</Hint>}
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-6">
               {s.metrics.map((m) => (
                 <button key={m.metric} type="button" onClick={() => setMetric(m.metric)} aria-pressed={metric === m.metric}
-                  className={cn("flex min-w-0 cursor-pointer flex-col rounded-lg border bg-card p-3.5 text-left shadow-xs transition-[border-color,box-shadow] duration-150",
+                  className={cn("flex min-w-0 cursor-pointer flex-col rounded-lg border bg-card px-4 py-3.5 text-left transition-[border-color,box-shadow] duration-150",
                     metric === m.metric ? "border-primary ring-1 ring-primary" : "border-border hover:border-border-strong hover:shadow-sm")}>
                   <div className="flex items-start justify-between gap-1.5">
-                    <span className="text-[13px] font-medium text-muted-foreground" title={NAME[m.metric]}>{LABEL[m.metric]}{m.alerting ? <span title="Can open a performance incident"> ·</span> : ""}</span>
+                    <span className="text-[13px] font-medium" title={NAME[m.metric]}>{PLAIN[m.metric] ?? LABEL[m.metric]}{m.alerting ? <span title="Can open a performance incident"> ·</span> : ""}</span>
                     <PerfBadge s={m.status} />
                   </div>
-                  <p className="mt-1.5 text-[22px] font-semibold leading-tight tracking-tight tabular-nums">{fmtV(m.metric, m.p75)}</p>
+                  <p className={cn("mt-1.5 text-[26px] font-medium leading-tight tracking-[-0.02em] tabular-nums", m.status === "POOR" ? "text-danger-text" : m.status === "NEEDS_IMPROVEMENT" ? "text-warning-text" : "")}>{fmtV(m.metric, m.p75)}</p>
+                  <p className="text-[11px] text-muted-foreground">{NAME[m.metric]} ({LABEL[m.metric]})</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">p75 · {m.samples} sample{m.samples === 1 ? "" : "s"}{!m.sufficient && m.samples > 0 ? " (too few)" : ""}</p>
                   <p className="mt-2 border-t border-border pt-2 text-[11px] text-muted-foreground">good ≤ {fmtV(m.metric, m.thresholds.good)} · poor &gt; {fmtV(m.metric, m.thresholds.poor)}</p>
                   {m.change.change === "REGRESSION" && <p className="mt-1 text-xs font-medium text-danger">Regression {m.change.deltaPct !== null ? `+${m.change.deltaPct}%` : ""} vs previous period</p>}
@@ -78,6 +81,7 @@ export function PerformanceTab({ orgId, websiteId, canWrite }: { orgId: string; 
           </div>
         )}
       </QueryState>
+      {children}
       <Section title={`${NAME[metric]} over time`} icon={<LineChartIcon />} description={`Synthetic p50 / p75 / p95 per ${series.data?.grain === "day" ? "day" : "hour"}; empty buckets are gaps (no measurement), never interpolated.`}>
         <QueryState q={series}>
           <LineChart ariaLabel={`${NAME[metric]} percentiles over time`} unit={metric === "cls" ? "" : "ms"} points={pts.map((p) => ({ t: p.t, label: p.t }))}

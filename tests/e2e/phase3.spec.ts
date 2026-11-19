@@ -39,6 +39,12 @@ test.afterAll(async () => {
   await site?.close();
 });
 
+/** Website Settings → Monitoring script (the snippet, installation check and site key; formerly the Installation tab). */
+async function openScriptSettings(page: Page) {
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await page.getByRole("link", { name: "Monitoring script" }).click();
+}
+
 async function tokenFromEmail(to: string, subject: string): Promise<string> {
   for (let i = 0; i < 40; i++) {
     const s = await (await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}`)).json() as { messages: Array<{ ID: string; Subject: string }> };
@@ -100,7 +106,7 @@ test("customer: add website → verify via DNS → install SDK → installation 
   await expect(page.getByText("Verified", { exact: true }).first()).toBeVisible();
 
   // ---- install the SDK: serve a page containing the exact snippet from the UI
-  await page.getByRole("tab", { name: "Installation" }).click();
+  await openScriptSettings(page); // website Settings → Monitoring script (was the Installation tab)
   const snippet = (await page.getByTestId("install-snippet").textContent())!.trim();
   expect(snippet).toContain("data-site-key=\"pk_");
   await expect(page.getByTestId("install-state")).toHaveText("Not installed");
@@ -118,7 +124,7 @@ test("customer: add website → verify via DNS → install SDK → installation 
   // ---- verify installation: status comes from the heartbeats
   await expect(async () => {
     await page.reload();
-    await page.getByRole("tab", { name: "Installation" }).click();
+    await openScriptSettings(page); // website Settings → Monitoring script (was the Installation tab)
     await expect(page.getByTestId("install-state")).toHaveText("Active", { timeout: 2000 });
   }).toPass({ timeout: 45_000 });
   await expect(page.getByText("1.0.0")).toBeVisible();
@@ -137,6 +143,7 @@ test("customer: add website → verify via DNS → install SDK → installation 
 
   // ---- edit
   await page.getByRole("tab", { name: "Settings" }).click();
+  await page.getByRole("link", { name: "Website details" }).click();
   await page.getByLabel("Website name").fill("E2E Shop Renamed");
   await page.getByLabel("Category").selectOption("SAAS");
   await page.getByRole("button", { name: "Save changes" }).click();
@@ -145,7 +152,7 @@ test("customer: add website → verify via DNS → install SDK → installation 
   await expect(page.getByRole("heading", { name: "E2E Shop Renamed" })).toBeVisible();
 
   // ---- revoke the site key (with confirmation)
-  await page.getByRole("tab", { name: "Installation" }).click();
+  await openScriptSettings(page); // website Settings → Monitoring script (was the Installation tab)
   await page.getByRole("button", { name: "Revoke key" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Revoke key" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Site key revoked" })).toBeVisible();

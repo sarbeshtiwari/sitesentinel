@@ -52,7 +52,7 @@ const LABELS: Record<string, string> = {
   "api-monitoring": "API monitoring", browser: "Browser run", "deep-scan": "Deep scan", scans: "Scans", findings: "Findings",
 };
 // Website sub-paths without an index page → the website tab that lists them.
-const WEBSITE_TAB_SEGMENT: Record<string, string> = { browser: "browser", "deep-scan": "deep-scan", pages: "pages" };
+const WEBSITE_TAB_SEGMENT: Record<string, string> = { browser: "performance&section=browser", "deep-scan": "issues&section=deep-scan", pages: "pages" };
 // The record type each id-segment refers to, by the segment before it.
 const ID_LABEL: Record<string, string> = { websites: "Website", incidents: "Incident", browser: "Run", scans: "Scan", findings: "Finding", pages: "Page" };
 
