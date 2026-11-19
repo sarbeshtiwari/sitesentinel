@@ -20,7 +20,8 @@ LOGS="$ROOT/.local/live-logs"; mkdir -p "$LOGS"
 
 "$ROOT/scripts/live/stop-workers.sh" >/dev/null 2>&1 || true
 cd "$ROOT"
-start() { # name entry
+start() { # name entry — refuses to start a second copy of a service
+  if pgrep -f "node .*apps/$1/dist/main.js" >/dev/null; then echo "  ✗ $1 is still running (pid $(pgrep -f "node .*apps/$1/dist/main.js" | tr '\n' ' ')) — not starting a second copy"; return; fi
   nohup node --enable-source-maps "apps/$1/dist/main.js" < /dev/null >> "$LOGS/$1.log" 2>&1 &
   echo "  started $1 (pid $!, log .local/live-logs/$1.log)"
 }
@@ -43,6 +44,9 @@ if [ -n "${BROWSER_DATABASE_URL:-}" ]; then
 fi
 sleep 5
 for s in $SERVICES; do
-  pgrep -f "apps/$s/dist/main.js" >/dev/null && echo "  ✓ $s running" || { echo "  ✗ $s stopped — last log lines:"; tail -5 "$LOGS/$s.log"; }
+  n=$(pgrep -f "node .*apps/$s/dist/main.js" | wc -l | tr -d ' ')
+  if [ "$n" = 1 ]; then echo "  ✓ $s running"
+  elif [ "$n" = 0 ]; then echo "  ✗ $s stopped — last log lines:"; tail -5 "$LOGS/$s.log"
+  else echo "  ✗ $s has $n copies running — run scripts/live/stop-workers.sh, then start again"; fi
 done
 echo "Keep this Mac awake (e.g. caffeinate -s) — monitoring stops when it sleeps."
