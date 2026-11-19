@@ -6,10 +6,13 @@
 useDefault = true
 
 [allowlist]
-description = "test fixtures only"
+description = "test fixtures and design canvases only"
 paths = [
   '''^apps/[a-z-]+/test/''',
   '''^packages/[a-z-]+/test/''',
   '''^tests/e2e/''',
   '''^infra/security/isolation/docker-compose\.yml$''',
+  # Pencil design canvases (design/*.pen): an encoded design format whose long strings match the generic high-entropy
+  # key rule. They hold only placeholder UI text — never credentials. Exported design PNGs and everything else stay scanned.
+  '''^design/[^/]+\.pen$''',
 ]
