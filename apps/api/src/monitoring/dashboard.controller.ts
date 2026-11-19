@@ -99,10 +99,13 @@ export class DashboardService {
         SELECT website_id, count(*) AS n FROM monitoring_executions
          WHERE website_id = ANY(${ids}::uuid[]) AND tier = 'T1_HTTP' AND trigger = 'SCHEDULE' AND queued_at >= ${from} AND queued_at < ${to} GROUP BY 1`;
       const lastHttp = await tx.$queryRaw<Array<{ website_id: string; at: Date; status: string; ok: Date | null; failed: Date | null }>>`
-        SELECT DISTINCT ON (website_id) website_id, finished_at AS at, status::text AS status,
-               (SELECT max(finished_at) FROM check_results c2 WHERE c2.website_id = c.website_id AND c2.available) AS ok,
-               (SELECT max(finished_at) FROM check_results c3 WHERE c3.website_id = c.website_id AND c3.status = 'FAILED') AS failed
-          FROM check_results c WHERE website_id = ANY(${ids}::uuid[]) ORDER BY website_id, checked_at DESC`;
+        WITH latest AS (
+          SELECT DISTINCT ON (website_id) website_id, finished_at AS at, status::text AS status
+            FROM check_results WHERE website_id = ANY(${ids}::uuid[]) ORDER BY website_id, checked_at DESC),
+        last AS ( -- one aggregate per website (correlated sub-queries ran once per check row: #18)
+          SELECT website_id, max(finished_at) FILTER (WHERE available) AS ok, max(finished_at) FILTER (WHERE status = 'FAILED') AS failed
+            FROM check_results WHERE website_id = ANY(${ids}::uuid[]) GROUP BY website_id)
+        SELECT l.website_id, l.at, l.status, a.ok, a.failed FROM latest l LEFT JOIN last a USING (website_id)`;
       const lastBrowser = await tx.$queryRaw<Array<{ website_id: string; at: Date; outcome: string }>>`
         SELECT DISTINCT ON (website_id) website_id, recorded_at AS at, outcome FROM execution_results
          WHERE website_id = ANY(${ids}::uuid[]) AND tier = 'T2_RENDER' ORDER BY website_id, window_start DESC`;
