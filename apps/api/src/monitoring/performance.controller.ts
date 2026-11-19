@@ -308,11 +308,13 @@ export class PerformanceService {
                (SELECT count(*) FROM component_events e JOIN page_components c2 ON c2.id = e.page_component_id WHERE c2.monitored_page_id = c.monitored_page_id AND e.created_at > now() - interval '7 days') AS changes
           FROM page_components c WHERE c.monitored_page_id = ANY(${mids}::uuid[]) GROUP BY 1` : [];
       const resp = mids.length ? await tx.$queryRaw<Array<{ monitored_page_id: string; failed: bigint; total: bigint }>>`
-        SELECT DISTINCT ON (r.monitored_page_id) r.monitored_page_id,
-               (SELECT count(*) FROM responsive_test_results x WHERE x.execution_id = r.execution_id AND x.status = 'FAILED') AS failed,
-               (SELECT count(*) FROM responsive_test_results x WHERE x.execution_id = r.execution_id) AS total
-          FROM responsive_test_results r WHERE r.website_id = ${websiteId}::uuid AND r.monitored_page_id = ANY(${mids}::uuid[]) AND r.tested_at > now() - interval '62 days'
-         ORDER BY r.monitored_page_id, r.tested_at DESC` : [];
+        WITH latest AS (
+          SELECT DISTINCT ON (r.monitored_page_id) r.monitored_page_id, r.execution_id
+            FROM responsive_test_results r WHERE r.website_id = ${websiteId}::uuid AND r.monitored_page_id = ANY(${mids}::uuid[]) AND r.tested_at > now() - interval '62 days'
+           ORDER BY r.monitored_page_id, r.tested_at DESC)
+        SELECT l.monitored_page_id, count(x.*) FILTER (WHERE x.status = 'FAILED') AS failed, count(x.*) AS total -- counted once per latest run (#20)
+          FROM latest l LEFT JOIN responsive_test_results x ON x.execution_id = l.execution_id
+         GROUP BY l.monitored_page_id` : [];
       const since = new Date(Date.now() - 86_400_000);
       const perf = mids.length ? await this.rollups(tx, { orgId: o.orgId, websiteIds: [websiteId], subjectType: "PAGE", metricPrefix: `perf.lcp.${t.primaryViewport}`, from: since, to: new Date(), grain: "hour" }) : [];
       const by = <T extends Record<string, any>>(list: T[], k: keyof T) => new Map(list.map((x) => [x[k] as string, x]));
