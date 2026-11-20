@@ -226,6 +226,108 @@ describe("per-execution connection budget (Phase 4D)", () => {
   });
 });
 
+describe("per-execution budget per capability kind (issue #35)", () => {
+  /** Raw CONNECT; returns the whole response head. */
+  const connectHead = (port: number, target: string, auth: string) => new Promise<string>((resolve, reject) => {
+    const s = connect(port, "127.0.0.1", () => s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\nProxy-Authorization: ${auth}\r\n\r\n`));
+    s.once("data", (d) => { resolve(d.toString().split("\r\n\r\n")[0]!); s.destroy(); });
+    s.once("error", reject);
+  });
+
+  it("each kind of one execution has its own budget (rendering can't starve the crawl); per-kind overrides apply", async () => {
+    const g = new Gateway(cfg({ maxConnectionsPerExecution: 2, maxConnectionsPerExecutionKind: { deepscan: 4 } }));
+    await g.listen(0, "127.0.0.1");
+    const port = (g.server.address() as { port: number }).port;
+    const tok = (k: string, e = "exec-k") => proxyAuthorization(signCapability(SECRET, { o: "org-k", w: "w1", e, k }, 60));
+    const status = async (k: string, e?: string) => (await connectHead(port, "ok.example.co.in:443", tok(k, e))).split("\r\n")[0]!.split(" ")[1];
+    const browser = [];
+    for (let i = 0; i < 3; i++) browser.push(await status("deepscan-browser"));
+    expect(browser).toEqual(["200", "200", "429"]); // default budget (2) for the browser kind
+    const crawl = [];
+    for (let i = 0; i < 5; i++) crawl.push(await status("deepscan"));
+    expect(crawl).toEqual(["200", "200", "200", "200", "429"]); // its own (overridden) budget, untouched by rendering
+    expect(await status("deepscan-browser", "exec-other")).toBe("200"); // other executions unaffected
+    await g.close();
+  });
+
+  it("a used-up execution budget is marked X-Egress-Refusal: EXECUTION_BUDGET (CONNECT and plain HTTP); concurrency limits are not", async () => {
+    const g = new Gateway(cfg({ maxConnectionsPerExecution: 1 }));
+    await g.listen(0, "127.0.0.1");
+    const port = (g.server.address() as { port: number }).port;
+    const auth = proxyAuthorization(signCapability(SECRET, { o: "org-r", w: "w1", e: "exec-r", k: "deepscan" }, 60));
+    expect(await connectHead(port, "ok.example.co.in:443", auth)).toMatch(/^HTTP\/1.1 200/);
+    const head = await connectHead(port, "ok.example.co.in:443", auth);
+    expect(head).toMatch(/^HTTP\/1.1 429/);
+    expect(head).toMatch(/X-Egress-Error: RATE_LIMITED/);
+    expect(head).toMatch(/X-Egress-Refusal: EXECUTION_BUDGET/);
+    const plain = await new Promise<{ status: number; error?: string; refusal?: string }>((resolve, reject) => {
+      const r = httpRequest({ host: "127.0.0.1", port, path: "http://ok.example.co.in/", headers: { "proxy-authorization": auth, connection: "close" } }, (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode!, error: res.headers["x-egress-error"] as string, refusal: res.headers["x-egress-refusal"] as string }));
+      });
+      r.on("error", reject);
+      r.end();
+    });
+    expect(plain).toEqual({ status: 429, error: "RATE_LIMITED", refusal: "EXECUTION_BUDGET" });
+    await g.close();
+
+    // per-org concurrency: plain RATE_LIMITED, no budget marker
+    const small = new Gateway(cfg({ maxConnectionsPerOrg: 1 }));
+    await small.listen(0, "127.0.0.1");
+    const sport = (small.server.address() as { port: number }).port;
+    const held = connect(sport, "127.0.0.1");
+    await new Promise<void>((r) => held.once("connect", () => r()));
+    held.write(`CONNECT ok.example.co.in:443 HTTP/1.1\r\nProxy-Authorization: ${auth}\r\n\r\n`);
+    await new Promise((r) => held.once("data", r));
+    const limited = await connectHead(sport, "ok.example.co.in:443", auth);
+    expect(limited).toMatch(/^HTTP\/1.1 429/);
+    expect(limited).not.toMatch(/X-Egress-Refusal/);
+    held.destroy();
+    await small.close();
+  });
+
+  it("httpProbe reports the refusal (gatewayRefusal) and keeps the EGRESS_RATE_LIMITED code every other caller handles", async () => {
+    const { httpProbe } = await import("@wim/netguard");
+    const g = new Gateway(cfg({ maxConnectionsPerExecution: 1 }));
+    await g.listen(0, "127.0.0.1");
+    const gurl = `http://127.0.0.1:${(g.server.address() as { port: number }).port}`;
+    const probe = () => httpProbe({ url: "http://ok.example.co.in/", timeoutMs: 5000, maxRedirects: 0, maxBodyBytes: 1024,
+      gateway: { url: gurl, token: (h) => signCapability(SECRET, { o: "org-p", w: "w1", e: "exec-p", k: "http", h }, 60) } });
+    const first = await probe();
+    expect(first.error).toBeNull();
+    expect(first.gatewayRefusal).toBeNull();
+    const refused = await probe();
+    expect(refused.error).toBe("EGRESS_RATE_LIMITED");
+    expect(refused.gatewayRefusal).toBe("EXECUTION_BUDGET");
+    await g.close();
+  });
+
+  it("an upstream site can't forge the refusal marker", async () => {
+    site.route("forge.example.co.in", "/", { body: "x", headers: { "x-egress-refusal": "EXECUTION_BUDGET", "x-egress-error": "RATE_LIMITED" } });
+    dns.setA("forge.example.co.in", ["127.0.0.1"]);
+    const u = new URL(url);
+    const r = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const q = httpRequest({ host: u.hostname, port: u.port, path: "http://forge.example.co.in/", headers: { "proxy-authorization": proxyAuthorization(token()) } }, (res) => {
+        res.resume();
+        res.on("end", () => resolve({ ...res.headers, status: res.statusCode }));
+      });
+      q.on("error", reject);
+      q.end();
+    });
+    expect(r.status).toBe(200);
+    expect(r["x-egress-refusal"]).toBeUndefined();
+    expect(r["x-egress-error"]).toBeUndefined();
+  });
+
+  it("env: EGRESS_MAX_CONNECTIONS_PER_EXECUTION applies per kind; the deep-scan crawl gets EGRESS_MAX_CONNECTIONS_PER_DEEPSCAN", async () => {
+    const { configFromEnv } = await import("../src/index.js");
+    const c = configFromEnv({ EGRESS_TOKEN_SECRET: SECRET });
+    expect(c.maxConnectionsPerExecution).toBe(300);
+    expect(c.maxConnectionsPerExecutionKind).toEqual({ deepscan: 2500 });
+    expect(configFromEnv({ EGRESS_TOKEN_SECRET: SECRET, EGRESS_MAX_CONNECTIONS_PER_DEEPSCAN: "4000" }).maxConnectionsPerExecutionKind).toEqual({ deepscan: 4000 });
+  });
+});
+
 describe("plain-HTTP timeouts (Phase 4D fix)", () => {
   it("a response slower than the connect timeout is not cut off (connect timeout ≠ response timeout)", async () => {
     const { Gateway } = await import("../src/index.js");

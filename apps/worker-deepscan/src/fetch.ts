@@ -7,6 +7,12 @@ import { httpProbe, signCapability } from "@wim/netguard";
  * so every hop is normalised, scope-checked and re-validated by the gateway before it is requested; a hop
  * that leaves the authorised scope is recorded, never fetched.
  */
+/**
+ * FetchResult.error when the gateway refused because this execution's crawl (capability kind `deepscan`) has used
+ * up its lifetime connection budget: the scan's own request limit, never an infrastructure outage.
+ */
+export const EGRESS_BUDGET_EXHAUSTED = "EGRESS_BUDGET_EXHAUSTED";
+
 export interface FetchDeps {
   gatewayUrl: string;
   tokenSecret: string;
@@ -47,6 +53,7 @@ export async function fetchChain(start: URL, d: FetchDeps, scope: Scope, norm: U
       userAgent: "SiteSentinel-DeepScan/1.0 (+https://sitesentinel.app/bot)", testCa: d.testCa,
       gateway: { url: d.gatewayUrl, token: (host) => signCapability(d.tokenSecret, { ...d.cap, k: "deepscan", h: host }, 120) },
     });
+    if (r.error === "EGRESS_RATE_LIMITED" && r.gatewayRefusal === "EXECUTION_BUDGET") return done(null, EGRESS_BUDGET_EXHAUSTED);
     if (r.error) return done(null, r.error);
     const f = r.final!;
     const status = f.status;
