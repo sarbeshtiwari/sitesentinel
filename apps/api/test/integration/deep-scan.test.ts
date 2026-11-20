@@ -574,18 +574,19 @@ describe("idempotency, crashes, cancellation and infrastructure", () => {
     orgs.push(small);
     await entitleDeep(env, small);
     const smallSite = await deepSite(env, small, "mini");
+    env.site.toggles.set(`${smallSite.host}#slow`, "down"); // long enough to be sampled while the big org's scan runs
     let peakBig = 0, smallRanAlongside = false;
     const timer = setInterval(async () => {
       const r = (await c.query(`SELECT org_id, count(*)::int AS n FROM deep_scans WHERE status = 'RUNNING' AND org_id = ANY($1::uuid[]) GROUP BY 1`, [[big, small]])).rows;
       const b = r.find((x) => x.org_id === big)?.n ?? 0;
       peakBig = Math.max(peakBig, b);
       if (b && r.find((x) => x.org_id === small)) smallRanAlongside = true;
-    }, 150);
+    }, 100);
     try {
       await scanNow(env, [...sites.map((x) => x.id), smallSite.id], 200_000);
     } finally {
       clearInterval(timer);
-      for (const x of sites) env.site.toggles.delete(`${x.host}#slow`);
+      for (const x of [...sites, smallSite]) env.site.toggles.delete(`${x.host}#slow`);
     }
     expect(peakBig).toBe(1);
     expect(smallRanAlongside).toBe(true);
