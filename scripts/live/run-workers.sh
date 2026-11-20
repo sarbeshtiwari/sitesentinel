@@ -28,20 +28,22 @@ start() { # name entry — refuses to start a second copy of a service
 echo "→ live services (NODE_ENV=production)"
 start egress-gateway
 sleep 1
-start worker-http
-start worker-deepscan
-start worker-notify
-start scheduler
-SERVICES="egress-gateway worker-http worker-deepscan worker-notify scheduler"
+SERVICES="egress-gateway"
 if [ -n "${BROWSER_DATABASE_URL:-}" ]; then
-  # Browser monitoring: sandboxed Chromium (browser-runner, loopback only) + worker-browser
+  # Sandboxed Chromium (browser-runner, loopback only). Started — and BROWSER_RUNNER_URL exported — BEFORE the deep-scan
+  # worker, which uses it for browser-assisted discovery (otherwise that worker never renders a page).
   export RUNNER_PORT="${RUNNER_PORT:-3301}" RUNNER_BIND_HOST=127.0.0.1 RUNNER_ADVERTISE_HOST=127.0.0.1 RUNNER_GATEWAY_URL="$EGRESS_GATEWAY_URL"
   export BROWSER_RUNNER_URL="http://127.0.0.1:${RUNNER_PORT}"
   start browser-runner
   sleep 2
-  start worker-browser
-  SERVICES="$SERVICES browser-runner worker-browser"
+  SERVICES="$SERVICES browser-runner"
 fi
+start worker-http
+start worker-deepscan
+start worker-notify
+start scheduler
+SERVICES="$SERVICES worker-http worker-deepscan worker-notify scheduler"
+if [ -n "${BROWSER_DATABASE_URL:-}" ]; then start worker-browser; SERVICES="$SERVICES worker-browser"; fi
 sleep 5
 for s in $SERVICES; do
   n=$(pgrep -f "node .*apps/$s/dist/main.js" | wc -l | tr -d ' ')
