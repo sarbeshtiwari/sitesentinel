@@ -24,8 +24,15 @@ export interface GatewayConfig {
   tokenSecret: string;
   allowedPorts: number[];
   maxConnectionsPerOrg: number;
-  /** cumulative connections one execution (capability `e`) may open over its lifetime; bounds a page making thousands of requests */
+  /**
+   * Cumulative connections one execution may open over its lifetime, counted separately per capability kind
+   * (`e` + `k`): bounds a page making thousands of requests, without one kind (e.g. a deep scan's browser
+   * rendering, `deepscan-browser`) starving another of the same execution (its crawl, `deepscan`). Per-org and
+   * total caps still bound everything. Default 300.
+   */
   maxConnectionsPerExecution?: number;
+  /** per-kind overrides of `maxConnectionsPerExecution`, e.g. `{ deepscan: 2500 }` (a crawl's whole request budget) */
+  maxConnectionsPerExecutionKind?: Record<string, number>;
   maxConnectionsTotal: number;
   maxTunnelBytes: number;
   tunnelMaxMs: number;
@@ -39,6 +46,12 @@ export interface GatewayConfig {
 
 export type Outcome = "ALLOWED" | "BLOCKED_ADDRESS" | "BLOCKED_PORT" | "BLOCKED_HOST" | "NO_ADDRESSES" | "DNS_FAILURE"
   | "UNAUTHORIZED" | "RATE_LIMITED" | "CONNECT_FAILED" | "TIMEOUT" | "BAD_REQUEST";
+
+/**
+ * Sent with a RATE_LIMITED refusal (alongside X-Egress-Error) when the cause is the execution's own lifetime
+ * budget being used up, not the per-org / total concurrency caps. Callers that don't know it see RATE_LIMITED.
+ */
+export const EXECUTION_BUDGET_REFUSAL = "EXECUTION_BUDGET";
 
 const STATUS: Record<Exclude<Outcome, "ALLOWED">, number> = {
   BLOCKED_ADDRESS: 403, BLOCKED_HOST: 403, BLOCKED_PORT: 421, NO_ADDRESSES: 424, DNS_FAILURE: 503, UNAUTHORIZED: 407,
@@ -159,24 +172,29 @@ export class Gateway {
     return token ? verifyCapability(this.cfg.tokenSecret, token) : null;
   }
 
+  /** lifetime connection counts keyed by `${execution}:${kind}` (see GatewayConfig.maxConnectionsPerExecution) */
   private perExec = new Map<string, { n: number; exp: number }>();
 
-  private acquire(cap: EgressCapability): boolean {
+  /** "OK" (slot taken; release() when done), "LIMIT" (per-org / total concurrency) or "BUDGET" (execution lifetime budget). */
+  private acquire(cap: EgressCapability): "OK" | "LIMIT" | "BUDGET" {
     const key = cap.o ?? "platform";
     const n = this.perOrg.get(key) ?? 0;
-    if (n >= this.cfg.maxConnectionsPerOrg || this.total >= this.cfg.maxConnectionsTotal) return false;
-    const budget = this.cfg.maxConnectionsPerExecution ?? 300;
-    const ex = this.perExec.get(cap.e) ?? { n: 0, exp: cap.x };
-    if (ex.n >= budget) return false;
+    if (n >= this.cfg.maxConnectionsPerOrg || this.total >= this.cfg.maxConnectionsTotal) return "LIMIT";
+    const kind = cap.k ?? "";
+    const budget = this.cfg.maxConnectionsPerExecutionKind?.[kind] ?? this.cfg.maxConnectionsPerExecution ?? 300;
+    const execKey = `${cap.e}:${kind}`;
+    const ex = this.perExec.get(execKey) ?? { n: 0, exp: cap.x };
+    if (ex.n >= budget) return "BUDGET";
     ex.n++;
-    this.perExec.set(cap.e, ex);
+    ex.exp = Math.max(ex.exp, cap.x); // kept while any token of the execution is still valid
+    this.perExec.set(execKey, ex);
     if (this.perExec.size > 10_000) {
       const now = Math.floor(Date.now() / 1000);
       for (const [k, v] of this.perExec) if (v.exp < now) this.perExec.delete(k);
     }
     this.perOrg.set(key, n + 1);
     this.total++;
-    return true;
+    return "OK";
   }
 
   private release(cap: EgressCapability) {
@@ -195,6 +213,7 @@ export class Gateway {
     client.on("close", () => this.sockets.delete(client));
     client.on("error", () => undefined);
     const refuse = (o: Exclude<Outcome, "ALLOWED">, extra = "") => {
+      // extra: complete header lines, each ending in \r\n
       client.end(`HTTP/1.1 ${STATUS[o]} Refused\r\nX-Egress-Error: ${o}\r\n${extra}Content-Length: 0\r\nConnection: close\r\n\r\n`);
     };
     const target = /^(\[[0-9a-fA-F:.]+\]|[^:\s]+):(\d{1,5})$/.exec(req.url ?? "");
@@ -223,9 +242,10 @@ export class Gateway {
       this.audit(d.outcome, cap, host, port, { detail: d.detail });
       return refuse(d.outcome);
     }
-    if (!this.acquire(cap)) {
-      this.audit("RATE_LIMITED", cap, host, port);
-      return refuse("RATE_LIMITED");
+    const slot = this.acquire(cap);
+    if (slot !== "OK") {
+      this.audit("RATE_LIMITED", cap, host, port, slot === "BUDGET" ? { detail: "execution-budget" } : {});
+      return refuse("RATE_LIMITED", slot === "BUDGET" ? `X-Egress-Refusal: ${EXECUTION_BUDGET_REFUSAL}\r\n` : "");
     }
     const started = Date.now();
     const connectStarted = performance.now();
@@ -313,8 +333,10 @@ export class Gateway {
       this.audit(d.outcome, cap, url.hostname, port, { detail: d.detail });
       return this.refuseHttp(res, d.outcome);
     }
-    if (!this.acquire(cap)) {
-      this.audit("RATE_LIMITED", cap, url.hostname, port);
+    const slot = this.acquire(cap);
+    if (slot !== "OK") {
+      this.audit("RATE_LIMITED", cap, url.hostname, port, slot === "BUDGET" ? { detail: "execution-budget" } : {});
+      if (slot === "BUDGET") res.setHeader("x-egress-refusal", EXECUTION_BUDGET_REFUSAL);
       return this.refuseHttp(res, "RATE_LIMITED");
     }
     const started = Date.now();
@@ -346,8 +368,8 @@ export class Gateway {
     });
     up.on("response", (r) => {
       const out: Record<string, string | string[]> = {};
-      // x-egress-error is reserved for gateway decisions; an upstream site must not be able to forge one.
-      for (const [k, v] of Object.entries(r.headers)) if (v !== undefined && !HOP_BY_HOP.has(k) && k !== "x-egress-error") out[k] = v;
+      // x-egress-error / x-egress-refusal are reserved for gateway decisions; an upstream site must not be able to forge one.
+      for (const [k, v] of Object.entries(r.headers)) if (v !== undefined && !HOP_BY_HOP.has(k) && k !== "x-egress-error" && k !== "x-egress-refusal") out[k] = v;
       res.writeHead(r.statusCode ?? 502, out);
       r.on("data", (c: Buffer) => {
         bytes += c.length;
@@ -422,7 +444,14 @@ export const GatewayEnv = z.object({
   EGRESS_ALLOWED_PORTS: z.string().default("80,443"),
   EGRESS_MAX_CONNECTIONS_PER_ORG: z.coerce.number().int().default(50),
   EGRESS_MAX_CONNECTIONS_TOTAL: z.coerce.number().int().default(2000),
+  /** lifetime connections per execution AND capability kind (default for every kind) */
   EGRESS_MAX_CONNECTIONS_PER_EXECUTION: z.coerce.number().int().min(10).default(300),
+  /**
+   * The deep-scan crawl's (kind `deepscan`) own lifetime budget. Every request hop is a fresh CONNECT and a HEAD
+   * answered 4xx is retried as GET, so a crawl needs up to ~2 connections per counted request: the default covers
+   * the default `monitoring.deepscan.maxRequests` (1000) with headroom. Raise it with that setting.
+   */
+  EGRESS_MAX_CONNECTIONS_PER_DEEPSCAN: z.coerce.number().int().min(10).default(2500),
   EGRESS_MAX_TUNNEL_BYTES: z.coerce.number().int().default(50 * 1024 * 1024),
   EGRESS_TUNNEL_MAX_MS: z.coerce.number().int().default(120_000),
   EGRESS_IDLE_MS: z.coerce.number().int().default(30_000),
@@ -440,6 +469,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayConf
     maxConnectionsPerOrg: e.EGRESS_MAX_CONNECTIONS_PER_ORG,
     maxConnectionsTotal: e.EGRESS_MAX_CONNECTIONS_TOTAL,
     maxConnectionsPerExecution: e.EGRESS_MAX_CONNECTIONS_PER_EXECUTION,
+    maxConnectionsPerExecutionKind: { deepscan: e.EGRESS_MAX_CONNECTIONS_PER_DEEPSCAN },
     maxTunnelBytes: e.EGRESS_MAX_TUNNEL_BYTES,
     tunnelMaxMs: e.EGRESS_TUNNEL_MAX_MS,
     idleMs: e.EGRESS_IDLE_MS,
