@@ -147,7 +147,7 @@ export async function finalizeScan(tx: Tx, i: {
     add(r.kind === "RESOURCE" ? "BROKEN_RESOURCE" : "BROKEN_EXTERNAL_LINK", disp(r.url), r.url, { type: r.resource_type, status: r.status_code, error: r.error, linkedFrom: r.first_referrer, linkCount: r.referrers });
   }
   for (const issue of (scan.discovery?.issues ?? []) as Array<{ category: FindingCategory; subject: string; evidence: Record<string, unknown> }>) add(issue.category, issue.subject, `${issue.subject}`, issue.evidence);
-  for (const spa of (scan.discovery?.spa ?? []) as Array<{ page: string; links: number }>) add("SPA_ROUTE_NOT_IN_HTML", spa.page, spa.page, { renderedOnlyLinks: spa.links });
+  for (const spa of (scan.discovery?.spa ?? []) as Array<{ page: string; links: number; foundBy?: Record<string, number> }>) add("SPA_ROUTE_NOT_IN_HTML", spa.page, spa.page, { renderedOnlyLinks: spa.links, ...(spa.foundBy ? { foundBy: spa.foundBy } : {}) });
 
   // ---------------------------------------------------------------- ledger first (idempotency gate)
   const highOpen = found.some((f) => ["CRITICAL", "HIGH"].includes(findingSeverity(f.category, i.snap.severityOverrides as Record<string, Severity>)));
