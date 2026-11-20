@@ -9,7 +9,7 @@ import type { Logger } from "@wim/logger";
 import { httpProbe, signCapability } from "@wim/netguard";
 import { addUsage, loadOrgContexts, SecurityError, TransientError, type ExecutionContext, type ExecutionResult } from "@wim/queue";
 import { openSession } from "@wim/worker-browser";
-import { fetchChain, type FetchResult } from "./fetch.js";
+import { EGRESS_BUDGET_EXHAUSTED, fetchChain, type FetchResult } from "./fetch.js";
 import { finalizeScan } from "./finalize.js";
 import { looksClientRendered, selectBrowserPages } from "./discovery.js";
 import { MAX_JS_SEARCHES_PER_SCAN, revealLinks, type FoundBy } from "./reveal.js";
@@ -42,6 +42,10 @@ const BROWSER_MIN_REMAINING_MS = 60_000;
 const BROWSER_SESSION_RESERVE_MS = 80_000;
 /** client-rendered pages found by the crawl are rendered in batches of this size (one session per batch) */
 const BROWSER_BATCH = 5;
+/**
+ * Our infrastructure failing (retried / INFRASTRUCTURE). EGRESS_RATE_LIMITED here is the gateway's concurrency caps;
+ * the crawl's own lifetime budget being used up arrives as EGRESS_BUDGET_EXHAUSTED and stops it as REQUEST_BUDGET.
+ */
 const INFRA = new Set(["GATEWAY_UNAVAILABLE", "EGRESS_RATE_LIMITED", "GATEWAY_ERROR"]);
 /** Connection-level failures: the site's problem only if OUR path (worker → gateway → internet) is healthy. */
 const CONNECTION_LEVEL = new Set(["CONNECTION_FAILED", "CONNECT_TIMEOUT", "RESPONSE_TIMEOUT", "PROTOCOL_ERROR", "DNS_FAILURE"]);
@@ -89,6 +93,8 @@ export function createDeepScanEngine(d: DeepScanDeps) {
     const hardDeadline = Math.min(snap.deadline, jobBudgetEnd);
     let requests = scan.requests;
     let infraStreak = 0;
+    /** the gateway refused: this execution's crawl used up its lifetime connection budget (stop REQUEST_BUDGET) */
+    let budgetExhausted = false;
     let overheadRequests = 0; // this attempt's requests that failed on OUR infrastructure (results never committed)
     const fd = {
       gatewayUrl: d.gatewayUrl, tokenSecret: d.tokenSecret, cap: { o: ctx.orgId, w: ctx.websiteId, e: ctx.executionId },
@@ -144,7 +150,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       for (;;) {
         if (aborted()) break;
         if (Date.now() > hardDeadline) { stop = "DURATION"; break; }
-        if (requests >= snap.limits.maxRequests) { stop = "REQUEST_BUDGET"; break; }
+        if (requests >= snap.limits.maxRequests || budgetExhausted) { stop = "REQUEST_BUDGET"; break; }
         // today's page quota and the next page, in one statement
         const [next] = await withSystem(d.db, (tx) => tx.$queryRaw<Array<{ used: bigint | null; id: bigint | null; url: string; depth: number; in_sitemap: boolean }>>`
           SELECT (SELECT value FROM usage_counters WHERE org_id = ${ctx.orgId}::uuid AND period_start = (now() AT TIME ZONE 'UTC')::date AND key = 'deepscan.pages') AS used,
@@ -158,6 +164,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         if (next?.id == null) break; // frontier exhausted
         const row = { id: next.id, url: next.url, depth: next.depth, in_sitemap: next.in_sitemap };
         const r = await crawlPage(row);
+        if (r === "BUDGET") { stop = "REQUEST_BUDGET"; break; } // the page stays QUEUED: not checked, not failed
         if (r === "INFRA") {
           infraStreak++;
           overheadRequests++;
@@ -187,9 +194,11 @@ export function createDeepScanEngine(d: DeepScanDeps) {
           }
           while (batch.length) {
             if (aborted()) return await interrupted();
-            if (Date.now() > hardDeadline || requests >= snap.limits.maxRequests) break resources; // resources are best-effort within the budget
+            if (Date.now() > hardDeadline || requests >= snap.limits.maxRequests || budgetExhausted) break resources; // resources are best-effort within the budget
             const res = batch.shift()!;
-            if ((await checkResource(res)) === "INFRA") {
+            const rc = await checkResource(res);
+            if (rc === "BUDGET") { stop = "REQUEST_BUDGET"; break resources; } // the gateway refused: the row stays QUEUED
+            if (rc === "INFRA") {
               overheadRequests++;
               if (++infraStreak >= 3) { if (ctx.attempt < ctx.maxAttempts) throw new TransientError("monitoring infrastructure unavailable"); break resources; }
             } else infraStreak = 0;
@@ -243,6 +252,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
     async function guardedFetch(u: URL, opts: { method?: "GET" | "HEAD"; readBody: boolean }): Promise<FetchResult> {
       await polite();
       const r = await fetchChain(u, fd, snap.scope, snap.norm, { ...opts, maxRedirects: 10 });
+      if (r.error === EGRESS_BUDGET_EXHAUSTED) budgetExhausted = true;
       // A gateway that dies mid-request surfaces as a timeout / protocol error, not "unavailable": never record
       // that as the customer's broken page. Re-classify as infrastructure when our own path is unhealthy.
       if (r.error && CONNECTION_LEVEL.has(r.error) && !(await pathHealthy(u.hostname))) return { ...r, error: "GATEWAY_UNAVAILABLE" };
@@ -323,6 +333,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         sitemapCount++;
         const r = await guardedFetch(sm.url, { readBody: true });
         if (r.error && INFRA.has(r.error)) { overheadRequests++; throw new TransientError(`gateway unavailable (${r.error})`); }
+        if (r.error === EGRESS_BUDGET_EXHAUSTED) break; // not the sitemap's fault; the crawl stops as REQUEST_BUDGET
         if (r.status !== 200 || !r.body) {
           if (sm.declared || sm.depth > 0) issues.push({ category: "SITEMAP_UNREACHABLE", subject: displayUrl(sm.url), evidence: { status: r.status, error: r.error } });
           continue;
@@ -458,6 +469,8 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         const staticLinks = new Set<string>();
         await polite();
         const st = await fetchChain(u, fd, snap.scope, snap.norm, { readBody: true, maxRedirects: 10 });
+        // no static HTML to compare with: nothing can be labelled render-only (the crawl stops before its next page)
+        if (st.error === EGRESS_BUDGET_EXHAUSTED) { budgetExhausted = true; return []; }
         if (st.body) for (const l of analyzeHtml(st.body.toString("utf8")).out.links) { const x = normalizeUrl(l.href, st.finalUrl, snap.norm); if (x) staticLinks.add(x.href); }
         const unique = new Map<string, { x: URL; via: FoundBy }>();
         for (const [h, via] of seen) { const x = normalizeUrl(h, u, snap.norm); if (x && scopeDecision(x, snap.scope) === "OK" && !unique.has(x.href)) unique.set(x.href, { x, via }); }
@@ -533,7 +546,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       return true;
     }
 
-    async function crawlPage(row: { id: bigint; url: string; depth: number; in_sitemap: boolean }): Promise<"DONE" | "INFRA" | "SKIPPED"> {
+    async function crawlPage(row: { id: bigint; url: string; depth: number; in_sitemap: boolean }): Promise<"DONE" | "INFRA" | "SKIPPED" | "BUDGET"> {
       // Re-validate the stored URL from trusted scan state before every fetch.
       const u = normalizeUrl(row.url, null, snap.norm);
       let skip: string | null = !u || u.href !== row.url ? "INVALID_URL" : scopeDecision(u, snap.scope);
@@ -546,6 +559,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       const r = await guardedFetch(u!, { readBody: true });
       if (r.error === "EGRESS_UNAUTHORIZED") throw new SecurityError("egress gateway rejected the scanner's capability");
       if (r.error === "ABORTED") throw new Error("aborted");
+      if (r.error === EGRESS_BUDGET_EXHAUSTED) return "BUDGET";
       if (r.error && INFRA.has(r.error)) return "INFRA";
       // A redirecting URL gets redirect findings only; its target is crawled (and analysed) as its own page.
       const redirected = r.chain.length > 0;
@@ -641,7 +655,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       return out;
     }
 
-    async function checkResource(row: { id: bigint; url: string; kind: string }): Promise<"DONE" | "INFRA"> {
+    async function checkResource(row: { id: bigint; url: string; kind: string }): Promise<"DONE" | "INFRA" | "BUDGET"> {
       const u = normalizeUrl(row.url, null, snap.norm);
       if (!u || (row.kind === "RESOURCE" && !snap.scope.hosts.includes(u.hostname))) {
         await withSystem(d.db, (tx) => markSkipped(tx, row.id, "OUT_OF_SCOPE"));
@@ -649,6 +663,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       }
       // external links: status only, host-bound capability, never followed beyond redirects, never parsed
       const r = await guardedFetch(u, { method: "HEAD", readBody: false });
+      if (r.error === EGRESS_BUDGET_EXHAUSTED) return "BUDGET";
       if (r.error && INFRA.has(r.error)) return "INFRA";
       const state = r.error ? (/^BLOCKED_/.test(r.error) ? "SKIPPED" : "FAILED") : r.status !== null && r.status >= 400 ? "FAILED" : "DONE";
       const [keys, values] = usageArrays({ "deepscan.resources": 1, "deepscan.requests": 1 });
