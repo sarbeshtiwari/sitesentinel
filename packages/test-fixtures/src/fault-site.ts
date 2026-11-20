@@ -349,6 +349,104 @@ export async function startFaultSite(pki: TestPki, host = "127.0.0.1", ports: { 
       if (u.pathname === "/robots.txt" || u.pathname === "/sitemap.xml") return page({ title: "Not found", status: 404 });
       return page({ title: `Wide ${u.pathname}${u.search}`, canonical: `${origin}${u.pathname}${u.search}`, body: '<a href="/">Home</a>' });
     }
+    if (kind === "listing") {
+      // browser-assisted discovery (#24): links that exist only after JavaScript fetched them from a same-site JSON API
+      //  /articles          top-level listing in the sitemap; its entries come from /api/articles
+      //  /guides            normal server-rendered page (must NOT be rendered) → /guides/archive
+      //  /guides/archive    Next.js-style shell at depth 2, entries from /api/archive (rendered because the crawl finds it client-rendered)
+      const json = (v: unknown) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
+      const fill = (api: string) => `<script>fetch("${api}").then(function(r){return r.json()}).then(function(d){var l=document.getElementById("list");d.forEach(function(p){var a=document.createElement("a");a.href=p.href;a.textContent=p.title;l.appendChild(a)})})</script>`;
+      switch (u.pathname) {
+        case "/robots.txt": res.writeHead(200, { "content-type": "text/plain" }); return res.end(`User-agent: *\nSitemap: ${origin}/sitemap.xml\n`);
+        case "/sitemap.xml": return xml(`<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${origin}/</loc></url><url><loc>${origin}/articles</loc></url><url><loc>${origin}/about</loc></url></urlset>`);
+        case "/": return page({ title: "Listing home", canonical: `${origin}/`, body: '<nav><a href="/articles">Articles</a> <a href="/about">About</a> <a href="/guides">Guides</a></nav><p>Welcome.</p>' });
+        case "/about": return page({ title: "About", canonical: `${origin}/about`, body: '<a href="/">Home</a>' });
+        case "/articles": return page({ title: "Articles", canonical: `${origin}/articles`, body: `<div id="list" class="post-list"></div>${fill("/api/articles")}` });
+        case "/api/articles": return json([{ href: "/articles/buying-vs-renting", title: "Buying vs renting" }, { href: "/articles/home-loans", title: "Home loans" }]);
+        case "/guides": return page({ title: "Guides", canonical: `${origin}/guides`, body: '<p>All guides.</p><a href="/guides/archive">Archive</a> <a href="/about">About</a>' });
+        case "/guides/archive": return page({ title: "Archive", canonical: `${origin}/guides/archive`, body: `<div id="__next"><div id="list" class="archive-grid"></div></div><script id="__NEXT_DATA__" type="application/json">{"page":"/guides/archive"}</script>${fill("/api/archive")}` });
+        case "/api/archive": return json([{ href: "/guides/archive/old-1", title: "Old 1" }, { href: "/guides/archive/old-2", title: "Old 2" }]);
+        default:
+          if (/^\/(articles|guides\/archive)\/[a-z0-9-]+$/.test(u.pathname)) return page({ title: `Entry ${u.pathname}`, canonical: `${origin}${u.pathname}` });
+          return page({ title: "Not found", status: 404 });
+      }
+    }
+    if (kind === "interact") {
+      // links behind interactions (#24): infinite scroll, "load more", tabs; decoys that must never be clicked or sent
+      if (req.method !== "GET" && req.method !== "HEAD") toggles.set(`${h}#non-get`, `${req.method} ${u.pathname}`);
+      const json = (v: unknown) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
+      const append = 'function add(list,d){d.forEach(function(p){var a=document.createElement("a");a.href=p.href;a.textContent=p.title;document.getElementById(list).appendChild(a)})}';
+      const n = Number(u.searchParams.get("page") ?? 1);
+      switch (u.pathname) {
+        case "/robots.txt": case "/sitemap.xml": return page({ title: "Not found", status: 404 });
+        case "/": return page({ title: "Interact home", canonical: `${origin}/`, body: '<a href="/feed">Feed</a>' });
+        case "/feed": return page({ title: "Feed", canonical: `${origin}/feed`, body: `<div id="feed" class="feed"></div><div id="spacer" style="height:3000px"></div><script>${append}var n=0,busy=false;
+          window.addEventListener("scroll",function(){if(busy||n>=2||window.innerHeight+window.scrollY<document.documentElement.scrollHeight-200)return;busy=true;n++;
+          fetch("/api/feed?page="+n).then(function(r){return r.json()}).then(function(d){add("feed",d);document.getElementById("spacer").style.height=(3000+n*1500)+"px";busy=false})});</script>` });
+        case "/api/feed": return json([{ href: `/feed/item-${n * 2 - 1}`, title: "a" }, { href: `/feed/item-${n * 2}`, title: "b" }]);
+        case "/more": return page({ title: "More", canonical: `${origin}/more`, body: `<ul id="list" class="post-list"><li><a href="/more/p-1">P1</a></li></ul><button id="lm" type="button">Load more</button><script>${append}var n=1;
+          document.getElementById("lm").addEventListener("click",function(){n++;fetch("/api/more?page="+n).then(function(r){return r.json()}).then(function(d){add("list",d);if(n>=3)document.getElementById("lm").remove()})});</script>` });
+        case "/api/more": return json([{ href: `/more/p-${n * 2 - 2}`, title: "x" }, { href: `/more/p-${n * 2 - 1}`, title: "y" }]);
+        case "/tabs": return page({ title: "Tabs", canonical: `${origin}/tabs`, body: `<div role="tablist"><button role="tab" aria-selected="true" aria-controls="t1">Overview</button><button id="tab2" role="tab" aria-selected="false" aria-controls="t2">Projects</button></div>
+          <div id="t1"><p>Overview text.</p></div><div id="t2"></div><button id="acc" type="button" aria-expanded="false">Floor plans</button><div id="t3"></div><script>${append}
+          document.getElementById("tab2").addEventListener("click",function(){this.setAttribute("aria-selected","true");add("t2",[{href:"/tabs/project-x",title:"X"},{href:"/tabs/project-y",title:"Y"}])});
+          document.getElementById("acc").addEventListener("click",function(){this.setAttribute("aria-expanded","true");add("t3",[{href:"/tabs/plan-1",title:"Plan"}])});</script>` });
+        case "/decoy": return page({ title: "Decoys", canonical: `${origin}/decoy`, body: `<p>Decoys.</p>
+          <button type="button" onclick="location.href='/subscribed'">Subscribe</button>
+          <a href="#" onclick="fetch('/api/signup',{method:'POST'});return false">Sign up</a>
+          <form action="/form-sent" method="get"><input name="email"><button type="submit">Load more</button></form>
+          <button id="nav" type="button" onclick="location.href='/navigated'">Show more</button>` });
+        case "/posty": return page({ title: "POST load more", canonical: `${origin}/posty`, body: `<ul id="list" class="post-list"><li><a href="/posty/p-1">P1</a></li></ul><button id="lm" type="button">View more</button><script>${append}
+          document.getElementById("lm").addEventListener("click",function(){fetch("/api/post-more",{method:"POST",body:"page=2"}).then(function(r){return r.json()}).then(function(d){add("list",d)})});</script>` });
+        case "/api/post-more": return json([{ href: "/posty/p-2", title: "p2" }]);
+        case "/subscribed": case "/form-sent": case "/navigated": toggles.set(`${h}#decoy-hit`, u.pathname); return page({ title: "SHOULD NEVER BE REACHED" });
+        default:
+          if (/^\/(feed|more|tabs|posty)\/[a-z0-9-]+$/.test(u.pathname)) return page({ title: `Entry ${u.pathname}`, canonical: `${origin}${u.pathname}` });
+          return page({ title: "Not found", status: 404 });
+      }
+    }
+    if (kind === "reveal") {
+      // links in hover menus, carousels and JavaScript search results (#28); a contact form that must never be typed into
+      //  /menu     nav mega menu: its links are added by JavaScript on mouseenter only
+      //  /slider   carousel built by JavaScript: slide 2 hidden, slides 3-5 injected on "next"; "previous" is a tripwire
+      //  /find     search box (role=search) fetching same-origin GET /api/search?q=…, plus a decoy POST contact form
+      //  /lookup   search box whose button navigates to /results?q=… (same-origin GET results page)
+      if (req.method !== "GET" && req.method !== "HEAD") toggles.set(`${h}#non-get`, `${req.method} ${u.pathname}`);
+      const json = (v: unknown) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(v)); };
+      const append = 'function add(list,d){d.forEach(function(p){var a=document.createElement("a");a.href=p.href;a.textContent=p.title||p.href;document.getElementById(list).appendChild(a)})}';
+      switch (u.pathname) {
+        case "/robots.txt": case "/sitemap.xml": return page({ title: "Not found", status: 404 });
+        case "/": return page({ title: "Reveal home", canonical: `${origin}/`, body: '<a href="/menu">Menu</a>' });
+        case "/menu": return page({ title: "Menu", canonical: `${origin}/menu`, body: `<header><nav><ul class="menu">
+          <li id="m-services"><a href="/menu" aria-haspopup="true">Services</a><div id="mega" class="mega-panel"></div></li><li><a href="/">Home</a></li></ul></nav></header>
+          <p>Menu page.</p><script>${append}var li=document.getElementById("m-services");
+          li.addEventListener("mouseenter",function(){if(li.dataset.open)return;li.dataset.open="1";add("mega",[{href:"/services/design"},{href:"/services/build"}])});</script>` });
+        case "/slider": return page({ title: "Slider", canonical: `${origin}/slider`, body: `<section class="hero-carousel" aria-roledescription="carousel" aria-label="Featured" style="position:relative;overflow:hidden;width:600px">
+          <div id="track"></div><button type="button" class="prev" aria-label="Previous slide">‹</button><button type="button" class="next" aria-label="Next slide">›</button></section>
+          <script>var t=document.getElementById("track"),n=0;function slide(hidden){n++;var d=document.createElement("div");d.className="slide";if(hidden)d.style.display="none";
+          var a=document.createElement("a");a.href="/slides/s-"+n;a.textContent="Slide "+n;d.appendChild(a);t.appendChild(d)}slide(false);slide(true);
+          document.querySelector(".next").addEventListener("click",function(){if(n<5)slide(true)});
+          document.querySelector(".prev").addEventListener("click",function(){fetch("/api/prev-hit")});</script>` });
+        case "/find": return page({ title: "Find", canonical: `${origin}/find`, body: `<form id="contact" action="/api/contact" method="post"><h2>Contact us</h2>
+          <input type="text" name="query" id="cq" placeholder="Your query"><input type="text" name="name" placeholder="Name"><input type="email" name="email"><textarea name="message"></textarea>
+          <button type="submit">Send</button></form>
+          <div role="search"><input type="search" id="site-search" aria-label="Search" placeholder="Search projects"><button type="button" id="sbtn">Search</button></div><div id="results"></div>
+          <script>${append}document.querySelectorAll("#contact input, #contact textarea").forEach(function(el){el.addEventListener("input",function(){fetch("/api/contact-typed?v="+encodeURIComponent(el.value))})});
+          document.getElementById("sbtn").addEventListener("click",function(){fetch("/api/search?q="+encodeURIComponent(document.getElementById("site-search").value)).then(function(r){return r.json()}).then(function(d){add("results",d)})});</script>` });
+        case "/api/search":
+          toggles.set(`${h}#search-q`, u.searchParams.get("q") ?? "");
+          return json(u.searchParams.get("q") === "test" ? [{ href: "/search-results/r-1" }, { href: "/search-results/r-2" }] : []);
+        case "/lookup": return page({ title: "Lookup", canonical: `${origin}/lookup`, body: `<div class="site-search"><input type="text" name="q" id="lq" placeholder="Search"><button type="button" id="lbtn" aria-label="Search">Go</button></div>
+          <script>document.getElementById("lbtn").addEventListener("click",function(){location.href="/results?q="+encodeURIComponent(document.getElementById("lq").value)});</script>` });
+        case "/results":
+          toggles.set(`${h}#results-q`, u.searchParams.get("q") ?? "");
+          return page({ title: "Results", canonical: `${origin}/results`, body: u.searchParams.get("q") === "test" ? '<a href="/found/f-1">F1</a><a href="/found/f-2">F2</a>' : "<p>No results.</p>" });
+        case "/api/contact": case "/api/contact-typed": case "/api/prev-hit": toggles.set(`${h}#decoy-hit`, `${u.pathname}${u.search}`); return json({});
+        default:
+          if (/^\/(services|slides|search-results|found)\/[a-z0-9-]+$/.test(u.pathname)) return page({ title: `Entry ${u.pathname}`, canonical: `${origin}${u.pathname}` });
+          return page({ title: "Not found", status: 404 });
+      }
+    }
     if (kind === "huge") {
       if (u.pathname === "/sitemap.xml") {
         res.writeHead(200, { "content-type": "application/xml" });

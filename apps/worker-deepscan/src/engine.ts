@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import type { Redis } from "ioredis";
 import {
-  displayUrl, effectiveScanLimits, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate, robotsAllows, scopeDecision,
+  displayUrl, effectiveScanLimits, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate, robotsAllows, scopeDecision, SEARCH_PROBE_TERM,
   type EffectiveScanLimits, type Robots, type Scope, type SettingsSnapshot, type UrlNormalizeOptions,
 } from "@wim/core";
 import { loadSettings, withSystem, type Db, type Tx } from "@wim/db";
@@ -11,6 +11,8 @@ import { addUsage, loadOrgContexts, SecurityError, TransientError, type Executio
 import { openSession } from "@wim/worker-browser";
 import { fetchChain, type FetchResult } from "./fetch.js";
 import { finalizeScan } from "./finalize.js";
+import { looksClientRendered, selectBrowserPages } from "./discovery.js";
+import { MAX_JS_SEARCHES_PER_SCAN, revealLinks, type FoundBy } from "./reveal.js";
 import { candidates, FRONTIER_STATE, FRONTIER_UPSERT, FrontierPlan, linkedFileType, usageArrays, usageUpsert, type FrontierState } from "./frontier.js";
 import { analyzeHtml, parseSitemap, type HtmlForm } from "./html.js";
 
@@ -30,10 +32,16 @@ export interface DeepScanDeps {
 
 export const SCANNER_AGENT = "SiteSentinel";
 /** One harmless query per distinct search form (no personal data, nothing that could trigger an action). */
-const SEARCH_PROBE_TERM = "test";
 const MAX_SEARCH_PROBES = 3;
 /** resources / external links claimed per query in the status-check phase */
 const RESOURCE_BATCH = 25;
+/** browser-assisted discovery: runner session lifetime; no page is rendered with less than BROWSER_MIN_REMAINING_MS left before the deadline */
+const BROWSER_SESSION_MS = 240_000;
+const BROWSER_MIN_REMAINING_MS = 60_000;
+/** no page is started in a runner session with less than this of its lifetime left (load + interactions + compare) */
+const BROWSER_SESSION_RESERVE_MS = 80_000;
+/** client-rendered pages found by the crawl are rendered in batches of this size (one session per batch) */
+const BROWSER_BATCH = 5;
 const INFRA = new Set(["GATEWAY_UNAVAILABLE", "EGRESS_RATE_LIMITED", "GATEWAY_ERROR"]);
 /** Connection-level failures: the site's problem only if OUR path (worker → gateway → internet) is healthy. */
 const CONNECTION_LEVEL = new Set(["CONNECTION_FAILED", "CONNECT_TIMEOUT", "RESPONSE_TIMEOUT", "PROTOCOL_ERROR", "DNS_FAILURE"]);
@@ -96,18 +104,38 @@ export function createDeepScanEngine(d: DeepScanDeps) {
     const aborted = () => ctx.signal.aborted;
     let robotsFor: (u: URL) => Robots | null = () => null;
     const abortReason = () => String((ctx.signal.reason as { reason?: string } | undefined)?.reason ?? "");
+    // browser-assisted discovery: ONE scan-wide budget (browserPages) for the pre-crawl pages and the crawl's renders
+    const browser = {
+      enabled: snap.limits.browserPages > 0 && Boolean(d.runnerUrl),
+      rendered: new Set<string>(), queue: [] as Array<{ url: string; depth: number }>,
+      spa: [] as Array<{ page: string; links: number; foundBy?: Partial<Record<FoundBy, number>> }>, unavailable: false,
+      /** pages interacted with, actions taken (by kind), requests the guard refused, navigations it stopped */
+      interaction: { pages: 0, actions: 0, scroll: 0, loadMore: 0, toggle: 0, details: 0, hover: 0, carousel: 0, carousels: 0, search: 0, searchNavigations: 0, refused: 0, navigationsRefused: 0 },
+      /** hover triggers already hovered in this attempt (site menus repeat on every page) */
+      hovered: new Set<string>(),
+    };
 
     try {
       // ---- 1. discovery (robots + sitemaps + start pages), once per scan
-      let discovery = scan.discovery as { robots: Record<string, Robots | null>; browserDone?: boolean; hostAliases?: Record<string, string> } | null;
+      let discovery = scan.discovery as { robots: Record<string, Robots | null>; browserDone?: boolean; hostAliases?: Record<string, string>; spa?: Array<{ page: string; links: number }>; browserRendered?: string[]; browserInteraction?: Record<string, number> } | null;
       if (!discovery) discovery = await discover();
       if (discovery.hostAliases) snap.norm = { ...snap.norm, hostAliases: discovery.hostAliases }; // resumed scan
       robotsFor = (u: URL) => discovery!.robots[u.hostname] ?? null;
       const robotsDelay = Math.max(0, ...Object.values(discovery.robots).map((r) => (r ? robotsAllows(r, SCANNER_AGENT, new URL(snap.origin)).crawlDelaySec ?? 0 : 0)));
       crawlDelay = Math.max(snap.limits.requestDelayMs, Math.min(30_000, robotsDelay * 1000));
 
-      // ---- 2. optional browser-assisted discovery (SPA routes), once per scan
-      if (!discovery.browserDone && snap.limits.browserPages > 0 && d.runnerUrl) await browserDiscovery();
+      // ---- 2. optional browser-assisted discovery (SPA routes, listing pages), once per scan
+      for (const x of discovery.browserRendered ?? []) browser.rendered.add(x); // resumed scan: the budget already used
+      browser.spa.push(...(discovery.spa ?? []));
+      if (discovery.browserInteraction) Object.assign(browser.interaction, discovery.browserInteraction);
+      if (!discovery.browserDone && browser.enabled) await browserDiscovery();
+      if (browser.enabled) {
+        // resumed scan: client-rendered pages the previous attempt crawled but did not render yet
+        const pending = await withSystem(d.db, (tx) => tx.$queryRaw<Array<{ url: string; depth: number }>>`
+          SELECT url, depth FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE' AND state = 'DONE' AND (facts ->> 'clientRendered') = 'true'
+           ORDER BY depth, id LIMIT ${snap.limits.browserPages}`);
+        for (const q of pending) if (!browser.rendered.has(q.url) && browser.rendered.size + browser.queue.length < snap.limits.browserPages) browser.queue.push(q);
+      }
 
       // ---- 3. crawl pages
       let stop: string | null = null;
@@ -124,6 +152,8 @@ export function createDeepScanEngine(d: DeepScanDeps) {
                    SELECT id, url, depth, in_sitemap FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE' AND state = 'QUEUED'
                     ORDER BY depth, id LIMIT 1) u ON true`);
         if (snap.limits.pagesPerDay - Number(next?.used ?? 0) <= 0) { stop = "DAILY_QUOTA"; break; }
+        // client-rendered pages are rendered in batches between pages (and before the frontier counts as exhausted)
+        if (browser.queue.length && (browser.queue.length >= BROWSER_BATCH || next?.id == null)) { await renderQueued(); if (aborted()) break; continue; }
         if (next?.id == null) break; // frontier exhausted
         const row = { id: next.id, url: next.url, depth: next.depth, in_sitemap: next.in_sitemap };
         const r = await crawlPage(row);
@@ -348,58 +378,156 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       return disc;
     }
 
-    async function browserDiscovery() {
+    /**
+     * Render pages in the browser, one runner session per group (a new session when one's lifetime is used up).
+     * Every rendered page counts against the scan-wide `browserPages` budget (also when it fails) and is never rendered
+     * twice. Rendering stops when the budget is spent, fewer than BROWSER_MIN_REMAINING_MS remain before the scan's
+     * deadline, the scan is aborted, or the runner is unavailable. Returns each page's rendered in-scope links.
+     */
+    async function renderPages(items: Array<{ u: URL; depth: number }>, opts: { done?: boolean } = {}): Promise<URL[]> {
       const t0 = Date.now();
-      const spa: Array<{ page: string; links: number }> = [];
-      const token = signCapability(d.tokenSecret, { o: ctx.orgId, w: ctx.websiteId, e: ctx.executionId, k: "deepscan-browser" }, 300);
-      try {
-        const sess = await openSession(d.runnerUrl!, token, 240_000, ctx.executionId);
+      const found: URL[] = [];
+      const todo = items.filter((x) => !browser.rendered.has(x.u.href));
+      const canRender = () => !aborted() && !browser.unavailable && browser.rendered.size < snap.limits.browserPages && hardDeadline - Date.now() >= BROWSER_MIN_REMAINING_MS;
+      while (todo.length && canRender()) {
+        const before = todo.length;
+        const sessionStart = Date.now();
+        const sessionLeft = () => Date.now() < sessionStart + BROWSER_SESSION_MS - BROWSER_SESSION_RESERVE_MS;
+        const token = signCapability(d.tokenSecret, { o: ctx.orgId, w: ctx.websiteId, e: ctx.executionId, k: "deepscan-browser" }, 300);
         try {
-          for (const p of snap.startPaths.slice(0, snap.limits.browserPages)) {
-            const u = normalizeUrl(p, snap.origin, snap.norm);
-            if (!u || scopeDecision(u, snap.scope) !== "OK") continue;
-            const c = await sess.browser.newContext({ acceptDownloads: false, serviceWorkers: "block", javaScriptEnabled: true });
-            const page = await c.newPage();
-            try {
-              await page.goto(u.href, { waitUntil: "load", timeout: 20_000 });
-              await page.waitForTimeout(1000);
-              const hrefs = await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href).slice(0, 2000));
-              const staticLinks = new Set<string>();
-              await polite();
-              const st = await fetchChain(u, fd, snap.scope, snap.norm, { readBody: true, maxRedirects: 10 });
-              if (st.body) for (const l of analyzeHtml(st.body.toString("utf8")).out.links) { const x = normalizeUrl(l.href, st.finalUrl, snap.norm); if (x) staticLinks.add(x.href); }
-              let added = 0, onlyRendered = 0;
-              const rendered = hrefs.map((h) => normalizeUrl(h, u, snap.norm)).filter((x): x is URL => Boolean(x) && scopeDecision(x!, snap.scope) === "OK");
-              const [hs, ts, ps] = candidates(rendered);
-              await withSystem(d.db, async (tx) => {
-                const [st] = await tx.$queryRawUnsafe<FrontierState[]>(FRONTIER_STATE, ctx.executionId, hs, ts, ps);
-                const plan = new FrontierPlan(st);
-                for (const x of rendered) {
-                  if (!staticLinks.has(x.href)) onlyRendered++;
-                  if (plan.count.PAGE >= snap.limits.maxPages) break;
-                  if (plan.add(x, "PAGE", "BROWSER", 1, displayUrl(u), false)) added++;
-                }
-                await writePlan(tx, plan);
-              });
-              if (onlyRendered) spa.push({ page: displayUrl(u), links: onlyRendered });
-              void added;
-            } finally {
-              await c.close().catch(() => undefined);
+          const sess = await openSession(d.runnerUrl!, token, BROWSER_SESSION_MS, ctx.executionId);
+          try {
+            while (todo.length && canRender() && sessionLeft()) {
+              const { u, depth } = todo.shift()!;
+              if (browser.rendered.has(u.href)) continue;
+              browser.rendered.add(u.href);
+              found.push(...(await renderOne(sess.browser, u, depth)));
             }
+          } finally {
+            await sess.close();
           }
-        } finally {
-          await sess.close();
+        } catch (e) {
+          if (aborted()) break;
+          browser.unavailable = true; // no further sessions in this attempt
+          d.log.warn({ err: (e as Error).message.slice(0, 120) }, "browser-assisted discovery unavailable; continuing without it");
         }
-      } catch (e) {
-        d.log.warn({ err: (e as Error).message.slice(0, 120) }, "browser-assisted discovery unavailable; continuing without it");
+        if (todo.length === before) break; // no progress in this session
       }
       const ms = Date.now() - t0;
+      const rec = { ...(opts.done ? { browserDone: true } : {}), spa: browser.spa, browserRendered: [...browser.rendered], browserInteraction: browser.interaction };
       await withSystem(d.db, async (tx) => {
         await tx.$executeRaw`
-          UPDATE deep_scans SET discovery = discovery || ${JSON.stringify({ browserDone: true, spa })}::jsonb, browser_ms = browser_ms + ${ms}, updated_at = now()
+          UPDATE deep_scans SET discovery = discovery || ${JSON.stringify(rec)}::jsonb, browser_ms = browser_ms + ${ms}, updated_at = now()
            WHERE execution_id = ${ctx.executionId}::uuid`;
         await addUsage(tx, ctx.orgId, { "deepscan.browser_ms": ms });
       });
+      return found;
+    }
+
+    /** Render one page, reveal links behind safe interactions, add its rendered-only in-scope links (depth + 1). */
+    async function renderOne(b: Awaited<ReturnType<typeof openSession>>["browser"], u: URL, depth: number): Promise<URL[]> {
+      const c = await b.newContext({ acceptDownloads: false, serviceWorkers: "block", javaScriptEnabled: true });
+      try {
+        const page = await c.newPage();
+        const baseline = new Set<string>();
+        page.on("request", (r) => { if (baseline.size < 5000) baseline.add(r.url()); });
+        await polite();
+        await page.goto(u.href, { waitUntil: "load", timeout: 20_000 });
+        // listing pages often fetch their entries after load: wait (briefly) for the network to settle
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
+        await page.waitForTimeout(1000);
+        const seen = new Map<string, FoundBy>();
+        for (const h of await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href).slice(0, 2000))) seen.set(h, "render");
+        // links behind tabs / accordions, carousels, "load more", infinite scroll, hover menus and one JavaScript search
+        // (at most MAX_JS_SEARCHES_PER_SCAN per scan) — every interaction behind the request guard
+        const stats = await revealLinks(c, page, {
+          firstParty: (x) => { try { return snap.scope.hosts.includes(new URL(x).hostname); } catch { return false; } },
+          baseline, end: hardDeadline - BROWSER_MIN_REMAINING_MS / 2, polite, links: seen,
+          searchAllowed: browser.interaction.search < MAX_JS_SEARCHES_PER_SCAN, hovered: browser.hovered,
+        });
+        const bi = browser.interaction;
+        if (stats.actions) bi.pages++;
+        bi.actions += stats.actions; bi.scroll += stats.scroll; bi.loadMore += stats.loadMore; bi.toggle += stats.toggle; bi.details += stats.details; bi.refused += stats.refused;
+        bi.hover += stats.hover; bi.carousel += stats.carousel; bi.carousels += stats.carousels; bi.search += stats.search;
+        if (stats.searchNavigated) bi.searchNavigations++;
+        if (stats.navigationRefused) bi.navigationsRefused++;
+        await c.close().catch(() => undefined); // nothing runs in the page while we compare with the static HTML
+        const staticLinks = new Set<string>();
+        await polite();
+        const st = await fetchChain(u, fd, snap.scope, snap.norm, { readBody: true, maxRedirects: 10 });
+        if (st.body) for (const l of analyzeHtml(st.body.toString("utf8")).out.links) { const x = normalizeUrl(l.href, st.finalUrl, snap.norm); if (x) staticLinks.add(x.href); }
+        const unique = new Map<string, { x: URL; via: FoundBy }>();
+        for (const [h, via] of seen) { const x = normalizeUrl(h, u, snap.norm); if (x && scopeDecision(x, snap.scope) === "OK" && !unique.has(x.href)) unique.set(x.href, { x, via }); }
+        const rendered = [...unique.values()];
+        // links in the HTML are found by the crawl itself; only the ones JavaScript added are new
+        const onlyRendered = rendered.filter((r) => !staticLinks.has(r.x.href) && !linkedFileType(r.x));
+        if (onlyRendered.length && depth + 1 <= snap.limits.maxDepth) {
+          const [hs, ts, ps] = candidates(onlyRendered.map((r) => r.x));
+          await withSystem(d.db, async (tx) => {
+            const [fs] = await tx.$queryRawUnsafe<FrontierState[]>(FRONTIER_STATE, ctx.executionId, hs, ts, ps);
+            const plan = new FrontierPlan(fs);
+            for (const { x } of onlyRendered) {
+              if (plan.count.PAGE >= snap.limits.maxPages) break;
+              if (plan.trapped(x)) continue;
+              plan.add(x, "PAGE", "BROWSER", depth + 1, displayUrl(u), false);
+            }
+            await writePlan(tx, plan);
+          });
+        }
+        if (onlyRendered.length) {
+          const foundBy: Partial<Record<FoundBy, number>> = {};
+          for (const r of onlyRendered) foundBy[r.via] = (foundBy[r.via] ?? 0) + 1;
+          browser.spa.push({ page: displayUrl(u), links: onlyRendered.length, foundBy });
+        }
+        return rendered.map((r) => r.x);
+      } catch (e) {
+        if (aborted()) throw e;
+        d.log.debug({ page: displayUrl(u), err: (e as Error).message.slice(0, 120) }, "browser-assisted discovery: page not rendered");
+        return [];
+      } finally {
+        await c.close().catch(() => undefined);
+      }
+    }
+
+    /** Before the crawl: the start pages, then top-level listing pages (sitemap, then the start pages' rendered links). */
+    async function browserDiscovery() {
+      const limit = snap.limits.browserPages;
+      const starts = snap.startPaths.map((p) => normalizeUrl(p, snap.origin, snap.norm)).filter(renderable);
+      const startLinks = await renderPages(selectBrowserPages(starts, [], [], limit).map((u) => ({ u, depth: 0 })));
+      // the sitemap's pages are read from the frontier, so a resumed attempt sees them too
+      const rows = await withSystem(d.db, (tx) => tx.$queryRaw<Array<{ url: string; depth: number }>>`
+        SELECT url, depth FROM deep_scan_urls WHERE execution_id = ${ctx.executionId}::uuid AND kind = 'PAGE' AND in_sitemap ORDER BY id LIMIT 5000`);
+      const depthOf = new Map(rows.map((r) => [r.url, r.depth]));
+      const sitemap = rows.map((r) => normalizeUrl(r.url, null, snap.norm)).filter(renderable);
+      const listings = selectBrowserPages(starts, sitemap, startLinks.filter(renderable), limit).slice(starts.length);
+      await renderPages(listings.map((u) => ({ u, depth: depthOf.get(u.href) ?? 1 })), { done: true });
+    }
+
+    /** During the crawl: render a batch of queued client-rendered pages. */
+    async function renderQueued() {
+      const batch = browser.queue.splice(0, BROWSER_BATCH);
+      if (browser.unavailable) { browser.queue.length = 0; return; }
+      const items = batch.flatMap((q) => { const u = normalizeUrl(q.url, null, snap.norm); return renderable(u) && u.href === q.url ? [{ u, depth: q.depth }] : []; });
+      await renderPages(items);
+      if (browser.rendered.size >= snap.limits.browserPages || hardDeadline - Date.now() < BROWSER_MIN_REMAINING_MS) browser.queue.length = 0;
+    }
+
+    function renderable(u: URL | null): u is URL {
+      if (!u || scopeDecision(u, snap.scope) !== "OK") return false;
+      const rb = snap.respectRobots ? robotsFor(u) : null;
+      return !rb || robotsAllows(rb, SCANNER_AGENT, u).allowed;
+    }
+
+    /** Is a crawled page client-rendered? Then it is queued for rendering (when the budget has room). */
+    function maybeQueueRender(u: URL, depth: number, analysed: ReturnType<typeof analyzeHtml>, links: Array<URL | null>): boolean {
+      if (!browser.enabled) return false;
+      let contentLinks = 0;
+      analysed.out.links.forEach((l, i) => { const x = links[i]; if (!l.chrome && x && x.href !== u.href && scopeDecision(x, snap.scope) === "OK") contentLinks++; });
+      if (!looksClientRendered({ framework: analysed.facts.clientShell.framework, contentLinks, emptyContainers: analysed.facts.clientShell.emptyContainers })) return false;
+      if (!browser.unavailable && !browser.rendered.has(u.href) && browser.rendered.size + browser.queue.length < snap.limits.browserPages && !browser.queue.some((q) => q.url === u.href)) {
+        browser.queue.push({ url: u.href, depth });
+      }
+      return true;
     }
 
     async function crawlPage(row: { id: bigint; url: string; depth: number; in_sitemap: boolean }): Promise<"DONE" | "INFRA" | "SKIPPED"> {
@@ -429,6 +557,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       const base = r.finalUrl;
       const redirectTarget = redirected && ok && scopeDecision(r.finalUrl, snap.scope) === "OK" ? r.finalUrl : null;
       const links = analysed && ok ? analysed.out.links.map((l) => normalizeUrl(l.href, base, snap.norm)) : [];
+      if (analysed && ok && !redirected && maybeQueueRender(u!, row.depth, analysed, links)) (facts as Record<string, unknown>).clientRendered = true;
       const probes = analysed && ok ? searchProbes(analysed.facts.forms, base) : [];
       const resources = analysed && ok && snap.checkResources ? analysed.out.resources.map((x) => ({ x: normalizeUrl(x.href, base, snap.norm), type: x.type })) : [];
       const [hashes, templates, paths] = candidates([redirectTarget, ...links, ...probes, ...resources.map((x) => x.x)]);

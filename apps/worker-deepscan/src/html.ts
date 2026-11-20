@@ -28,6 +28,8 @@ export interface HtmlFacts {
   textHash: string;
   structureHash: string;
   textLength: number;
+  /** signals that the page is built in the browser (see discovery.looksClientRendered) */
+  clientShell: { framework: string | null; emptyContainers: number };
 }
 export interface HtmlForm {
   method: string;
@@ -40,14 +42,26 @@ export interface HtmlForm {
   password: boolean;
 }
 const QUERY_NAMES = new Set(["q", "query", "s", "search", "keyword", "keywords", "term", "k", "search_query"]);
-export interface HtmlLinks { links: Array<{ href: string }>; resources: Array<{ href: string; type: "image" | "stylesheet" | "script" | "font" | "other" }>; malformedLinks: number }
+/** an app root, or a container that usually holds a list of entries (post-list, card-grid, news-feed…) */
+const APP_ROOT_IDS: Record<string, string> = { __next: "next", __nuxt: "nuxt", ___gatsby: "gatsby", root: "app-root", app: "app-root" };
+const LIST_CONTAINER = /(^|[\s_-])(list|grid|posts?|cards|items|results|articles?|blogs?|feed|listing|entries)([\s_-]|$)/i;
+const CONTAINER_TAGS = new Set(["div", "ul", "ol", "section", "main"]);
+const CHROME_TAGS = new Set(["nav", "header", "footer"]);
+/** Links carry `chrome: true` inside nav / header / footer (site navigation, not the page's own content). */
+export interface HtmlLinks { links: Array<{ href: string; chrome?: boolean }>; resources: Array<{ href: string; type: "image" | "stylesheet" | "script" | "font" | "other" }>; malformedLinks: number }
 
 export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): { facts: HtmlFacts; out: HtmlLinks } {
   const f: HtmlFacts = {
     title: null, titleCount: 0, description: null, canonical: null, robots: null, lang: null, viewport: false, openGraph: false,
     h1: 0, headingSkips: 0, hasMain: false, imgMissingAlt: 0, emptyLinks: 0, emptyButtons: 0, unlabelledControls: 0, duplicateIds: 0,
     jsonLd: { blocks: 0, invalid: 0 }, forms: [], textHash: "", structureHash: "", textLength: 0,
+    clientShell: { framework: null, emptyContainers: 0 },
   };
+  // element depth (htmlparser2 also closes void and implied elements) for empty-container and nav/header/footer tracking
+  let depth = 0;
+  const containers: Array<{ depth: number; empty: boolean }> = [];
+  const chrome: number[] = [];
+  const framework = (name: string) => { if (!f.clientShell.framework || f.clientShell.framework === "app-root") f.clientShell.framework = name; };
   const out: HtmlLinks = { links: [], resources: [], malformedLinks: 0 };
   const ids = new Map<string, number>();
   const labelsFor = new Set<string>();
@@ -65,6 +79,16 @@ export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): 
   const parser = new Parser({
     onopentag(tag, a) {
       if (a.id) ids.set(a.id, (ids.get(a.id) ?? 0) + 1);
+      for (const c of containers) c.empty = false;
+      depth++;
+      const root = a.id ? APP_ROOT_IDS[a.id] : undefined;
+      if (root && (root !== "app-root" || tag === "div")) framework(root);
+      if ("ng-version" in a || "ng-app" in a || tag === "app-root") framework("angular");
+      if ("data-v-app" in a || "data-server-rendered" in a) framework("vue");
+      if (tag === "script" && a.id === "__NEXT_DATA__") framework("next");
+      if (tag === "script" && a.src) { if (/\/_next\//.test(a.src)) framework("next"); else if (/\/_nuxt\//.test(a.src)) framework("nuxt"); }
+      if (CONTAINER_TAGS.has(tag) && containers.length < 200 && (root || LIST_CONTAINER.test(a.class ?? "") || LIST_CONTAINER.test(a.id ?? ""))) containers.push({ depth, empty: true });
+      if (CHROME_TAGS.has(tag) || a.role === "navigation") chrome.push(depth);
       const named = Boolean(a["aria-label"]?.trim() || a["aria-labelledby"]?.trim() || a.title?.trim());
       switch (tag) {
         case "html": f.lang = a.lang?.trim() || null; break;
@@ -96,7 +120,7 @@ export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): 
         case "a":
           if (a.href !== undefined) {
             if (!a.href.trim() || /^javascript:/i.test(a.href.trim())) out.malformedLinks++;
-            else if (out.links.length < maxLinks) out.links.push({ href: a.href });
+            else if (out.links.length < maxLinks) out.links.push(chrome.length ? { href: a.href, chrome: true } : { href: a.href });
           }
           stack.push({ tag: "a", name: named });
           break;
@@ -146,15 +170,21 @@ export function analyzeHtml(html: string, maxLinks = 2000, maxResources = 500): 
     ontext(t) {
       if (inTitle) { title += t; return; } // the title is compared separately; content hash = body text only
       if (inScript === "json") { scriptBuf += t; return; }
-      if (inScript || inStyle) return;
+      if (inScript) { if (t.includes("self.__next_f")) framework("next"); else if (t.includes("__NUXT__")) framework("nuxt"); return; }
+      if (inStyle) return;
       const s = t.trim();
       if (s) {
+        for (const c of containers) c.empty = false;
         f.textLength += s.length;
         textHash.update(s.replace(/\s+/g, " "));
         for (const e of stack) e.name = true;
       }
     },
     onclosetag(tag) {
+      const top = containers[containers.length - 1];
+      if (top && top.depth === depth) { containers.pop(); if (top.empty) f.clientShell.emptyContainers++; }
+      if (chrome[chrome.length - 1] === depth) chrome.pop();
+      depth = Math.max(0, depth - 1);
       if (tag === "title") { inTitle = false; f.title = title.replace(/\s+/g, " ").trim(); }
       if (tag === "script") {
         if (inScript === "json") { try { JSON.parse(scriptBuf); } catch { f.jsonLd.invalid++; } }

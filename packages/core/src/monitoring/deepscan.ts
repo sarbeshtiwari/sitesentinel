@@ -6,6 +6,9 @@ import { z } from "zod";
  */
 
 // ---------------------------------------------------------------- configuration
+/** The harmless term every search the scanner makes uses (static GET search-form probes and JavaScript search boxes). */
+export const SEARCH_PROBE_TERM = "test";
+
 export const DeepScanConfig = z.object({
   /** customer pause (schedule paused; a running scan stops) */
   paused: z.boolean().default(false),
