@@ -114,7 +114,9 @@ function WebsitesList({ rows, base, orgId }: { rows: Row[]; base: string; orgId:
                     {r.m.reasons[0] && <span className="sr-only">{r.m.reasons.join(". ")}</span>}
                   </p>
                 </TD>
-                <TD className="hidden w-[22%] lg:table-cell">{r.avail?.data && r.avail.data.checks.total > 0 ? <DayStrip a={r.avail.data} /> : <span className="text-xs text-muted-foreground">{r.m.verification === "VERIFIED" ? "No checks yet" : "Starts after verification"}</span>}</TD>
+                <TD className="hidden w-[22%] lg:table-cell">{r.avail?.data && r.avail.data.checks.total > 0 ? <DayStrip a={r.avail.data} />
+                  : r.m.verification === "VERIFIED" && r.avail?.isLoading ? <span className="block h-5 w-full max-w-[180px] animate-pulse rounded bg-muted" aria-label="Loading 30-day availability" />
+                  : <span className="text-xs text-muted-foreground">{r.m.verification !== "VERIFIED" ? "Starts after verification" : r.avail?.isError ? "Couldn't load the last 30 days" : r.m.http.uptime.measuredChecks > 0 || r.m.http.lastCheckAt ? "No 30-day data yet" : "No checks yet"}</span>}</TD>
                 <TD className="whitespace-nowrap text-right text-[13px]">
                   {issues(r)}
                   {r.m.activeIncidents > 0 && <div><Link className="text-xs font-medium text-danger-text hover:underline" href={`${base}/incidents?websiteId=${r.m.id}`}>{r.m.activeIncidents} open incident{r.m.activeIncidents === 1 ? "" : "s"}</Link></div>}
@@ -302,7 +304,8 @@ export default function OverviewPage() {
     const a = avail[verifiedIds.indexOf(m.id)];
     const site = { status: m.websiteStatus, verification: m.verification, displayHost: m.displayHost };
     const health = websiteHealth(site, m, open);
-    const hasChecks = (a?.data?.checks.total ?? 0) > 0;
+    // checks exist if either the 30-day data or the overview says so — "not loaded yet" is not "no checks" (#25)
+    const hasChecks = (a?.data?.checks.total ?? 0) > 0 || m.http.uptime.measuredChecks > 0 || Boolean(m.http.lastCheckAt);
     return { m, health, open, avail: a, loading: problems.byWebsite.get(m.id)?.isLoading ?? false, sentence: healthSentence(health, site, open, cleanDays(a?.data), hasChecks) };
   });
   const h = headline(rows, org?.name, problems.isLoading);

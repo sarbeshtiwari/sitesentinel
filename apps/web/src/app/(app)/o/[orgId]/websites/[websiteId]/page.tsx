@@ -62,7 +62,7 @@ export default function WebsiteDetailPage() {
   const ent = sched.data?.entitlements;
   const verified = w.verification === "VERIFIED";
   const health = websiteHealth(w, m, open.list);
-  const hasChecks = (avail.data?.checks.total ?? 0) > 0;
+  const hasChecks = (avail.data?.checks.total ?? 0) > 0 || (m?.http.uptime.measuredChecks ?? 0) > 0 || Boolean(m?.http.lastCheckAt); // not loaded ≠ no checks (#25)
   const sentence = healthSentence(health, w, open.list, cleanDays(avail.data), hasChecks);
   const issueCount = open.isLoading ? undefined : open.list.length;
   const pageCount = pages.data?.summary.total;
