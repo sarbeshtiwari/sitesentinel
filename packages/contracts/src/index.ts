@@ -657,6 +657,25 @@ export interface WebsiteHealthDto {
   performance: { status: "GOOD" | "NEEDS_IMPROVEMENT" | "POOR" | "INSUFFICIENT_DATA"; samples: number; lcpP75: number | null; regressions: Array<{ metric: string; deltaPct: number | null }> } | null;
   activeIncidents: number;
 }
+/**
+ * Live progress of a RUNNING deep scan (`live` on the scan DTO; absent once the scan has finished). Counters come from
+ * the scan row and its frontier; findings are only written when the scan finishes, so `pagesFailed` is "so far".
+ */
+export interface DeepScanLiveDto {
+  phase: "DISCOVERY" | "BROWSER" | "PAGES" | "RESOURCES" | "FINISHING";
+  pagesChecked: number;
+  /** pages that will be checked in this scan: checked + still queued (not the ones skipped by policy or over limits) */
+  pagesFound: number;
+  pagesFailed: number;
+  resourcesChecked: number;
+  resourcesFound: number;
+  browserRendered: number;
+  /** browser-assisted discovery runs in this scan */
+  browserEnabled: boolean;
+  requests: number;
+  elapsedSec: number;
+}
+
 export interface MonitoringOverviewDto {
   range: { from: string; to: string };
   timezone: "UTC";

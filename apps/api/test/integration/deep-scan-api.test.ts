@@ -63,6 +63,22 @@ describe("customer deep-scan API", () => {
     expect(dup.status).toBe(409);
     expect(dup.body.error.message).toMatch(/already queued or running/);
     expect((await u.client.get(base)).body.data.enabled).toBe(true);
+    // live progress while it runs (#38): phase recorded by the engine, counters from the scan row and its frontier
+    await until(async () => (await scansOf(env, s.id)).find((x) => x.status === "RUNNING" && x.pages_completed >= 1), 60_000, 200);
+    const runningSum = (await u.client.get(base)).body.data.latestScan;
+    expect(runningSum.status).toBe("RUNNING");
+    const live = runningSum.live;
+    expect(live).toMatchObject({ phase: "PAGES", browserEnabled: false, browserRendered: 0 });
+    expect(live.pagesChecked).toBeGreaterThanOrEqual(1);
+    expect(live.pagesFound).toBeGreaterThan(live.pagesChecked); // the slow site keeps pages queued
+    expect(live.pagesFailed).toBeGreaterThanOrEqual(0);
+    expect(live.resourcesFound).toBeGreaterThanOrEqual(live.resourcesChecked);
+    expect(live.requests).toBeGreaterThanOrEqual(live.pagesChecked);
+    expect(live.elapsedSec).toBeGreaterThanOrEqual(0);
+    expect(live.elapsedSec).toBeLessThan(120);
+    expect((await env.owner.query<{ phase: string }>(`SELECT discovery ->> 'phase' AS phase FROM deep_scans WHERE execution_id = $1`, [runningSum.executionId])).rows[0]!.phase).toBe("PAGES");
+    expect((await u.client.get(`${base}/scans`)).body.data[0].live).toMatchObject({ phase: "PAGES" });
+    expect((await u.client.get(`${base}/scans/${runningSum.executionId}`)).body.data.live).toMatchObject({ phase: "PAGES" });
     env.site.toggles.delete(`${s.host}#slow`);
     await until(async () => (await scansOf(env, s.id)).every((x) => x.status !== "RUNNING"), 120_000, 300);
     await nextDeepWindow(env, s.id);
@@ -75,6 +91,10 @@ describe("customer deep-scan API", () => {
     const scans = await u.client.get(`${base}/scans`);
     expect(scans.body.data[0]).toMatchObject({ executionId: exec, trigger: "MANUAL", status: "COMPLETED", complete: true });
     expect(scans.body.data[0].coverage.pagesChecked).toBeGreaterThanOrEqual(8);
+    // finished scans carry no live block (the summary cards show the final numbers)
+    expect(scans.body.data.every((x: { live?: unknown }) => x.live === undefined)).toBe(true);
+    expect((await u.client.get(base)).body.data.latestScan.live).toBeUndefined();
+    expect((await env.owner.query<{ phase: string }>(`SELECT discovery ->> 'phase' AS phase FROM deep_scans WHERE execution_id = $1`, [exec])).rows[0]!.phase).toBe("FINISHING");
     const detail = await u.client.get(`${base}/scans/${exec}`);
     expect(detail.body.data.discovery.robotsFound).toEqual({ [s.host]: false });
     const pages = await u.client.get(`${base}/scans/${exec}/pages?state=FAILED`);

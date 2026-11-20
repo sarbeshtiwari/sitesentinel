@@ -298,3 +298,21 @@ export const DEEPSCAN_ENTITLEMENT_KEYS = [
   "monitoring.deepscan.maxDurationSec", "monitoring.deepscan.pagesPerDay", "monitoring.deepscan.browserPages", "monitoring.deepscan.externalLinks",
   "monitoring.deepscan.maxConcurrentScans", "monitoring.deepscan.retentionDays",
 ] as const;
+
+// ---------------------------------------------------------------- live progress of a running scan
+export const DEEP_SCAN_PHASES = ["DISCOVERY", "BROWSER", "PAGES", "RESOURCES", "FINISHING"] as const;
+export type DeepScanPhase = (typeof DEEP_SCAN_PHASES)[number];
+
+/**
+ * The phase of a RUNNING scan. The engine records it in deep_scans.discovery ("phase") at every transition; a scan
+ * without it (started before, or a record without the key) falls back to what the frontier shows: no discovery record
+ * yet → DISCOVERY, pages still queued → PAGES, resources still queued → RESOURCES, nothing left → FINISHING.
+ */
+export function deriveScanPhase(i: { discovery: unknown; pagesQueued: number; resourcesQueued: number }): DeepScanPhase {
+  if (!i.discovery || typeof i.discovery !== "object") return "DISCOVERY";
+  const recorded = (i.discovery as { phase?: unknown }).phase;
+  if (typeof recorded === "string" && (DEEP_SCAN_PHASES as readonly string[]).includes(recorded)) return recorded as DeepScanPhase;
+  if (i.pagesQueued > 0) return "PAGES";
+  if (i.resourcesQueued > 0) return "RESOURCES";
+  return "FINISHING";
+}
