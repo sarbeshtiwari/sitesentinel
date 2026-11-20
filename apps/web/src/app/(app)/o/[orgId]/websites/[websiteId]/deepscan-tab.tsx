@@ -1,10 +1,10 @@
 "use client";
 import { Alert, Badge, Button, ConfirmDialog, EmptyState, MetricCard, Table, TBody, TD, TH, THead, TR, toast } from "@wim/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, ChevronDown, FileSearch, History, ListTree, Loader2, Pause, Play, ScanSearch, Square, Timer, Unlink } from "lucide-react";
+import { CalendarClock, Check, ChevronDown, FileSearch, History, ListTree, Loader2, Pause, Play, ScanSearch, Square, Timer, Unlink } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import type { DataEnvelope } from "@wim/contracts";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { DataEnvelope, DeepScanLiveDto } from "@wim/contracts";
 import { Hint, QueryState, Section } from "@/components/monitoring";
 import { errorMessage, get, post } from "@/lib/api";
 import { fmtDuration, fmtTime, mk, SCAN_STATUS } from "@/lib/monitoring";
@@ -14,6 +14,8 @@ export interface ScanDto {
   executionId: string; trigger: string; status: string; complete: boolean; stopReason: string | null;
   coverage: { pagesDiscovered: number; pagesChecked: number; pagesFailed: number; pagesSkippedByPolicy: number; pagesNotCrawledLimits: number; pagesInconclusive: number; resourcesChecked: number };
   requests: number; bytes: number; findingsOpened: number; findingsResolved: number; startedAt: string; finishedAt: string | null; baselineExecutionId: string | null;
+  /** only while the scan is RUNNING */
+  live?: DeepScanLiveDto;
 }
 export interface FindingDto {
   id: string; category: string; group: string; severity: string; status: string; subject: string; title: string; evidence: Record<string, unknown>;
@@ -63,6 +65,77 @@ export function ScanStatusBadge({ s }: { s: Pick<ScanDto, "status" | "complete" 
 }
 
 
+const PHASE_STEPS: Array<{ phase: DeepScanLiveDto["phase"]; label: string }> = [
+  { phase: "DISCOVERY", label: "Discovering" }, { phase: "BROWSER", label: "Browser" }, { phase: "PAGES", label: "Pages" }, { phase: "RESOURCES", label: "Files" }, { phase: "FINISHING", label: "Finishing" },
+];
+/** Live elapsed time of a running scan, ticking every second from its start (client clock; the API's value is the fallback). */
+function useElapsed(startedAt: string | undefined, running: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+  return startedAt ? Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000)) : 0;
+}
+const clock = (sec: number) => {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+};
+
+/** Live progress of a RUNNING scan: phase stepper, pages progress bar and the counters recorded so far. */
+export function LiveScanProgress({ scan }: { scan: ScanDto }) {
+  const live = scan.live;
+  const elapsed = useElapsed(scan.startedAt, true);
+  if (!live) return null;
+  const steps = PHASE_STEPS.filter((x) => x.phase !== "BROWSER" || live.browserEnabled || live.phase === "BROWSER");
+  const at = steps.findIndex((x) => x.phase === live.phase);
+  const discovering = live.phase === "DISCOVERY" || (live.phase === "BROWSER" && live.pagesChecked === 0);
+  const pct = live.pagesFound ? Math.min(100, Math.round((live.pagesChecked / live.pagesFound) * 100)) : 0;
+  const counters: Array<[string, ReactNode, string?]> = [
+    ["Pages checked", `${live.pagesChecked} / ${live.pagesFound}`],
+    ["Failed so far", live.pagesFailed, live.pagesFailed ? "text-danger-text" : undefined],
+    ["Files checked", live.resourcesFound ? `${live.resourcesChecked} / ${live.resourcesFound}` : live.resourcesChecked],
+    ["Requests", live.requests],
+    ["Elapsed", clock(Math.max(elapsed, live.elapsedSec))],
+  ];
+  if (live.browserEnabled) counters.splice(3, 0, ["Rendered in browser", live.browserRendered]);
+  return (
+    <div data-live-progress className="grid gap-4 rounded-lg border border-border bg-card px-4 py-4" aria-live="polite">
+      <ol className="flex flex-wrap items-center gap-x-2 gap-y-2 text-xs" aria-label="Scan phase">
+        {steps.map((x, i) => {
+          const state = i < at ? "done" : i === at ? "current" : "todo";
+          return (
+            <li key={x.phase} data-phase={x.phase} data-state={state} aria-current={state === "current" ? "step" : undefined} className="flex items-center gap-2">
+              {i > 0 && <span className={`h-px w-4 sm:w-8 ${i <= at ? "bg-primary" : "bg-border"}`} aria-hidden />}
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${state === "current" ? "border-primary bg-primary/10 font-medium text-foreground" : state === "done" ? "border-border text-muted-foreground" : "border-dashed border-border text-faint"}`}>
+                {state === "done" ? <Check className="h-3 w-3 text-primary" aria-hidden /> : state === "current" ? <Loader2 className="h-3 w-3 animate-spin text-primary" aria-hidden /> : null}
+                {x.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <div>
+        <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
+          <span className="text-muted-foreground">{discovering ? "Finding pages (robots.txt, sitemaps, start pages)…" : `${live.pagesChecked} of ${live.pagesFound} pages checked`}</span>
+          {!discovering && <span className="tabular-nums text-muted-foreground">{pct}%</span>}
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-label="Pages checked" aria-valuemin={0} aria-valuemax={discovering ? undefined : live.pagesFound} aria-valuenow={discovering ? undefined : live.pagesChecked}>
+          {discovering ? <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/50" /> : <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${pct}%` }} />}
+        </div>
+      </div>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {counters.map(([k, v, cls]) => (
+          <div key={k} data-live={k}><dt className="text-xs text-muted-foreground">{k}</dt><dd className={`mt-0.5 text-lg font-medium tabular-nums ${cls ?? ""}`}>{v}</dd></div>
+        ))}
+      </dl>
+      <p className="text-sm"><span className="font-medium">Broken pages so far: <span className={live.pagesFailed ? "text-danger-text" : ""}>{live.pagesFailed}</span></span> <span className="text-muted-foreground">— so far; final findings appear when the scan finishes.</span></p>
+    </div>
+  );
+}
+
 /**
  * Deep scan controls and the latest scan, shown compactly at the top of the Issues tab (findings themselves are in the
  * merged issue list below it). Start / cancel / pause / resume, the queued state, latest-scan cards and the scan history.
@@ -89,6 +162,14 @@ export function DeepScanPanel({ orgId, websiteId, canWrite, entitledReason, defa
   const s = sum.data;
   const latest = s?.latestScan;
   const running = latest?.status === "RUNNING";
+  // A scan just finished (RUNNING → anything else): findings and issue counts were written at the end, refetch them now.
+  const prevRunning = useRef<{ id: string; running: boolean } | null>(null);
+  useEffect(() => {
+    if (!latest) return;
+    const prev = prevRunning.current;
+    prevRunning.current = { id: latest.executionId, running };
+    if (prev?.running && (!running || prev.id !== latest.executionId)) void qc.invalidateQueries({ queryKey: ["org", orgId, "mon"] });
+  }, [latest, running, qc, orgId]);
   // the requested scan is visible (running or already finished): stop the fast polling
   useEffect(() => { if (pending && latest?.executionId === pending.executionId) setPending(null); }, [pending, latest?.executionId]);
   // queued = requested here and not visible yet, or reported by the API (e.g. a scheduled scan, or one from another tab)
@@ -101,6 +182,14 @@ export function DeepScanPanel({ orgId, websiteId, canWrite, entitledReason, defa
   const sitemapBroken = s?.openSitemapBroken ?? 0;
   const count = (g: string) => s?.openFindings.filter((x) => x.group === g).reduce((a, b) => a + b.count, 0) ?? 0;
   const pagePath = `/o/${orgId}/websites/${websiteId}/deep-scan`;
+  const scanCards = (scan: ScanDto) => (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <MetricCard label="Pages discovered" icon={<FileSearch />} tone="brand" value={scan.coverage.pagesDiscovered} hint={`${scan.coverage.pagesChecked} checked · ${scan.coverage.pagesSkippedByPolicy} skipped by policy · ${scan.coverage.pagesNotCrawledLimits} over limits`} />
+      <MetricCard label="Broken pages" icon={<Unlink />} tone={count("broken_pages") ? "danger" : sitemapBroken ? "warning" : "neutral"} value={count("broken_pages") + sitemapBroken} hint={[sitemapBroken ? `${sitemapBroken} only in your sitemap (not linked)` : null, `${count("broken_resources")} broken resources`].filter(Boolean).join(" · ")} />
+      <MetricCard label="SEO / structure" icon={<ListTree />} tone={count("seo") + count("structure") + count("sitemap") - sitemapBroken ? "warning" : "neutral"} value={count("seo") + count("structure") + count("sitemap") - sitemapBroken} hint={`${count("accessibility")} accessibility (automated)`} />
+      <MetricCard label="Duration" icon={<Timer />} tone="info" value={scan.finishedAt && scan.stopReason !== "ABANDONED" ? fmtDuration(Math.round((new Date(scan.finishedAt).getTime() - new Date(scan.startedAt).getTime()) / 1000)) : "—"} hint={scan.stopReason === "ABANDONED" ? "The scan stopped without finishing" : `${scan.requests} requests · ${scan.coverage.resourcesChecked} resources`} />
+    </div>
+  );
 
   return (
     <div className="grid gap-4">
@@ -145,12 +234,13 @@ export function DeepScanPanel({ orgId, websiteId, canWrite, entitledReason, defa
                     <ScanStatusBadge s={latest} /><span className="text-xs text-muted-foreground">{running ? "in progress…" : stopLabel(latest.stopReason)}</span>
                   </div>
                   {latest.status !== "COMPLETED" && !running && <Hint>A {latest.status.toLowerCase()} scan did not check everything: it never marks findings as fixed or pages as removed.</Hint>}
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <MetricCard label="Pages discovered" icon={<FileSearch />} tone="brand" value={latest.coverage.pagesDiscovered} hint={`${latest.coverage.pagesChecked} checked · ${latest.coverage.pagesSkippedByPolicy} skipped by policy · ${latest.coverage.pagesNotCrawledLimits} over limits`} />
-                    <MetricCard label="Broken pages" icon={<Unlink />} tone={count("broken_pages") ? "danger" : sitemapBroken ? "warning" : "neutral"} value={count("broken_pages") + sitemapBroken} hint={[sitemapBroken ? `${sitemapBroken} only in your sitemap (not linked)` : null, `${count("broken_resources")} broken resources`].filter(Boolean).join(" · ")} />
-                    <MetricCard label="SEO / structure" icon={<ListTree />} tone={count("seo") + count("structure") + count("sitemap") - sitemapBroken ? "warning" : "neutral"} value={count("seo") + count("structure") + count("sitemap") - sitemapBroken} hint={`${count("accessibility")} accessibility (automated)`} />
-                    <MetricCard label="Duration" icon={<Timer />} tone="info" value={latest.finishedAt && latest.stopReason !== "ABANDONED" ? fmtDuration(Math.round((new Date(latest.finishedAt).getTime() - new Date(latest.startedAt).getTime()) / 1000)) : "—"} hint={latest.stopReason === "ABANDONED" ? "The scan stopped without finishing" : `${latest.requests} requests · ${latest.coverage.resourcesChecked} resources`} />
-                  </div>
+                  {running && latest.live ? <LiveScanProgress scan={latest} /> : scanCards(latest)}
+                  {running && completed && completed.executionId !== latest.executionId && (
+                    <div className="grid gap-2" data-last-completed>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Last completed scan</p>
+                      {scanCards(completed)}
+                    </div>
+                  )}
                   {completed && <Hint>Last completed scan: <Link className="text-foreground hover:text-primary" href={`${pagePath}/scans/${completed.executionId}`}>{fmtTime(completed.startedAt)}</Link>. Limits: up to {s.effectiveLimits.maxPages} pages, depth {s.effectiveLimits.maxDepth}{s.effectiveLimits.browserPages ? ", browser-assisted discovery" : ""}{s.effectiveLimits.externalLinks ? ", external links" : ""}. <Link className="text-primary hover:underline" href={`/o/${orgId}/usage`}>Usage against quota</Link> · <Link className="text-primary hover:underline" href={`/o/${orgId}/websites/${websiteId}?tab=settings&section=monitoring`}>Scan settings</Link></Hint>}
                 </div>
               )}

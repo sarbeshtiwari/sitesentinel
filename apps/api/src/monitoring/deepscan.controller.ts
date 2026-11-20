@@ -2,10 +2,10 @@ import { Body, Controller, Get, HttpCode, Inject, Injectable, Param, Post, Put, 
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { z } from "zod";
-import { DeepScanConfig, effectiveScanLimits, FINDINGS, parseDeepScanConfig, type FindingCategory, type SettingsSnapshot } from "@wim/core";
+import { DeepScanConfig, deriveScanPhase, effectiveScanLimits, FINDINGS, parseDeepScanConfig, type FindingCategory, type SettingsSnapshot } from "@wim/core";
 import { withMember, type Db, type Tx } from "@wim/db";
 import { jobOptions, loadOrgContexts, policyFor, QUEUES } from "@wim/queue";
-import { Uuid } from "@wim/contracts";
+import { Uuid, type DeepScanLiveDto } from "@wim/contracts";
 import { APP_DB, REDIS } from "../infra/infra.module.js";
 import { ENV, type Env } from "../config/env.js";
 import { SettingsService } from "../settings/settings.service.js";
@@ -81,7 +81,7 @@ export class DeepScanService {
         nextRunAt: !customerPaused && scheduleActive ? iso(sched!.nextRunAt) : null,
         config: cfg,
         effectiveLimits: effectiveScanLimits(limits.deepscan, cfg, { maxPages: cfgRow?.maxPages, maxDepth: cfgRow?.maxDepth }),
-        latestScan: latest ? this.scanDto(latest) : null,
+        latestScan: latest ? await this.scanWithLive(tx, latest) : null,
         openFindings: open.map((r) => ({ group: r.group_key, severity: r.severity, count: Number(r.n) })),
         /** broken URLs listed only in the sitemap (group "sitemap"), shown with broken pages */
         openSitemapBroken: sitemapBroken,
@@ -173,10 +173,44 @@ export class DeepScanService {
     };
   }
 
+  /** scanDto plus, for a RUNNING scan, its live progress (one grouped, index-only count over its frontier). */
+  private async scanWithLive(tx: Tx, x: Parameters<DeepScanService["scanDto"]>[0] & { discovery: unknown }) {
+    const dto = this.scanDto(x);
+    if (x.status !== "RUNNING") return dto;
+    return { ...dto, live: await this.live(tx, x) };
+  }
+
+  private async live(tx: Tx, x: { executionId: string; discovery: unknown; pagesCompleted: number; pagesFailed: number; resourcesChecked: number; requests: number; startedAt: Date }): Promise<DeepScanLiveDto> {
+    // (execution_id, state, kind, depth) index: an index-only scan over this execution's rows
+    const rows = await tx.$queryRaw<Array<{ kind: string; state: string; n: number }>>`
+      SELECT kind, state, count(*)::int AS n FROM deep_scan_urls WHERE execution_id = ${x.executionId}::uuid GROUP BY 1, 2`;
+    const sum = (kinds: string[], states: string[] | null, notStates: string[] = []) =>
+      rows.filter((r) => kinds.includes(r.kind) && (!states || states.includes(r.state)) && !notStates.includes(r.state)).reduce((a, r) => a + r.n, 0);
+    const pagesQueued = sum(["PAGE"], ["QUEUED"]), resourcesQueued = sum(["RESOURCE", "EXTERNAL"], ["QUEUED"]);
+    const d = (x.discovery && typeof x.discovery === "object" ? x.discovery : {}) as { browserRendered?: unknown[]; browserEnabled?: boolean };
+    const browserRendered = Array.isArray(d.browserRendered) ? d.browserRendered.length : 0;
+    const pagesChecked = x.pagesCompleted + x.pagesFailed;
+    return {
+      phase: deriveScanPhase({ discovery: x.discovery, pagesQueued, resourcesQueued }),
+      pagesChecked,
+      pagesFound: Math.max(pagesChecked + pagesQueued, sum(["PAGE"], null, ["SKIPPED"])),
+      pagesFailed: x.pagesFailed,
+      resourcesChecked: x.resourcesChecked,
+      resourcesFound: Math.max(x.resourcesChecked + resourcesQueued, sum(["RESOURCE", "EXTERNAL"], null, ["SKIPPED"])),
+      browserRendered,
+      browserEnabled: d.browserEnabled ?? browserRendered > 0,
+      requests: x.requests,
+      elapsedSec: Math.max(0, Math.round((Date.now() - x.startedAt.getTime()) / 1000)),
+    };
+  }
+
   async scans(s: SessionContext, o: OrgContext, websiteId: string, limit: number) {
     return this.member(s, o, async (tx) => {
       await this.website(tx, o.orgId, websiteId);
-      return (await tx.deepScan.findMany({ where: { websiteId }, orderBy: { startedAt: "desc" }, take: limit })).map((x) => this.scanDto(x));
+      const rows = await tx.deepScan.findMany({ where: { websiteId }, orderBy: { startedAt: "desc" }, take: limit });
+      const out = [];
+      for (const x of rows) out.push(await this.scanWithLive(tx, x));
+      return out;
     });
   }
 
@@ -187,7 +221,7 @@ export class DeepScanService {
       if (!x) throw Errors.notFound();
       const d = (x.discovery ?? {}) as { sitemaps?: unknown; issues?: unknown[]; spa?: unknown; robots?: Record<string, unknown> };
       return {
-        ...this.scanDto(x),
+        ...(await this.scanWithLive(tx, x)),
         discovery: { sitemaps: d.sitemaps ?? null, sitemapIssues: (d.issues ?? []).length, robotsFound: Object.fromEntries(Object.entries(d.robots ?? {}).map(([h, r]) => [h, r !== null])), spa: d.spa ?? [] },
         comparison: x.comparison ?? null,
       };
