@@ -1034,7 +1034,7 @@ expiry = job timeout + 30 s}` and passes it in the session request; the runner l
 proxy credentials and the gateway URL **from its own configuration** (callers can't set the proxy or flags — requests
 with extra keys are rejected). The token isn't host-bound (third-party subresources); the gateway refuses every
 non-public destination exactly as in 4A, attributes each decision to the execution, and caps connections per execution
-(`EGRESS_MAX_CONNECTIONS_PER_EXECUTION`, default 300). Forged, expired and wrongly signed tokens: nothing reaches the
+and capability kind (`EGRESS_MAX_CONNECTIONS_PER_EXECUTION`, default 300; the deep-scan crawl `EGRESS_MAX_CONNECTIONS_PER_DEEPSCAN`, default 2500). Forged, expired and wrongly signed tokens: nothing reaches the
 site (tested).
 
 **Bypass paths closed** (each tested, in-process and in the container): QUIC off; WebRTC limited to proxied UDP (none);

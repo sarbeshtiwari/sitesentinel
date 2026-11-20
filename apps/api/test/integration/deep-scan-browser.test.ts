@@ -96,6 +96,32 @@ describe("JavaScript-rendered links on listing and client-rendered pages", () =>
       expect(scan.browser_ms).toBe(0);
     }
   }, 240_000);
+
+  it("rendering that uses up its own gateway budget (kind deepscan-browser) never starves the crawl (#35)", async () => {
+    const org = await newOrg({ "monitoring.deepscan.browserPages": 5 });
+    const s = await deepSite(env, org, "listing", { browserDiscovery: true });
+    const cfg = env.gateway.cfg as { maxConnectionsPerExecution?: number; maxConnectionsPerExecutionKind?: Record<string, number> };
+    const before = { n: cfg.maxConnectionsPerExecution, k: cfg.maxConnectionsPerExecutionKind };
+    cfg.maxConnectionsPerExecution = 3; // every kind but the crawl: rendering runs out almost at once
+    cfg.maxConnectionsPerExecutionKind = { deepscan: 1000 };
+    try {
+      const [scan] = await scanNow(env, [s.id]);
+      const exec = scan!.execution_id;
+      const refused = env.gatewayLog.filter((l) => l.exec === exec && l.outcome === "RATE_LIMITED");
+      expect(refused.some((l) => l.kind === "deepscan-browser" && l.detail === "execution-budget")).toBe(true);
+      expect(refused.filter((l) => l.kind === "deepscan")).toEqual([]); // the crawl was never refused
+      expect(scan).toMatchObject({ status: "COMPLETED" });
+      expect(scan!.stop_reason).not.toBe("INFRASTRUCTURE");
+      const pages = await urlsOf(exec);
+      for (const p of ["/", "/articles", "/guides", "/guides/archive"]) expect(pages.find((x) => path(x.url) === p)).toMatchObject({ state: "DONE" });
+      const l = (await c.query(`SELECT outcome, attempt FROM execution_results WHERE execution_id = $1`, [exec])).rows[0];
+      expect(l.attempt).toBe(1);
+      expect(l.outcome).not.toBe("INCONCLUSIVE");
+    } finally {
+      cfg.maxConnectionsPerExecution = before.n;
+      cfg.maxConnectionsPerExecutionKind = before.k;
+    }
+  }, 240_000);
 });
 
 describe("links behind interactions (scroll, load more, tabs), behind the request guard", () => {

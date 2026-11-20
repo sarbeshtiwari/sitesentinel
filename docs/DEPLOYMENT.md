@@ -797,7 +797,8 @@ Bootstrap configuration only. Everything operational (plans, intervals, SMTP, ga
 | `RUNNER_GATEWAY_URL` | browser-runner | yes | `http://egress-gateway:8080` | Phase 4D | Chromium's proxy — the runner's own config, never the caller's |
 | `RUNNER_MAX_SESSIONS`, `RUNNER_MAX_SESSION_MS`, `RUNNER_ADVERTISE_HOST` | browser-runner | no | `2`, `180000`, `browser-runner` | Phase 4D | Concurrent browsers, hard per-session kill, host in returned WS endpoints |
 | `RUNNER_SANDBOX` | browser-runner | no | `true` | Phase 4D | Chromium sandbox (needs `infra/security/seccomp/chromium.json`) |
-| `EGRESS_MAX_CONNECTIONS_PER_EXECUTION` | egress-gateway | no | `300` | Phase 4D | Cumulative connections per execution |
+| `EGRESS_MAX_CONNECTIONS_PER_EXECUTION` | egress-gateway | no | `300` | Phase 4D, #35 | Cumulative connections per execution **and capability kind** (e.g. a deep scan's browser rendering `deepscan-browser` and its crawl `deepscan` each have their own budget; per-org/total caps still bound everything). A used-up budget is refused `429` + `X-Egress-Refusal: EXECUTION_BUDGET` |
+| `EGRESS_MAX_CONNECTIONS_PER_DEEPSCAN` | egress-gateway | no | `2500` | #35 | The deep-scan crawl's (kind `deepscan`) own lifetime budget. Every request hop is a fresh CONNECT and a HEAD answered 4xx is retried as GET, so size it ≥ 2 × `monitoring.deepscan.maxRequests` (default 1000). When used up the scan stops `PARTIAL` / `REQUEST_BUDGET` (results kept; not INFRASTRUCTURE) |
 | `SCHEDULER_TICK_MS` | scheduler | no | `5000` | Phase 4B | Cycle cadence (sync, fair dispatch, reconcile, replays) |
 | `SCHEDULER_INSTANCE_ID` | scheduler | no | hostname + random | Phase 4B | Heartbeat identity |
 | `S3_*` | api, workers | yes | — | Phase 4 | Object storage (artifacts, reports) |

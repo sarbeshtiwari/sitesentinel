@@ -566,6 +566,33 @@ describe("idempotency, crashes, cancellation and infrastructure", () => {
     }
   }, 240_000);
 
+  it("the gateway's per-execution budget for the crawl used up: PARTIAL / REQUEST_BUDGET, results kept, no retry, not INFRASTRUCTURE (#35)", async () => {
+    const org = await newOrg();
+    const s = await deepSite(env, org, "site");
+    const cfg = env.gateway.cfg as { maxConnectionsPerExecutionKind?: Record<string, number> };
+    const before = cfg.maxConnectionsPerExecutionKind;
+    cfg.maxConnectionsPerExecutionKind = { deepscan: 15 }; // discovery (robots + sitemaps) and a few pages
+    try {
+      const [scan] = await scanNow(env, [s.id]);
+      expect(scan).toMatchObject({ status: "PARTIAL", stop_reason: "REQUEST_BUDGET", complete: false });
+      const exec = scan!.execution_id;
+      expect(deepDecisions(exec).some((l) => l.outcome === "RATE_LIMITED" && l.kind === "deepscan" && l.detail === "execution-budget")).toBe(true);
+      const pages = await urlsOf(exec);
+      expect(pages.filter((p) => p.state === "DONE").length).toBeGreaterThan(0); // what was checked is kept
+      expect(pages.filter((p) => p.state === "QUEUED").length).toBeGreaterThan(0); // the rest is "not checked", not failed
+      expect(pages.filter((p) => p.state === "FAILED" && p.error === "EGRESS_BUDGET_EXHAUSTED")).toHaveLength(0);
+      const l = (await c.query(`SELECT outcome, attempt FROM execution_results WHERE execution_id = $1`, [exec])).rows[0];
+      expect(l.attempt).toBe(1); // finished on the first attempt: never retried
+      // the broken pages it did check still count (a partial scan with open high findings is FAILED, never resolving)
+      expect(l.outcome).toBe("FAILED");
+      expect((await findingsOf(env, s.id, "OPEN")).length).toBeGreaterThan(0);
+      const ov = (await c.query(`SELECT key FROM usage_counters WHERE org_id = $1 AND key IN ('deepscan.failed_attempts', 'deepscan.overhead_requests') AND value > 0`, [org])).rows;
+      expect(ov).toEqual([]); // not counted as our infrastructure failing
+    } finally {
+      cfg.maxConnectionsPerExecutionKind = before;
+    }
+  }, 240_000);
+
   it("concurrent scans: one RUNNING scan per website; per-organisation scan concurrency leaves room for other tenants", async () => {
     const big = await newOrg(true, { "monitoring.deepscan.maxConcurrentScans": 1 });
     const sites = [await deepSite(env, big, "mini"), await deepSite(env, big, "mini")];

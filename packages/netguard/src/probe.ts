@@ -68,6 +68,12 @@ export interface ProbeResponse {
 export interface ProbeResult {
   error: ProbeErrorCode | null;
   errorDetail: string | null;
+  /**
+   * Why the gateway refused, when it says more than the error code: "EXECUTION_BUDGET" on an EGRESS_RATE_LIMITED
+   * refusal means this execution's (and capability kind's) lifetime connection budget is used up — not a
+   * concurrency limit or an outage. Null otherwise.
+   */
+  gatewayRefusal: string | null;
   hops: ProbeHop[];
   final: ProbeResponse | null;
   /** last HTTPS hop's certificate (also present when TLS_INVALID) */
@@ -103,7 +109,7 @@ export function sanitizeUrl(u: string | URL): string {
 }
 
 class HopError extends Error {
-  constructor(readonly code: ProbeErrorCode, detail?: string) { super(detail ?? code); }
+  constructor(readonly code: ProbeErrorCode, detail?: string, readonly refusal: string | null = null) { super(detail ?? code); }
 }
 
 const OUTCOME_CODE: Record<string, ProbeErrorCode> = {
@@ -123,10 +129,11 @@ export async function httpProbe(o: ProbeOptions): Promise<ProbeResult> {
   let headFallback = false;
   const testCa = process.env.NODE_ENV === "test" ? o.testCa : undefined;
 
+  let gatewayRefusal: string | null = null;
   const result = (error: ProbeErrorCode | null, detail: string | null, final: ProbeResponse | null): ProbeResult => {
     const last = [...hops].reverse().find((h) => h.status !== null) ?? hops[hops.length - 1];
     return {
-      error, errorDetail: detail, hops, final, tls,
+      error, errorDetail: detail, gatewayRefusal, hops, final, tls,
       timings: {
         dnsMs: last?.dnsMs ?? null, connectMs: last?.connectMs ?? null, tlsMs: last?.tlsMs ?? null, ttfbMs: last?.ttfbMs ?? null,
         totalMs: Math.round(performance.now() - started), gatewayMs: Math.round(gatewayMs),
@@ -155,6 +162,7 @@ export async function httpProbe(o: ProbeOptions): Promise<ProbeResult> {
       res = await oneHop(url, method, hop, deadline, o, testCa, (t) => { tls = t; }, (ms) => { gatewayMs += ms; });
     } catch (e) {
       const code = e instanceof HopError ? e.code : "PROTOCOL_ERROR";
+      if (e instanceof HopError) gatewayRefusal = e.refusal;
       hop.error = code;
       return result(code, e instanceof Error ? e.message.slice(0, 200) : null, null);
     }
@@ -218,8 +226,9 @@ async function oneHop(
       hop.gatewayMs = Math.round(ms);
       if (cres.statusCode !== 200) {
         const outcome = String(cres.headers["x-egress-error"] ?? "");
+        const refusal = typeof cres.headers["x-egress-refusal"] === "string" ? String(cres.headers["x-egress-refusal"]).slice(0, 40) : null;
         socket.destroy();
-        return fail(new HopError(OUTCOME_CODE[outcome] ?? (cres.statusCode === 407 ? "EGRESS_UNAUTHORIZED" : "GATEWAY_ERROR"), `gateway ${cres.statusCode} ${outcome}`));
+        return fail(new HopError(OUTCOME_CODE[outcome] ?? (cres.statusCode === 407 ? "EGRESS_UNAUTHORIZED" : "GATEWAY_ERROR"), `gateway ${cres.statusCode} ${outcome}${refusal ? ` ${refusal}` : ""}`, refusal));
       }
       tunnelUp = true;
       const num = (h: string) => (cres.headers[h] !== undefined && /^\d+$/.test(String(cres.headers[h])) ? Number(cres.headers[h]) : null);
