@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  DeepScanConfig, defaultSettings, displayUrl, effectiveScanLimits, FINDINGS, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate,
+  DeepScanConfig, defaultSettings, deriveScanPhase, displayUrl, effectiveScanLimits, FINDINGS, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate,
   resolveMonitoringLimits, robotsAllows, scopeDecision, unsafeRoute,
 } from "../src/index.js";
 
@@ -104,5 +104,21 @@ describe("configuration and limits", () => {
       expect(f.impact.length, k).toBeGreaterThan(10);
       expect(f.recommendation.length, k).toBeGreaterThan(10);
     }
+  });
+});
+
+describe("deriveScanPhase (live progress)", () => {
+  const q = { pagesQueued: 0, resourcesQueued: 0 };
+  it("no discovery record yet → DISCOVERY", () => {
+    expect(deriveScanPhase({ discovery: null, ...q, pagesQueued: 5 })).toBe("DISCOVERY");
+    expect(deriveScanPhase({ discovery: "x", ...q })).toBe("DISCOVERY");
+  });
+  it("uses the phase the engine recorded", () => {
+    for (const p of ["DISCOVERY", "BROWSER", "PAGES", "RESOURCES", "FINISHING"] as const) expect(deriveScanPhase({ discovery: { robots: {}, phase: p }, ...q, pagesQueued: 3 })).toBe(p);
+  });
+  it("ignores an unknown recorded phase and falls back to the frontier", () => {
+    expect(deriveScanPhase({ discovery: { phase: "WAT" }, pagesQueued: 2, resourcesQueued: 9 })).toBe("PAGES");
+    expect(deriveScanPhase({ discovery: { robots: {} }, pagesQueued: 0, resourcesQueued: 9 })).toBe("RESOURCES");
+    expect(deriveScanPhase({ discovery: { robots: {} }, ...q })).toBe("FINISHING");
   });
 });

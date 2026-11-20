@@ -2,7 +2,7 @@ import { isIP } from "node:net";
 import type { Redis } from "ioredis";
 import {
   displayUrl, effectiveScanLimits, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate, robotsAllows, scopeDecision, SEARCH_PROBE_TERM,
-  type EffectiveScanLimits, type Robots, type Scope, type SettingsSnapshot, type UrlNormalizeOptions,
+  type DeepScanPhase, type EffectiveScanLimits, type Robots, type Scope, type SettingsSnapshot, type UrlNormalizeOptions,
 } from "@wim/core";
 import { loadSettings, withSystem, type Db, type Tx } from "@wim/db";
 import type { Logger } from "@wim/logger";
@@ -138,6 +138,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       }
 
       // ---- 3. crawl pages
+      await setPhase("PAGES");
       let stop: string | null = null;
       let n = 0;
       for (;;) {
@@ -173,6 +174,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
 
       // ---- 4. first-party resources and (if enabled) external links: status only, never parsed or followed
       if (!stop) {
+        await setPhase("RESOURCES");
         // No URL is added in this phase, so the queue is claimed in batches (same order); each row stays guarded by
         // its QUEUED → checked transition, and the budget / abort checks still run before every request.
         let batch: Array<{ id: bigint; url: string; kind: string }> = [];
@@ -198,6 +200,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       if (stop === "INFRASTRUCTURE") {
         await withSystem(d.db, (tx) => addUsage(tx, ctx.orgId, { "deepscan.failed_attempts": 1, "deepscan.overhead_requests": overheadRequests })).catch(() => undefined);
       }
+      await setPhase("FINISHING");
       await d.hooks?.beforeFinalize?.(ctx.executionId);
       // ---- 5. finalise: findings, incidents, comparison, inventory, ledger and usage in ONE transaction
       const out = await withSystemLong(d.db, (tx) => finalizeScan(tx, {
@@ -352,7 +355,7 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         const u = normalizeUrl(p, snap.origin, snap.norm);
         if (u && scopeDecision(u, snap.scope) === "OK") pageRows.unshift({ url: u, source: "START", inSitemap: false, depth: 0 });
       }
-      const disc = { robots, issues, sitemaps: { fetched: sitemapCount, urls: sitemapUrls, outOfScope }, browserDone: false, hostAliases };
+      const disc = { robots, issues, sitemaps: { fetched: sitemapCount, urls: sitemapUrls, outOfScope }, browserDone: false, hostAliases, browserEnabled: browser.enabled, phase: browser.enabled ? "BROWSER" : "PAGES" };
       // Dedupe and cap BEFORE touching the database: a 50,000-entry sitemap must not become 50,000 statements.
       const unique = new Map<string, (typeof pageRows)[number]>();
       for (const p of pageRows) {
@@ -668,6 +671,13 @@ export function createDeepScanEngine(d: DeepScanDeps) {
     }
 
     // ---- frontier SQL (all scoped to this execution)
+    /** Live progress: the scan's current phase, kept in its discovery record (one cheap UPDATE per transition, best effort). */
+    async function setPhase(phase: DeepScanPhase) {
+      await withSystem(d.db, (tx) => tx.$executeRaw`
+        UPDATE deep_scans SET discovery = discovery || jsonb_build_object('phase', ${phase}::text), updated_at = now()
+         WHERE execution_id = ${ctx.executionId}::uuid AND status = 'RUNNING' AND discovery IS NOT NULL AND discovery ->> 'phase' IS DISTINCT FROM ${phase}::text`).catch(() => undefined);
+    }
+
     /** Write a plan (no other effect); for discovery paths that run once per scan. */
     async function writePlan(tx: Tx, plan: FrontierPlan) {
       if (plan.rows.size) await tx.$queryRawUnsafe(`WITH ins AS (${FRONTIER_UPSERT})
