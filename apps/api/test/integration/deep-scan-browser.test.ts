@@ -130,3 +130,45 @@ describe("links behind interactions (scroll, load more, tabs), behind the reques
     expect(by("/tabs")).toMatchObject({ renderedOnlyLinks: 3, foundBy: { toggle: 3 } });
   }, 240_000);
 });
+
+describe("links in hover menus, carousels and JavaScript search results (#28)", () => {
+  it("hovers the nav mega menu, pages through the carousel, runs the search boxes; never types into the contact form, never POSTs", async () => {
+    const org = await newOrg({ "monitoring.deepscan.browserPages": 5 });
+    const s = await deepSite(env, org, "reveal", { browserDiscovery: true, startPaths: ["/menu", "/slider", "/find", "/lookup"] });
+    const hitsBefore = env.site.hits.length;
+    const [scan] = await scanNow(env, [s.id]);
+    expect(scan!.status).toBe("COMPLETED");
+    const pages = await urlsOf(scan!.execution_id);
+    const found = browserFound(pages);
+    // (1) hover: the mega menu's links exist only after mouseenter
+    expect(found.filter((p) => p.startsWith("/services/"))).toEqual(["/services/build", "/services/design"]);
+    // (2) carousel: slide 1 visible, slide 2 hidden in the DOM, slides 3-5 injected by "next"
+    expect(found.filter((p) => p.startsWith("/slides/"))).toEqual(["/slides/s-1", "/slides/s-2", "/slides/s-3", "/slides/s-4", "/slides/s-5"]);
+    // (3) search: results fetched with GET /api/search?q=test, and a results page reached by a same-origin GET navigation
+    expect(found.filter((p) => p.startsWith("/search-results/"))).toEqual(["/search-results/r-1", "/search-results/r-2"]);
+    expect(found.filter((p) => p.startsWith("/found/"))).toEqual(["/found/f-1", "/found/f-2"]);
+    expect(env.site.toggles.get(`${s.host}#search-q`)).toBe("test");
+    expect(env.site.toggles.get(`${s.host}#results-q`)).toBe("test");
+    const byPath = new Map(pages.map((p) => [path(p.url), p]));
+    for (const p of ["/services/design", "/slides/s-5", "/search-results/r-1", "/found/f-1"]) expect(byPath.get(p), p).toMatchObject({ state: "DONE", source: "BROWSER", depth: 1 });
+    // (4) decoys: the contact form never typed into or sent, "previous" never clicked, nothing but GET / HEAD reached the site
+    expect(env.site.toggles.get(`${s.host}#decoy-hit`)).toBeUndefined();
+    expect(env.site.toggles.get(`${s.host}#non-get`)).toBeUndefined();
+    const mine = env.site.hits.slice(hitsBefore).filter((x) => x.host === s.host);
+    expect(mine.some((x) => x.path.startsWith("/api/contact"))).toBe(false);
+    expect(mine.every((x) => x.method === "GET" || x.method === "HEAD")).toBe(true);
+    const ix = (scan!.discovery as { browserInteraction: Record<string, number> }).browserInteraction;
+    expect(ix.hover).toBeGreaterThanOrEqual(1);
+    expect(ix.carousels).toBe(1);
+    expect(ix.carousel).toBeGreaterThanOrEqual(3);
+    expect(ix.carousel).toBeLessThanOrEqual(8);
+    expect(ix.search).toBe(2);
+    expect(ix.searchNavigations).toBe(1);
+    const spa = (await findingsOf(env, s.id, "OPEN")).filter((f) => f.category === "SPA_ROUTE_NOT_IN_HTML");
+    const by = (p: string) => spa.find((f) => String(f.subject).endsWith(p))?.evidence;
+    expect(by("/menu")).toMatchObject({ renderedOnlyLinks: 2, foundBy: { hover: 2 } });
+    expect(by("/slider")).toMatchObject({ renderedOnlyLinks: 5, foundBy: { render: 1, carousel: 4 } });
+    expect(by("/find")).toMatchObject({ renderedOnlyLinks: 2, foundBy: { search: 2 } });
+    expect(by("/lookup")).toMatchObject({ renderedOnlyLinks: 2, foundBy: { search: 2 } });
+  }, 240_000);
+});

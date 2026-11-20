@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import type { Redis } from "ioredis";
 import {
-  displayUrl, effectiveScanLimits, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate, robotsAllows, scopeDecision,
+  displayUrl, effectiveScanLimits, normalizeUrl, parseDeepScanConfig, parseRobots, pathTemplate, robotsAllows, scopeDecision, SEARCH_PROBE_TERM,
   type EffectiveScanLimits, type Robots, type Scope, type SettingsSnapshot, type UrlNormalizeOptions,
 } from "@wim/core";
 import { loadSettings, withSystem, type Db, type Tx } from "@wim/db";
@@ -12,7 +12,7 @@ import { openSession } from "@wim/worker-browser";
 import { fetchChain, type FetchResult } from "./fetch.js";
 import { finalizeScan } from "./finalize.js";
 import { looksClientRendered, selectBrowserPages } from "./discovery.js";
-import { revealLinks, type FoundBy } from "./reveal.js";
+import { MAX_JS_SEARCHES_PER_SCAN, revealLinks, type FoundBy } from "./reveal.js";
 import { candidates, FRONTIER_STATE, FRONTIER_UPSERT, FrontierPlan, linkedFileType, usageArrays, usageUpsert, type FrontierState } from "./frontier.js";
 import { analyzeHtml, parseSitemap, type HtmlForm } from "./html.js";
 
@@ -32,7 +32,6 @@ export interface DeepScanDeps {
 
 export const SCANNER_AGENT = "SiteSentinel";
 /** One harmless query per distinct search form (no personal data, nothing that could trigger an action). */
-const SEARCH_PROBE_TERM = "test";
 const MAX_SEARCH_PROBES = 3;
 /** resources / external links claimed per query in the status-check phase */
 const RESOURCE_BATCH = 25;
@@ -40,7 +39,7 @@ const RESOURCE_BATCH = 25;
 const BROWSER_SESSION_MS = 240_000;
 const BROWSER_MIN_REMAINING_MS = 60_000;
 /** no page is started in a runner session with less than this of its lifetime left (load + interactions + compare) */
-const BROWSER_SESSION_RESERVE_MS = 75_000;
+const BROWSER_SESSION_RESERVE_MS = 80_000;
 /** client-rendered pages found by the crawl are rendered in batches of this size (one session per batch) */
 const BROWSER_BATCH = 5;
 const INFRA = new Set(["GATEWAY_UNAVAILABLE", "EGRESS_RATE_LIMITED", "GATEWAY_ERROR"]);
@@ -111,7 +110,9 @@ export function createDeepScanEngine(d: DeepScanDeps) {
       rendered: new Set<string>(), queue: [] as Array<{ url: string; depth: number }>,
       spa: [] as Array<{ page: string; links: number; foundBy?: Partial<Record<FoundBy, number>> }>, unavailable: false,
       /** pages interacted with, actions taken (by kind), requests the guard refused, navigations it stopped */
-      interaction: { pages: 0, actions: 0, scroll: 0, loadMore: 0, toggle: 0, details: 0, refused: 0, navigationsRefused: 0 },
+      interaction: { pages: 0, actions: 0, scroll: 0, loadMore: 0, toggle: 0, details: 0, hover: 0, carousel: 0, carousels: 0, search: 0, searchNavigations: 0, refused: 0, navigationsRefused: 0 },
+      /** hover triggers already hovered in this attempt (site menus repeat on every page) */
+      hovered: new Set<string>(),
     };
 
     try {
@@ -437,14 +438,18 @@ export function createDeepScanEngine(d: DeepScanDeps) {
         await page.waitForTimeout(1000);
         const seen = new Map<string, FoundBy>();
         for (const h of await page.evaluate(() => Array.from(document.querySelectorAll("a[href]")).map((a) => (a as HTMLAnchorElement).href).slice(0, 2000))) seen.set(h, "render");
-        // links behind "load more", tabs / accordions and infinite scroll — every interaction behind the request guard
+        // links behind tabs / accordions, carousels, "load more", infinite scroll, hover menus and one JavaScript search
+        // (at most MAX_JS_SEARCHES_PER_SCAN per scan) — every interaction behind the request guard
         const stats = await revealLinks(c, page, {
           firstParty: (x) => { try { return snap.scope.hosts.includes(new URL(x).hostname); } catch { return false; } },
           baseline, end: hardDeadline - BROWSER_MIN_REMAINING_MS / 2, polite, links: seen,
+          searchAllowed: browser.interaction.search < MAX_JS_SEARCHES_PER_SCAN, hovered: browser.hovered,
         });
         const bi = browser.interaction;
         if (stats.actions) bi.pages++;
         bi.actions += stats.actions; bi.scroll += stats.scroll; bi.loadMore += stats.loadMore; bi.toggle += stats.toggle; bi.details += stats.details; bi.refused += stats.refused;
+        bi.hover += stats.hover; bi.carousel += stats.carousel; bi.carousels += stats.carousels; bi.search += stats.search;
+        if (stats.searchNavigated) bi.searchNavigations++;
         if (stats.navigationRefused) bi.navigationsRefused++;
         await c.close().catch(() => undefined); // nothing runs in the page while we compare with the static HTML
         const staticLinks = new Set<string>();
